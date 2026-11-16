@@ -53,25 +53,53 @@ a later extension.
   document content or converted pages for Word. Distinguish these read-only
   previews from source editing and full Office layout fidelity.
 
-## Implementation order and acceptance checks
+## Side-by-side views and session history
 
-1. Reproduce the Assistant chooser behavior and trace account/profile handling
-   across all launch and session-management paths. Prove two independent profiles
-   work in the same project, including Chat/Terminal switching. If this requires
-   invasive changes to task orchestration, reassess extracting standalone mods.
-2. Fix space-root resolution and introduce the separate document pane. Verify two
-   spaces with different project roots, persistent tree state, text and Markdown.
-3. Add CSV table previews and source highlighting, then verify editing, external
-   changes and reopening documents. Evaluate Office readers afterward.
-4. Run the applicable upstream checks and inspect the native UI before a live
-   installation. Do not use a settings-mod check that can synchronize real
-   settings to other machines.
+Implemented on `feat/workspace-ui`:
+
+- **Wide / Comfortable** controls Chat's reading width.
+- **Beside…** opens an extra view of the space Assistant or a running agent,
+  retaining its account and original tab. Extra views switch independently between
+  Chat and Terminal; closing one leaves the original agent running.
+- **Sessions** sits below **Spaces** in the sidebar, with a draggable divider.
+  It follows the selected space and its configured project folder.
+- Searchable **Closed / All** lists show saved local Codex conversations from the
+  primary home and named profiles. Selecting a row opens a read-only preview;
+  **Resume** or **Beside** reopens the exact conversation with its original account.
+- History checks for a running session before reopening it, focusing its existing
+  view or adding another view instead of launching a duplicate agent.
+
+Office previews, indexing other CLIs or remote session logs, and restoring Herdr's
+built-in Agents pane remain outside the current implementation.
+
+## Acceptance checks
+
+1. Configure two independently signed-in Codex profiles. Verify normal agent tabs
+   and the per-space Assistant select the intended account; model, thinking and
+   permission changes retain that account and conversation.
+2. Switch Chat / Terminal and Wide / Comfortable. Verify the same agent process
+   continues running and thinking/tool activity remains collapsible.
+3. Open the Assistant and another agent using **Beside…**. Switch each view's mode
+   and close an extra view; the original tabs and agent processes must survive.
+4. Use two spaces with different project roots. Verify Files stays a tree,
+   documents open separately, and Markdown/CSV Source / Preview, edits, external
+   changes and recovered drafts behave as documented.
+5. Verify Sessions follows the selected space and its folder override. Switch
+   spaces while loading history; late results must not replace the new list.
+   Search, filter and preview without starting an agent.
+6. Resume saved conversations from both Codex accounts in a new tab and beside an
+   existing pane. Verify the exact session/account and avoid duplicate processes
+   when the session is already running.
+7. Run applicable upstream checks and inspect the native UI before installation.
+   Do not run a settings-mod check that can synchronize real settings to other
+   machines. See [Contributing](../CONTRIBUTING.md) for the safe test workflow.
 
 ## Development validation
 
 The working branch now implements named Codex profiles, account-preserving session
-commands, account-bound chat controls, a persistent Files tree, and separate
-Markdown/CSV document panes. Native Linux checks verified account labels and
-Source / Preview rendering beside the tree. Chat / Terminal switching retained
-the existing agent process. The development build is installed locally; there is
-no new release tag. See the workspace guide for remaining limitations.
+commands, account-bound chat controls, a persistent Files tree, separate
+Markdown/CSV document panes, wide Chat, extra agent views and per-space Sessions.
+Native Linux checks verified account labels, Source / Preview beside the tree,
+space-scoped session lists and account-preserving history actions. Chat / Terminal
+switching and the sidebar installation retained existing agent processes. The
+development build is installed locally; there is no new release tag. See the workspace guide for remaining limitations.

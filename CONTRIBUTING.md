@@ -1,7 +1,8 @@
 # Contributing to the yurtools fork
 
 This fork is developing the account-aware workspace described in
-[the plan](docs/fork-plan.md). The working branch implements the first account and document-pane changes; see
+[the plan](docs/fork-plan.md). The working branch implements named accounts,
+document panes, side-by-side agent views and per-space session history; see
 [the usage guide](docs/workspace.md) for its current behavior and limits.
 Please keep changes focused so upstream improvements remain practical to merge.
 
@@ -74,8 +75,11 @@ settings to other machines.
 
 For account changes, verify two independent profiles through the full session
 lifecycle without copying authentication between them. For file changes, verify
-two spaces with different roots and external file edits. Follow the acceptance
-checks in the plan; a settings label alone does not prove the agent changed.
+two spaces with different roots and external file edits. For session history,
+check that the sidebar follows the selected space and that preview, resume and
+Beside retain the original account. Opening or closing an extra view must leave
+the original agent running. Follow the acceptance checks in the plan; a settings
+label alone does not prove the agent changed.
 
 ## Issues and pull requests
 

@@ -6,9 +6,9 @@ Chat / Terminal switching, reliable Codex account selection, and a separate file
 pane with Source / Preview views.
 
 **Status: development implementation on `feat/workspace-ui`.** The runtime is based
-on upstream Shepherdr 3.1.35. Account profiles and the separate document pane are
-implemented on the working branch. Markdown/CSV panes and account labels have been
-verified in the native Linux UI. There is no fork-specific release yet.
+on upstream Shepherdr 3.1.35. Named accounts, separate document panes, side-by-side
+agent views and per-space session history are implemented and verified in the
+native Linux UI. There is no fork-specific release yet.
 
 [Roadmap](docs/fork-plan.md) · [Contributing](CONTRIBUTING.md) ·
 [Issues](https://github.com/yurtools/shepherdr/issues) ·
@@ -18,7 +18,7 @@ verified in the native Linux UI. There is no fork-specific release yet.
 
 | Area | Target behavior | Status |
 | --- | --- | --- |
-| Chat / Terminal | Switch views in the same pane, retaining the running agent; collapse thinking and tool activity | Verified on Linux with the existing running agent |
+| Chat / Terminal | Switch Chat / Terminal, use Wide / Comfortable, and show existing agents beside each other | Verified on Linux with the existing running agent |
 | Codex profiles | Use separate named accounts, preserving the selected profile through launch, resume, fork and restart | Implemented on the working branch |
 | Space Assistant | Choose its agent/profile in space settings; show the assignment in chat | Implemented on the working branch |
 | Chat controls | Model, Thinking level and Permissions dropdowns bound to the assigned agent | Implemented on the working branch |
@@ -41,8 +41,8 @@ git switch feat/workspace-ui
 ```
 
 `main` contains the fork's documented baseline. `feat/workspace-ui` is the working
-branch for the account and document-pane changes. Upstream history remains
-available at [eliasstravik/shepherdr](https://github.com/eliasstravik/shepherdr).
+branch for the workspace features in the [usage guide](docs/workspace.md).
+Upstream history remains available at [eliasstravik/shepherdr](https://github.com/eliasstravik/shepherdr).
 
 For development, start with [Contributing](CONTRIBUTING.md) and the
 [implementation plan](docs/fork-plan.md). The inherited runtime requires macOS or

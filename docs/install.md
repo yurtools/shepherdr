@@ -2,7 +2,9 @@
 
 > **Fork status:** this guide describes the inherited Shepherdr 3.1.35 runtime.
 > The working branch adds the features in [the workspace guide](workspace.md);
-> select `feat/workspace-ui` before installing that development build.
+> select `feat/workspace-ui` before installing that development build. Use the
+> [fork install/update commands](workspace.md#installation-and-optional-mods)
+> to install from that checkout while preserving personal key bindings.
 > For development and scratch-root testing, start with [Contributing](../CONTRIBUTING.md).
 
 Shepherdr 3.1.35 is a layout for the Herdr app plus its mods, helpers and role instructions, and a web app for your tailnet ([Web](web.md)). One script puts them in

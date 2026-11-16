@@ -3,6 +3,26 @@
 The implementation lives on `feat/workspace-ui`. It is based on upstream 3.1.35;
 there is no new tagged release. Office previews remain a later extension.
 
+## Everyday workflow
+
+Select a space in the left sidebar. **Sessions** below it lists that space's saved
+conversations; the tab bar holds the open tabs. The **Files** button opens the
+project tree. File contents open in a separate document pane.
+
+| Action | Control |
+| --- | --- |
+| Use the same agent as chat or a terminal | **Chat / Terminal** in its pane header |
+| Change the conversation width | **Wide / Comfortable** in the Chat header |
+| Show the Assistant or another running agent alongside | **Beside…** in a pane header |
+| Reopen a closed Codex conversation | **Sessions → conversation → Resume** |
+| Resume a conversation alongside the current pane | **Sessions → conversation → Beside** |
+| Edit or render Markdown / CSV | Open it from **Files**, then choose **Source / Preview** |
+
+The upstream Shepherdr layout replaces Herdr's default sidebar and does not
+include the built-in **Agents** pane. This fork inherits that layout. **Beside…**
+selects existing agents for another view; **Sessions** provides saved local Codex
+history. Restoring the built-in Agents pane is not implemented.
+
 ## Named Codex accounts
 
 Account definitions live on each machine in
@@ -80,18 +100,41 @@ The tree retains the inherited limits of 500 entries per folder and 5,000 total.
 ## Installation and optional mods
 
 Use [the contributor workflow](../CONTRIBUTING.md) for checks and a scratch-root
-install before deploying into a live Herdr configuration. The fork installer uses
-the selected local checkout; it does not automatically follow an upstream release.
+install before deploying into a live Herdr configuration. From the fork checkout,
+update and review the installation with:
 
-Standalone Markdown preview mods can be retired after the new pane is verified.
-Blueprint remains an independent optional mod; the fork does not bundle it.
+```bash
+git switch feat/workspace-ui
+git pull --ff-only
+python3 bin/shepherdr install --source "$PWD" --yes --keys keep --dry-run
+```
+
+Apply the reviewed development build to the current user's Herdr installation:
+
+```bash
+python3 bin/shepherdr install --source "$PWD" --yes --keys keep
+python3 bin/shepherdr doctor
+```
+
+The explicit source selects this checkout. **--keys keep** preserves conflicting
+personal shortcuts. Pick **Shepherdr** in Herdr's layout selector if it is not
+already active. The installer backs up replaced files and keeps personally edited
+layouts, writing the incoming version beside them as `.new`; see the
+[installation guide](install.md) before resolving a layout conflict. Keep using
+this fork's intended branch for updates; there is no fork release tag yet.
+
+The built-in Chat and document panes cover the Agent Chat and standalone Markdown
+preview use cases. Those optional panels are not required; remove duplicates only
+after verifying their replacements. Blueprint remains an independent optional mod;
+the fork does not bundle or remove it.
 
 ## Chat width and agents beside each other
 
 Chat uses the pane width by default. Click **Wide** in its header to switch to the
 narrower **Comfortable** reading width, or click **Comfortable** to use the full
 width again. The choice is remembered across chats; row measurements, message
-actions and the composer use the same width.
+actions and the composer use the same width. Click the chevron on a thinking or
+tool-activity row to expand or collapse its details.
 
 Click **Beside…** in any pane header and choose the space's Assistant or another
 running agent. The new pane shows that existing session; it does not launch
@@ -115,10 +158,11 @@ independently of where the previous context menu was opened.
 **Sessions** lives in the sidebar directly below **Spaces** and follows the selected
 space. Drag the divider to adjust their heights. Search or filter the list, then
 click a conversation to preview it and use its resume controls. The list refreshes
-automatically; **Refresh** updates it immediately.
+automatically about every 30 seconds; **Refresh** updates it immediately. Switching
+spaces also updates the list and clears its search. In a collapsed sidebar, the
+clock button opens session history.
 
-The session preview shows this space’s saved Codex
-conversations. **Closed** is the default; **All** also shows conversations that are
+The session preview shows this space’s saved Codex conversations. **Closed** is the default; **All** also shows conversations that are
 still running. Search by conversation title, tab name, account or folder. Each
 row identifies its account and last activity; the right side previews recent
 messages without starting an agent or showing thinking/tool output.

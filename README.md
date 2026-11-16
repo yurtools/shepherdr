@@ -7,8 +7,9 @@ pane with Source / Preview views.
 
 **Status: development implementation on `main`.** The runtime is based
 on upstream Shepherdr 3.1.35. Named accounts, separate document panes, side-by-side
-agent views and per-space session history are implemented and verified in the
-native Linux UI. There is no fork-specific release yet.
+agent views, file references, source highlighting and Office content previews
+are implemented. Approval settings have automated checks and native UI inspection.
+There is no fork-specific release yet.
 
 [Roadmap](docs/fork-plan.md) · [Contributing](CONTRIBUTING.md) ·
 [Issues](https://github.com/yurtools/shepherdr/issues) ·
@@ -19,16 +20,16 @@ native Linux UI. There is no fork-specific release yet.
 | Area | Behavior | Status |
 | --- | --- | --- |
 | Chat / Terminal | Switch views of the same running agent; collapse thinking and tool activity | Implemented; live switching verified on Linux |
-| Side-by-side views | Show the Assistant or existing agents beside each other; use Wide / Comfortable Chat widths | Implemented; native Linux workflow verified |
+| Side-by-side views | Show existing agents beside each other, including from the Agents panel; adjust Chat width | Implemented; native Linux workflow verified |
 | Codex profiles | Use separate named accounts, preserving the profile through launch, resume, fork and restart | Implemented; account lifecycle covered by automated tests |
 | Space Assistant | Choose its agent/profile in space settings; show the assignment in chat | Implemented; account selection verified in the Linux UI |
-| Chat controls | Model, Thinking level and Permissions dropdowns bound to the assigned agent | Implemented; account-bound options and restart/resume paths tested |
+| Chat controls | Account-bound Model, Thinking and Permissions; scoped approval defaults in Settings → Agents | Implemented; account-bound controls and approval policy paths tested |
 | Files | Keep a persistent tree rooted at the selected space's project folder | Implemented; switching between space roots verified on Linux |
-| Documents | Open files in a separate pane, keeping the tree visible | Implemented; separate-pane workflow verified on Linux |
+| Documents | Open files separately; copy paths or reference files in a chat draft | Implemented; separate-pane workflow verified on Linux |
 | Markdown and CSV | Switch between editable source and rendered Markdown or a CSV table | Implemented; Source / Preview verified in the Linux UI |
 | Sessions | Find saved conversations below Spaces; preview, resume or open beside with the original account | Implemented; local Codex sessions across configured accounts |
-| Source code | Native editor language hints for Java, Bash, YAML and Helm templates | Partial; actual highlighting depends on Herdr's grammars |
-| Office files | Read-only Word and Excel previews | Not implemented; planned extension |
+| Source code | Highlighted source and a separate Edit view for the requested languages | Implemented; lexical colors include Helm, Liquibase and Terraform |
+| Office files | Read-only DOCX content and Excel worksheet previews | Implemented; local OOXML files, with documented limits |
 
 The agent is assigned when a regular agent pane opens, or in the space's Assistant
 settings. The chat composer does not need another agent selector. Each Codex

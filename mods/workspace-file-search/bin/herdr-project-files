@@ -1,0 +1,30 @@
+#!/usr/bin/env python3
+"""List bounded project files for the native @file picker; no files are changed."""
+import json, os, subprocess, sys
+from pathlib import Path
+SKIP={'.git','node_modules','.terraform','.venv','venv','__pycache__','dist','build','target','.next'}
+def files(root, limit=5000):
+ root=os.path.realpath(root)
+ if not os.path.isdir(root): raise ValueError('Project folder is not available.')
+ try:
+  r=subprocess.run(['git','ls-files','--cached','--others','--exclude-standard','-z','--','.'],cwd=root,capture_output=True,timeout=5)
+  if r.returncode==0:
+   values=[]
+   for raw in r.stdout.decode('utf8','replace').split('\0'):
+    if not raw or raw.startswith('/') or '..' in raw.split('/') or any(x in SKIP for x in raw.split('/')): continue
+    if os.path.isfile(os.path.join(root,raw)): values.append(raw)
+    if len(values)>limit: break
+   return {'root':root,'files':sorted(set(values[:limit])),'limited':len(values)>limit}
+ except (OSError,subprocess.TimeoutExpired): pass
+ values=[];visited=0
+ for path,dirs,names in os.walk(root,followlinks=False):
+  dirs[:]=sorted(d for d in dirs if d not in SKIP and not os.path.islink(os.path.join(path,d)))
+  for name in sorted(names):
+   values.append(os.path.relpath(os.path.join(path,name),root).replace(os.sep,'/'))
+   if len(values)>=limit:return {'root':root,'files':values,'limited':True}
+  visited+=1
+  if visited>5000:return {'root':root,'files':values,'limited':True}
+ return {'root':root,'files':values,'limited':False}
+if __name__=='__main__':
+ try: print(json.dumps(files(sys.argv[1]),ensure_ascii=False))
+ except Exception as e: print(json.dumps({'error':str(e)}));sys.exit(1)

@@ -1,3 +1,5 @@
+import { keepKeys, dropKeys } from "./keyholder.js";
+import { approvalsInit, approvalsSection, approvalsFlush } from "./approval-section.js";
 // Settings: Shepherdr's settings window (the sidebar foot's Shepherdr; lib/ui.js openSettings). How
 // Assistants, workers and reviewers run, how tasks are reviewed, merged and queued, Autopilot,
 // Notify, Secrets, Machines and the Window's switches; Herdr's own settings are the sidebar foot's
@@ -90,6 +92,7 @@ export default class ShepherdrSettings extends View {
     this.folders = {}; // space id -> its task folder (repo root)
     this.handle = cx.focus_handle();
     this.handle.focus();
+    this.approvalKeyHolder=`dialog:shepherdr-settings:${p.overlay??"settings"}`;keepKeys(this.approvalKeyHolder);cx.timer.every(1500,()=>keepKeys(this.approvalKeyHolder));
     // Secrets: its boxes and list (secrets-section.js); a space's settings add for that space.
     this.sec = secretsInit(cx);
     this.secFor();
@@ -100,6 +103,7 @@ export default class ShepherdrSettings extends View {
     this.fr = feedbackInit(this);
     // Autopilot: one setting for every space, kept by herdr-task (autopilot-section.js).
     this.ap = autopilotInit(this, cx);
+    approvalsInit(this, cx);
     // The add-ons Window's switches offer (lib/addons.json, layout.js).
     this.addons = null;
     cx.spawn(async (cx) => { this.addons = await manifest(); cx.notify(); });
@@ -287,7 +291,7 @@ export default class ShepherdrSettings extends View {
 
   // Into a space's own settings (null: Everywhere's). A page the space doesn't have goes to Agents.
   pickScope(id, cx) {
-    const saving = Promise.all([this.flushNotes(), autopilotFlush(this)]);
+    const saving = Promise.all([this.flushNotes(), autopilotFlush(this), approvalsFlush(this)]);
     this.scope = id;
     this.listOpen = null;
     this.levelOpen = false;
@@ -387,7 +391,8 @@ export default class ShepherdrSettings extends View {
   // Escape, a click beside the window, and Herdr's own close: a note typed a moment ago is
   // still saved.
   close() {
-    const saving = Promise.all([this.flushNotes(), autopilotFlush(this)]);
+    dropKeys(this.approvalKeyHolder);
+    const saving = Promise.all([this.flushNotes(), autopilotFlush(this), approvalsFlush(this)]);
     this.sec?.value.set_value("");
     closeOverlay(props().overlay);
     return saving;
@@ -485,6 +490,7 @@ export default class ShepherdrSettings extends View {
     return v_flex()
       .child(this.title(t, page("agents")))
       .children(ROLES.map((r) => this.roleRow(t, r, cx)))
+      .child(approvalsSection(this, t, cx))
       .child(this.backupRow(t))
       .child(this.reactionsRow(t))
       .child(feedbackRow(this, t))

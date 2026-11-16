@@ -1,3 +1,5 @@
+import AgentPanel from "./panel.js";
+import { inRender } from "./live.js";
 import { View, div } from "gpui-kit";
 import { v_flex } from "gpui-base";
 import { props, closeOverlay, theme, nextCommand } from "herdr";
@@ -5,6 +7,7 @@ import { besideChoices, openBeside } from "./companions.js";
 import { menuRow, toast, plainError } from "./ui.js";
 export default class Agents extends View {
   init(_props, cx) {
+    if(props()?.panel){this.panel=new AgentPanel();this.panel.init(cx);return;}
     this.handle = cx.focus_handle(); this.handle.focus(); this.selected = 0;
     cx.spawn(async (cx) => {
       for (;;) {
@@ -23,7 +26,9 @@ export default class Agents extends View {
       catch (e) { this.busy = false; toast({ title: "Agent view didn't open", body: plainError(e), level: "error" }); }
     });
   }
+  close(){this.panel?.close();}
   render(cx) {
+    if(this.panel)return inRender(()=>this.panel.draw(cx));
     const t = theme(), rows = besideChoices(props()?.pane);
     return v_flex().id("beside-agents").track_focus(this.handle).w_full().max_h(460).p(6).gap(2).bg(t.popover)
       .on_key_down((e, cx) => {

@@ -184,7 +184,7 @@ export default class Tabs extends View {
     const panel = find(root, "panel"), body = find(root, "panel-body");
     // Tasks and Artifacts are offered (Artifacts unless its add-on is off), beside whichever of
     // Files and Changes are on.
-    const enabled = [...(shared("workspace.panels") ?? ["files", "changes"]), "tasks", ...(addonOn("artifacts") ? ["artifacts"] : [])];
+    const enabled = [...(shared("workspace.panels") ?? ["files", "changes"]), "agents", "tasks", ...(addonOn("artifacts") ? ["artifacts"] : [])];
     this.syncPanel(space, panel, body, enabled);
     // The side panels' buttons, one style for all: icon first; the label when the bar has room
     // (the open one keeps its label); a count after the icon (Tasks': what needs the person, red,
@@ -211,6 +211,7 @@ export default class Tabs extends View {
       .on_scroll_wheel(e => { if (Math.abs(e.delta.y) >= 1) run(e.delta.y > 0 ? "tab.prev" : "tab.next"); })
       .child(h_flex().id("tab-scroll").flex_1().min_w(0).h_full().items_center().gap(3).overflow_x_scrollbar().children(tabsShown ? shown.map(item) : []))
       .child(button("tab-new", "+", () => openOverlay({ mod: "new-menu-tasks", kind: "popup", width: 250, height: 543, props: { right: this.right } })))
+      .child(panelButton("agents", "Agents", "mods/shepherdr-settings/bot.svg"))
       .when(enabled.includes("files"), el => el.child(panelButton("files", "Files", "mods/files/file.svg")))
       .when(enabled.includes("changes"), el => el.child(panelButton("changes", "Changes", "mods/changes/changes.svg")))
       .child(panelButton("tasks", "Tasks", "mods/tasks/tasks.svg", [counts ? inboxCount() : 0, greens ? readyCount() : 0]))

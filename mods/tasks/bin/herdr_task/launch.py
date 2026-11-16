@@ -802,11 +802,16 @@ def launch(s, task, argv, space, message=None, parent=None, resume=None, role=No
     cmd = list(resume or argv)
     if not role:
         cmd = own_argv(cmd, folder_for(s, task))
+    from .approvals import launch_argv
+    approval_mode = task.get("approval_mode")
+    cmd = launch_argv(cmd, bare(space), "reviewer" if role else "worker", folder_for(s, task), approval_mode)
     if message:
         cmd = cmd + [message]
     labels = ["--label", f"herdr.task={key}", "--label", f"herdr.task.space={bare(space)}",
               "--label", f"herdr.agent={agent_key(argv)}"]
     ctab = coordinator_tab(parent)
+    if approval_mode:
+        labels += ["--label", f"herdr.approval.mode={approval_mode}"]
     if ctab:
         labels += ["--label", f"herdr.coordinator={ctab}"]
     if role:

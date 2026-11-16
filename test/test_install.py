@@ -804,6 +804,36 @@ class LayoutBrandRow(unittest.TestCase):
         d = json.load(open(os.path.join(ROOT, "layouts", "shepherdr.json")))
         self.assertEqual(self.brand(d)["content"]["mod"], "workspace-chrome-shepherdr")
 
+    def test_agents_panel_is_added_once_without_resetting_a_personalized_layout(self):
+        run("install", "--root", self.root, "--yes", "--source", ROOT)
+        mine = os.path.join(self.root, APP, "layouts", "shepherdr.json")
+        with open(mine) as f: d = json.load(f)
+        d["children"][0]["size"] = {"px": 333}
+        def find(n, ident):
+            if isinstance(n, dict):
+                if n.get("id") == ident: return n
+                for v in n.values():
+                    got = find(v, ident)
+                    if got is not None: return got
+            if isinstance(n, list):
+                for v in n:
+                    got = find(v, ident)
+                    if got is not None: return got
+        panel = find(d, "panel-body")
+        panel["children"] = [c for c in panel["children"] if c.get("id") != "agents"]
+        panel["active"] = "files"
+        find(d, "spaces")["size"] = {"px": 287}
+        with open(mine, "w") as f: json.dump(d, f, indent=2)
+        up = run("update", "--root", self.root, "--source", ROOT).stdout
+        with open(mine) as f: after = json.load(f)
+        self.assertEqual(after["children"][0]["size"], {"px": 333})
+        self.assertEqual(find(after, "spaces")["size"], {"px": 287})
+        self.assertEqual(find(after, "panel-body")["active"], "files")
+        self.assertEqual(len([c for c in find(after, "panel-body")["children"] if c.get("id") == "agents"]), 1)
+        self.assertIn("the Agents panel", up)
+        again = run("update", "--root", self.root, "--source", ROOT).stdout
+        self.assertNotIn("the Agents panel", again)
+
     def test_an_older_layout_the_person_resized_gets_only_its_brand_row_moved(self):
         old = os.path.join(self.src, "s")
         shutil.copytree(ROOT, old, ignore=shutil.ignore_patterns(".git", "node_modules"))

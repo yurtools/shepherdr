@@ -1,0 +1,117 @@
+#!/usr/bin/env python3
+"""Bounded, read-only OOXML content preview. Never extracts or executes embedded files/macros."""
+import argparse, csv, datetime, io, json, posixpath, re, sys, zipfile
+import xml.etree.ElementTree as ET
+from pathlib import Path
+MAX_MEMBER = 16 * 1024 * 1024
+MAX_TOTAL = 64 * 1024 * 1024
+MAX_CHARS = 400000
+W = '{http://schemas.openxmlformats.org/wordprocessingml/2006/main}'
+S = '{http://schemas.openxmlformats.org/spreadsheetml/2006/main}'
+R = '{http://schemas.openxmlformats.org/officeDocument/2006/relationships}'
+class Package:
+ def __init__(self, path):
+  if Path(path).stat().st_size > MAX_TOTAL: raise ValueError('Office preview is limited to 64 MiB files.')
+  self.zip = zipfile.ZipFile(path)
+  infos = self.zip.infolist()
+  if len(infos) > 10000 or sum(x.file_size for x in infos) > MAX_TOTAL: raise ValueError('Office package exceeds the preview size limit.')
+ def xml(self, name, optional=False):
+  try: info = self.zip.getinfo(name)
+  except KeyError:
+   if optional: return None
+   raise ValueError('Missing Office document part: ' + name)
+  if info.file_size > MAX_MEMBER: raise ValueError('Office document part exceeds the preview size limit.')
+  raw = self.zip.read(info)
+  if b'<!DOCTYPE' in raw or b'<!ENTITY' in raw: raise ValueError('XML document type declarations are not supported.')
+  return ET.fromstring(raw)
+ def close(self): self.zip.close()
+def text(el, ns): return ''.join(t.text or '' for t in el.iter(ns + 't'))
+def escaped(s): return re.sub(r'([\\`*_\[\]<>|])', r'\\\1', s)
+def paragraph(p):
+ out=[]
+ for r in p.iter(W+'r'):
+  value=''.join((e.text or '') if e.tag==W+'t' else '\n' if e.tag==W+'br' else '\t' if e.tag==W+'tab' else '' for e in r)
+  value=escaped(value)
+  pr=r.find(W+'rPr')
+  if pr is not None and pr.find(W+'b') is not None and value.strip(): value='**'+value+'**'
+  if pr is not None and pr.find(W+'i') is not None and value.strip(): value='*'+value+'*'
+  out.append(value)
+ result=''.join(out)
+ style=p.find(W+'pPr/'+W+'pStyle')
+ if style is not None:
+  m=re.search(r'heading\s*([1-6])',style.get(W+'val',''),re.I)
+  if m: result='#'*int(m[1])+' '+result
+ if p.find(W+'pPr/'+W+'numPr') is not None: result='- '+result
+ return result
+
+def word(pkg):
+ root=pkg.xml('word/document.xml');body=root.find(W+'body');blocks=[];limited=False;chars=0
+ for e in body if body is not None else []:
+  if e.tag==W+'p': value=paragraph(e)
+  elif e.tag==W+'tbl':
+   rows=[[ '<br>'.join(paragraph(p) for p in c.findall(W+'p')).replace('\n',' ') for c in row.findall(W+'tc')[:50]] for row in e.findall(W+'tr')[:500]]
+   width=max([len(r) for r in rows] or [0]);rows=[r+['']*(width-len(r)) for r in rows]
+   value='\n'.join('| '+' | '.join(r)+' |' for r in ([rows[0],['---']*width,*rows[1:]] if rows else []))
+  else: continue
+  if chars+len(value)>MAX_CHARS: limited=True;break
+  blocks.append(value);chars+=len(value)+2
+ return {'kind':'docx','markdown':'\n\n'.join(blocks),'limited':limited,'notice':'Read-only content preview. Page layout, images, comments and tracked-change formatting are not reproduced.'}
+
+def cell_index(address):
+ n=0
+ for c in re.match(r'[A-Za-z]+',address or 'A')[0].upper(): n=n*26+ord(c)-64
+ return n-1
+
+def excel(pkg):
+ wb=pkg.xml('xl/workbook.xml');rels=pkg.xml('xl/_rels/workbook.xml.rels');targets={r.get('Id'):r.get('Target') for r in rels}
+ strings=pkg.xml('xl/sharedStrings.xml',True);strings=[text(t,S) for t in strings] if strings is not None else []
+ styles=pkg.xml('xl/styles.xml',True);date_styles=set()
+ if styles is not None:
+  fmts={int(f.get('numFmtId','0')):f.get('formatCode','') for f in styles.findall(S+'numFmts/'+S+'numFmt')}
+  for i,xf in enumerate(styles.findall(S+'cellXfs/'+S+'xf')):
+   fmt=int(xf.get('numFmtId','0'));pattern=re.sub(r'"[^\"]*"|\\.|\[[^\]]*\]','',fmts.get(fmt,''))
+   if fmt in set(range(14,23))|set(range(45,48)) or re.search('[dyh]|m{2,}',pattern,re.I): date_styles.add(i)
+ props=wb.find(S+'workbookPr');epoch=datetime.datetime(1904,1,1) if props is not None and props.get('date1904') in ('1','true') else datetime.datetime(1899,12,30)
+ sheets=[];total_chars=0
+ for sheet in wb.findall(S+'sheets/'+S+'sheet')[:100]:
+  target=targets.get(sheet.get(R+'id'),'');part=posixpath.normpath(target.lstrip('/') if target.startswith('/') else 'xl/'+target)
+  if not part.startswith('xl/') or '..' in part.split('/'): raise ValueError('Invalid worksheet relationship.')
+  root=pkg.xml(part);rows=[];limited=False;formulas=0;last=0
+  for line in root.findall(S+'sheetData/'+S+'row'):
+   row_num=int(line.get('r',str(last+1)))
+   if row_num>500 or len(rows)>=500: limited=True;break
+   while last+1<row_num: rows.append([]);last+=1
+   row=[]
+   for c in line.findall(S+'c'):
+    col=cell_index(c.get('r','A1'))
+    if col>=100: limited=True;continue
+    while len(row)<=col: row.append('')
+    v=c.find(S+'v');val=v.text if v is not None and v.text is not None else '';typ=c.get('t')
+    if c.find(S+'f') is not None: formulas+=1;val=val or '[formula: no cached value]'
+    if typ=='s': val=strings[int(val)] if val.isdigit() and int(val)<len(strings) else ''
+    elif typ=='inlineStr': val=text(c,S)
+    elif typ=='b': val='TRUE' if val=='1' else 'FALSE'
+    elif int(c.get('s','0')) in date_styles and val and typ not in ('str','e'):
+     try:
+      serial=float(val);dt=epoch+datetime.timedelta(days=serial+(1 if epoch.year==1899 and serial<60 else 0));val=dt.isoformat(sep=' ',timespec='seconds');val=val[:-9] if val.endswith(' 00:00:00') else val
+     except (ValueError,OverflowError): pass
+    total_chars+=len(val)
+    if total_chars>MAX_CHARS: limited=True;break
+    row[col]=val
+   rows.append(row);last=row_num
+   if total_chars>MAX_CHARS: break
+  sheets.append({'name':sheet.get('name','Sheet'),'rows':rows,'limited':limited,'formulas':formulas})
+  if total_chars>MAX_CHARS: break
+ return {'kind':'excel','sheets':sheets,'limited':len(wb.findall(S+'sheets/'+S+'sheet'))>len(sheets),'notice':'Read-only worksheet data. Formulas show saved cached values; macros, charts and external links are never executed.'}
+
+def preview(path):
+ ext=Path(path).suffix.lower()
+ if ext in ('.xls','.xlsb','.doc'): raise ValueError('Legacy binary Office files are not supported. Save a copy as DOCX or XLSX to preview it.')
+ if ext not in ('.docx','.xlsx','.xlsm','.xltx'): raise ValueError('Supported Office previews: DOCX, XLSX, XLSM and XLTX.')
+ pkg=Package(path)
+ try: return word(pkg) if ext=='.docx' else excel(pkg)
+ finally: pkg.close()
+if __name__=='__main__':
+ ap=argparse.ArgumentParser();ap.add_argument('path');args=ap.parse_args()
+ try: print(json.dumps(preview(args.path),ensure_ascii=False))
+ except Exception as e: print(json.dumps({'error':str(e)}));sys.exit(1)

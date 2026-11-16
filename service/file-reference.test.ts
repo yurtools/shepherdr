@@ -1,0 +1,10 @@
+import { beforeEach, expect, mock, test } from 'bun:test';
+import { fakeHerdr } from './fake-herdr';
+let ps:any[],ss:any[],calls:any[];const state=new Map();
+mock.module('herdr',()=>fakeHerdr({shared:(k:string)=>state.get(k),setShared:(k:string,v:any)=>state.set(k,v),panes:()=>ps,spaces:()=>ss,run:(c:string,a:any)=>calls.push([c,a]),openOverlay:(x:any)=>calls.push(['overlay',x])}));
+const F=await import('../mods/workspace-file-actions/file-reference.js');
+beforeEach(()=>{state.clear();calls=[];ss=[{id:'space',active:true,tabs:[{id:'one',name:'Assistant'},{id:'two',name:'Account 2'}]}];ps=[{pane:'chat1',tab:'one',mod:'chat'},{pane:'chat2',tab:'two',mod:'chat'},{pane:'doc',tab:'one',mod:'workspace-document'},{pane:'other',tab:'elsewhere',mod:'chat'}];});
+test('project-relative paths respect folder boundaries',()=>{expect(F.relativeFile('/repo','/repo/src/a.ts')).toBe('src/a.ts');expect(F.relativeFile('/repo','/repository/a.ts')).toBe('/repository/a.ts');});
+test('only this space chats appear and account labels remain distinct',()=>{state.set('workspace.chat-targets',{chat1:{account:'Codex'},chat2:{account:'Codex (Account 2)'}});state.set('workspace.chat-last',{space:'chat2'});const rows=F.referenceTargets();expect(rows.map((x:any)=>x.pane)).toEqual(['chat2','chat1']);expect(rows[0].account).toBe('Codex (Account 2)');});
+test('reference goes to one draft without sending or changing its agent',()=>{const target=F.referenceTargets()[1];F.queueReference(target,{file:'/repo/source.ts',root:'/repo',on:null});const queued=state.get('workspace.file-references');expect(queued.chat2[0].file).toBe('/repo/source.ts');expect(queued.chat1).toBeUndefined();expect(calls.some(([x]:any)=>/send|restart|launch/.test(x))).toBe(false);});
+test('a remote reference cannot silently point a local agent at a different file',()=>{expect(()=>F.queueReference(F.referenceTargets()[0],{file:'/repo/source.ts',on:'other-machine'})).toThrow('same computer');expect(state.has('workspace.file-references')).toBe(false);});

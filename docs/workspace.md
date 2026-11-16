@@ -1,7 +1,7 @@
 # Workspace UI development build
 
 The implementation is available on `main`. It is based on upstream 3.1.35;
-there is no new tagged release. Office previews remain a later extension.
+there is no new tagged release. The additional source and Office previews are included.
 
 ## Everyday workflow
 
@@ -18,10 +18,10 @@ project tree. File contents open in a separate document pane.
 | Resume a conversation alongside the current pane | **Sessions → conversation → Beside** |
 | Edit or render Markdown / CSV | Open it from **Files**, then choose **Source / Preview** |
 
-The upstream Shepherdr layout replaces Herdr's default sidebar and does not
-include the built-in **Agents** pane. This fork inherits that layout. **Beside…**
-selects existing agents for another view; **Sessions** provides saved local Codex
-history. Restoring the built-in Agents pane is not implemented.
+The **Agents** button opens a right-hand panel listing the space's Assistant and
+running agents, including task workers. **Open** focuses their existing view;
+**Beside** shows the same session alongside the current pane. It does not launch
+another agent. **Sessions** below Spaces remains the saved local Codex history.
 
 ## Named Codex accounts
 
@@ -78,16 +78,28 @@ that pane. **+ Pane**, or Shift-click on a file, requests an additional pane.
 - Markdown: **Source / Preview** switches between the editor and rendered content.
 - CSV / TSV: **Source / Preview** switches between raw text and a table. Choose
   Auto, Comma, Tab or Semicolon for the delimiter. Arrow controls move through rows.
-- Text and code: source editor with a language hint for Java, Bash, YAML and Helm
-  templates. Actual highlighting depends on the grammars in the installed Herdr
-  editor; Helm's mixed YAML/template syntax is not an IDE language service.
-- Word and Excel: no dedicated preview in this build yet.
+- Text and code: **Highlight / Edit** for HTML, CSS, TypeScript, JavaScript, Java,
+  SQL, Bash, XML, JSON, YAML, Python and Terraform/HCL. Helm YAML and `.tpl` files
+  color embedded `{{…}}` templates. Liquibase changelogs use their XML, YAML,
+  JSON or formatted-SQL highlighting. The read-only Highlight view supplies its
+  own lexical colors, so it does not depend on Herdr editor grammars. Edit uses
+  the native editor. These are source colors, not semantic analysis, validation,
+  autocomplete or an IDE language service.
+- Word: read-only `.docx` content preview with headings, paragraphs, basic emphasis,
+  bullets and tables. Page layout, images, comments and tracked-change fidelity
+  are not reproduced.
+- Excel: read-only `.xlsx`, `.xlsm` and `.xltx` worksheet tables with sheet buttons,
+  sparse cells, cached formula values and common date formats. Formulas are not
+  recalculated; missing cached values are identified. Charts, images, formatting,
+  merged-cell layout and macros are not rendered or executed. Use **Reload preview**
+  after saving changes in Office. Office preview is local-only; open a local copy
+  of a remote file. Legacy `.doc`, `.xls` and `.xlsb` show a conversion instruction.
 
 **Save** or Ctrl+S writes a local file only when its disk contents still match the
 version loaded. Unsaved drafts are kept under `data/document-drafts/` and recovered
 when reopening that file. A conflicting external change leaves the draft intact;
 **Discard draft and reload** explicitly accepts the disk version. Clean views
-refresh automatically. Remote files are read only.
+refresh automatically. Remote text files are read only. Office files have no Edit or Save action.
 
 Ctrl+Shift+P selects Preview; Ctrl+Shift+O selects Source in a document pane.
 The equivalent commands are `workspace-document.preview`,
@@ -96,6 +108,39 @@ The equivalent commands are `workspace-document.preview`,
 The editor accepts text up to 400,000 characters. CSV preview is bounded to 500
 rows and 100 columns, showing up to 40 rows per page; Source retains the full file.
 The tree retains the inherited limits of 500 entries per folder and 5,000 total.
+Highlight shows at most 12,000 lines while Edit retains the full loaded source.
+Office parsing is bounded to 64 MiB of uncompressed archive members, 16 MiB per
+member and 400,000 output characters. Excel previews include at most 100 sheets,
+500 rows and 100 columns per sheet, with 40 rows per page. A notice identifies
+truncation. Open oversized or layout-sensitive documents in their usual app.
+
+## Refer to project files in chat
+
+Right-click a file in **Files** to copy its project-relative or absolute path, or
+choose **Reference in chat**. The document toolbar provides **Copy path** and
+**Reference in chat** too. If several chats are open in that space, choose the
+target by its title and account. The file is added as an attachment to that pane's
+existing draft; it is not sent automatically and does not change its agent/account.
+
+In Chat, use **@ File** or type `@` after whitespace at the caret to open the project
+file picker. Search by path, then Enter to choose or Escape to close. The picker
+uses the selected space's Files root, respects Git ignores in a repository and
+lists up to 5,000 files. Search is limited to that listing. Direct references from
+Files are available for files outside the listing. The `chat.project-files`
+command opens the same picker from the focused chat.
+
+References use the file on disk, including unsaved document edits only after you
+save them. Files on the agent's own machine retain their path; local attachments
+for a remote agent follow the existing upload flow. A file on another remote
+machine must first be copied to a location the target agent can access.
+
+## Approval defaults and remembered decisions
+
+Open **Shepherdr settings → Agents** (or the same tab in Space settings) and scroll
+to **Approvals**. The default remains **Ask me**. Choose a default and optional
+Assistant, Workers and Reviewer overrides. These settings are separate from the
+chat composer's execution Permissions and from **Autopilot**. See
+[approval modes, rules and limits](approvals.md) for the complete workflow.
 
 ## Installation and optional mods
 
@@ -152,6 +197,14 @@ its configured space account.
 
 Settings account/model menus and Chat dropdowns anchor to the control pressed,
 independently of where the previous context menu was opened.
+
+Chat row measurements now ignore small size jitter, stop remeasuring settled
+rows, and change their render revision when reply content changes. Hover updates
+only when crossing to another message. Scroll following uses the viewport's
+position instead of treating a partially visible final reply as the bottom.
+Regression tests cover these paths; the exact long-conversation mouse-hover
+scenario still needs confirmation in everyday use because the native automation
+interface cannot synthesize that pointer interaction.
 
 ## Closed conversations
 

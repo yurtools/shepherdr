@@ -1,3 +1,4 @@
+import { rememberedControls, recordPermission } from "./approval-cards.js";
 // The card that answers what Claude asks through the PermissionRequest hook (asks.js): a
 // permission or a plan (Allow / Deny), or questions (AskUserQuestion: steps, options, "Other…",
 // "Chat about this", one Submit). The chat shows it in the conversation where it was asked, as
@@ -59,10 +60,12 @@ export class AskCards {
     } else {
       const ctls = [];
       // Always answerable here; only a request the chat couldn't read at all goes to the terminal.
-      if (!w.unread) ctls.push({ id: `ask-allow-${id}`, label: w.kind === "plan" ? "Approve" : "Allow", look: "primary", fn: (cx) => this.host.reply(ask, allow(), cx) });
+      if (!w.unread) ctls.push({ id: `ask-allow-${id}`, label: w.kind === "plan" ? "Approve" : "Allow once", look: "primary", fn: (cx) => { const text=allow(); recordPermission(ask,text,this.host,cx); this.host.reply(ask,text,cx); } });
       ctls.push({ id: `ask-deny-${id}`, label: w.kind === "plan" ? "Keep planning" : "Deny", look: "secondary",
-        fn: (cx) => this.host.reply(ask, w.kind === "plan" ? deny("The person didn't approve this plan yet. Ask them what to change.") : deny(), cx) });
+        fn: (cx) => { const text=w.kind === "plan" ? deny("The person didn't approve this plan yet. Ask them what to change.") : deny(); recordPermission(ask,text,this.host,cx);this.host.reply(ask,text,cx); } });
       out.push({ key: "actions", kind: "controls", align: "start", ctls });
+      const remembered=rememberedControls(ask,this.host);
+      if(remembered.length){out.push({key:"rule-actions",kind:"controls",align:"start",ctls:remembered.slice(0,2)});out.push({key:"review-action",kind:"controls",align:"start",ctls:remembered.slice(2)});}
     }
     return out;
   }

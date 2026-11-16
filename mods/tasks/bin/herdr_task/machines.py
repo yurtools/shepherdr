@@ -140,7 +140,7 @@ def manifest():
     # The chat's question-card hook (SHEP-139): a task worker's own hook (herdr-task _allow) runs it,
     # so a machine that only runs tasks asks on the card too. From Herdr's app home, else the copy
     # a sync left here (this machine passes it on).
-    for name, mode in (("ask-hook.sh", 0o755), ("ask-end.py", 0o644)):
+    for name, mode in (("ask-hook.sh", 0o755), ("ask-end.py", 0o644), ("approval-policy.py", 0o755)):
         p = next((x for x in (os.path.join(APP_HOME, "mods", "chat", name), os.path.join(HOME, ASK_HOME, name)) if os.path.isfile(x)), None)
         if p:
             add(f"{ASK_HOME}/{name}", _read(p), mode, [p])

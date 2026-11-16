@@ -52,7 +52,7 @@ id="$t.$(date +%s).$$"
 req="$d/req/$id.json"
 ans="$d/ans/$id.json"
 end="$d/end/$id"
-done_() { rm -f "$req" "$req.tmp" "$ans"; exit 0; }
+done_() { rm -f "$req" "$req.tmp" "$ans" "${req%.json}.context"; exit 0; }
 # Over without a decision from here: why, for the card's quiet line, then go.
 ended() { printf '%s\n' "$1" > "$end.tmp" 2>/dev/null && mv "$end.tmp" "$end" 2>/dev/null; done_; }
 # Claude stops the hook itself when its prompt is refused or interrupted in the terminal.
@@ -60,6 +60,23 @@ trap 'ended "$(how declined)"' TERM INT HUP
 mkdir -p "$d/req" "$d/ans" "$d/end" 2>/dev/null || exit 0
 find "$d/end" -type f -mmin +1440 -delete 2>/dev/null
 cat > "$req.tmp" 2>/dev/null && mv "$req.tmp" "$req" 2>/dev/null || done_
+
+# Local policy makes explicit remembered grants, delegated reviews, and native Codex review
+# available without an agent editing its own settings. Missing policy support keeps manual cards.
+policy="$(dirname "$0")/approval-policy.py"
+policy_check() {
+  [ -f "$policy" ] || return
+  result=$(python3 "$policy" evaluate --request "$req" --terminal "$t" 2>/dev/null) || return
+  action=$(printf '%s' "$result" | jq -r '.action // "wait"' 2>/dev/null)
+  case "$action" in
+    allow|deny)
+      printf '%s' "$result" | jq -c '.response'
+      printf '%s' "$result" | jq -r '.reason // "Approval policy decision"' > "$end.tmp" && mv "$end.tmp" "$end"
+      done_ ;;
+    native) ended "Sent to Codex Auto-review" ;;
+  esac
+}
+policy_check
 
 # Claude's own status now: blocked, working, idle, done; "gone" once the terminal ended.
 status() {
@@ -94,6 +111,7 @@ while [ "$i" -lt 6000 ]; do
   else
     fresh || done_
   fi
+  [ $((i % 10)) -eq 9 ] && policy_check
   sleep 0.3
   i=$((i + 1))
 done

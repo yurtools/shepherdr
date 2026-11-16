@@ -26,6 +26,7 @@ ASSISTANT_TEMPLATES = ("assistant", "coordinator")  # "coordinator": Assistants 
 DEFAULTS = {"tasks": {"merge": "ask", "review_rounds": 0, "must_fix": "major", "max_running": MAX_RUNNING, "worktrees": True,
                       "start_notes": "", "finish_notes": "", "archive_after": 7, "proof": True, "base": "", "branch": "",
                       "worktree_root": ""},
+            "approvals": {"mode": "manual", "coordinator": "inherit", "worker": "inherit", "reviewer": "inherit"},
             "automations": {"enabled": True}, "worker": {}, "reviewer": {}, "coordinator": {}, "backup": {},
             "agents": {"reactions": True, "suggestions": True, "feedback": True, "feedback_repo": "eliasstravik/shepherdr"}}
 LEVELS = ["blocker", "major", "minor"]
@@ -341,6 +342,10 @@ def set_task(t, key, value):
 def set_opts(t, args):
     """add/edit's --set pairs and --agent, --model, --effort, --reviewer, --reviewer-model,
     --reviewer-effort, in that order (a --set pair wins over its flag)."""
+    mode=getattr(args,"approval_mode",None)
+    if mode=="inherit":t.pop("approval_mode",None)
+    elif mode in ("manual","rules","assistant","codex-review"):t["approval_mode"]=mode
+    elif mode is not None:raise Fail("Invalid approval mode")
     for flag in ("agent", "model", "effort", "reviewer", "reviewer_model", "reviewer_effort"):
         v = getattr(args, flag, None)
         if v is not None:

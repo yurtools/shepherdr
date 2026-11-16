@@ -723,6 +723,12 @@ def move_layout_blocks(text, name):
 
     def walk(n):
         if isinstance(n, dict):
+            # Add the new Agents panel to personalized layouts without resetting widths,
+            # split proportions, selected panels, or the Sessions section below Spaces.
+            if name == "shepherdr" and n.get("id") == "panel-body" and isinstance(n.get("children"), list):
+                if not any(c.get("id") == "agents" for c in n["children"] if isinstance(c, dict)):
+                    n["children"].append({"id": "agents", "type": "block", "content": {"mod": "workspace-agents", "props": {"panel": True}}})
+                    said.append("the Agents panel, keeping your layout sizes")
             for _, node, old, new, why in moves:
                 c = n.get("content")
                 if n.get("id") == node and isinstance(c, dict) and c.get("mod") == old:

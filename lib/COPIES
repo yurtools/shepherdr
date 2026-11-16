@@ -14,7 +14,7 @@ core/needs.js: chat jump spaces-chat tabs-tasks tasks workspace-status-chat toas
 core/tasks.js: chat jump tasks
 core/notify.js: chat spaces-chat tabs-tasks tasks shepherdr-settings workspace-status-chat
 parked.js: chat spaces-chat tabs-tasks workspace-status-chat
-keyholder.js: chat tasks newspace workspace-sessions
+keyholder.js: shepherdr-settings workspace-agents workspace-approvals workspace-file-search chat tasks newspace workspace-sessions
 unread.js: chat spaces-chat
 agent.js: chat newspace shepherdr-settings
 settings.js: chat newspace shepherdr-settings
@@ -51,11 +51,11 @@ service.js: chat shepherdr-settings tabs-tasks
 bridge.js: tabs-tasks
 local.js: chat shepherdr-settings tabs-tasks
 machines.js: spaces-chat shepherdr-settings
-ui.js: accept-card artifacts chat chat-call chat-image chat-models chat-react coordinator jump toasts menu-tasks new-menu-tasks newspace pane-chat shepherdr-settings spaces-chat tabs-tasks task-browser task-pr tasks tasks-menu workspace-chrome-shepherdr workspace-status-chat confirm-chat prompt-chat machine-add-chat keybinds task-artifacts workspace-agents workspace-sessions
+ui.js: workspace-approvals workspace-file-search workspace-files workspace-document workspace-file-actions accept-card artifacts chat chat-call chat-image chat-models chat-react coordinator jump toasts menu-tasks new-menu-tasks newspace pane-chat shepherdr-settings spaces-chat tabs-tasks task-browser task-pr tasks tasks-menu workspace-chrome-shepherdr workspace-status-chat confirm-chat prompt-chat machine-add-chat keybinds task-artifacts workspace-agents workspace-sessions
 artview.js: accept-card artifacts chat chat-image jump task-artifacts
 artifact-sidebar.js: chat-image jump
 addons.js: chat pane-chat shepherdr-settings tabs-tasks artifacts jump accept-card toasts spaces-chat workspace-chrome-shepherdr
-live.js: chat coordinator jump menu-tasks new-menu-tasks newspace pane-chat shepherdr-settings spaces-chat tabs-tasks tasks workspace-status-chat workspace-agents workspace-sessions
+live.js: workspace-file-search workspace-files workspace-document workspace-file-actions chat coordinator jump menu-tasks new-menu-tasks newspace pane-chat shepherdr-settings spaces-chat tabs-tasks tasks workspace-status-chat workspace-agents workspace-sessions
 core/bg-jobs.js: chat
 core/audio.js: chat
 usage.js: tabs-tasks chat shepherdr-settings artifacts jump accept-card toasts
@@ -70,3 +70,11 @@ popup.js: chat newspace shepherdr-settings pane-chat
 companions.js: chat pane-chat workspace-agents tabs-tasks workspace-sessions
 
 session-history.js: chat tabs-tasks workspace-sessions
+
+core/chat-layout.js: chat
+
+core/syntax.js: workspace-document
+
+file-reference.js: workspace-file-search workspace-files workspace-document workspace-file-actions
+
+approval.js: chat chat-models coordinator newspace shepherdr-settings workspace-approvals

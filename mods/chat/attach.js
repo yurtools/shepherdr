@@ -93,6 +93,8 @@ export const paths = (list) => list.filter(Boolean).map((p) => ({ path: p, name:
 export async function deliver(files, addr, machine) {
   const out = [];
   for (const f of files) {
+    if (f.reference && (f.on ?? null) === (machine ?? null)) { out.push(f.path); continue; }
+    if (f.on && f.on !== machine) throw new Error('A remote file reference must be sent to an agent on the same computer.');
     if (!machine) { out.push(f.path); continue; }
     const r = await hc(["put", addr, f.path, "--json"]);
     let landed = null;

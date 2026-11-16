@@ -135,6 +135,16 @@
                   },
                   "children": [
                     {
+                      "id": "agents",
+                      "type": "block",
+                      "content": {
+                        "mod": "workspace-agents",
+                        "props": {
+                          "panel": true
+                        }
+                      }
+                    },
+                    {
                       "id": "files",
                       "type": "block",
                       "content": {

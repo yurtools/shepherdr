@@ -6,9 +6,11 @@ export function language(path) {
   if (/^(\.bashrc|\.bash_profile|\.profile)$/.test(name)) return 'bash';
   return ({ sh: 'bash', bash: 'bash', zsh: 'bash', java: 'java', md: 'markdown', markdown: 'markdown',
     yml: 'yaml', yaml: 'yaml', tpl: 'gotmpl', gotmpl: 'gotmpl', ts: 'typescript', tsx: 'tsx', jsx: 'jsx',
-    js: 'javascript', mjs: 'javascript', py: 'python', rs: 'rust', jsonc: 'json', txt: 'text', csv: 'text', tsv: 'text' })[ext] ?? ext;
+    js: 'javascript', mjs: 'javascript', cjs: 'javascript', mts: 'typescript', cts: 'typescript', html: 'html', htm: 'html', css: 'css', scss: 'css', xml: 'xml', xsd: 'xml', xsl: 'xml', svg: 'xml', sql: 'sql', tf: 'hcl', tfvars: 'hcl', hcl: 'hcl', json: 'json', py: 'python', rs: 'rust', jsonc: 'json', txt: 'text', csv: 'text', tsv: 'text' })[ext] ?? ext;
 }
 export function documentKind(path) {
+  if (/\.(docx|doc)$/i.test(path)) return 'docx';
+  if (/\.(xlsx|xlsm|xltx|xls|xlsb)$/i.test(path)) return 'excel';
   return /\.(md|markdown)$/i.test(path) ? 'markdown' : /\.(csv|tsv)$/i.test(path) ? 'csv' : 'text';
 }
 export function fileLocation(space, roots = {}) {

@@ -9,6 +9,7 @@ import { fakeGpuiBase, fakeGpuiKit } from "./fake-gpui";
 let zoom = 1;
 let comfortable = false;
 let historyMissing = false;
+let projectSpaces:any[]=[];let projectRoots:any;let projectOverlay:any;
 const handlers: Record<string, ((...a: any[]) => void)[]> = {};
 function el(): any {
   const self: any = new Proxy({}, {
@@ -24,8 +25,8 @@ function el(): any {
 }
 const theme = new Proxy({}, { get: () => "#000000" });
 mock.module("herdr", () => fakeHerdr({
-  settings: () => ({ zoom }), theme: () => theme, shared: (key: string) => key === "chat.width" && comfortable ? "comfortable" : undefined, setShared: () => {}, agents: () => [], panes: () => [],
-  terminals: () => [], spaces: () => [], machines: () => [], knownAgents: () => [], props: () => ({}), window: () => ({ platform: "linux" }),
+  settings: () => ({ zoom }), theme: () => theme, shared: (key: string) => key === "workspace.roots" ? projectRoots : key === "chat.width" && comfortable ? "comfortable" : undefined, setShared: () => {}, agents: () => [], panes: () => [],
+  terminals: () => [], spaces: () => projectSpaces, openOverlay: (x:any) => { projectOverlay=x; }, machines: () => [], knownAgents: () => [], props: () => ({}), window: () => ({ platform: "linux" }),
   home: () => "/nonexistent-home", appHome: () => "/nonexistent-app",
   exec: async () => ({ code: 1, stdout: "", stderr: "" }), hc: async () => ({ code: 1, stdout: historyMissing ? "No conversation found with id example" : "", stderr: "" }),
   readTextFile: async () => null, writeTextFile: async () => {}, watchFolder: () => {},
@@ -116,4 +117,17 @@ test("a missing explicitly resumed history session never falls back to a new con
     await c.checkLost("saved", {}, { argv: ["codex", "resume", "00000000-0000-0000-0000-000000000001"], labels: { "herdr.session": "key" }, state: "live" });
     expect(c.resumeMissing).toBe(true); expect(fresh).toBe(0);
   } finally { historyMissing = false; }
+});
+
+test("same-length content changes invalidate native Markdown measurements while hover does not",()=>{
+ const c=chat();c.findQuery=()=>'';const row:any={id:'reply',kind:'agent',text:'word text'};
+ const first=c.key(row);expect(c.key({...row})).toBe(first);
+ expect(c.key({...row,text:'word\ntext'})).not.toBe(first);
+});
+
+test("project references search the Files root on the space's machine, independently of the target agent",()=>{
+ const c=chat();c.myPane=()=> 'target-chat';c.machine='remote-agent';projectSpaces=[{id:'local-space',active:true,folder:'/project'}];projectRoots={'local-space':'/files-override'};
+ try {c.openProjectFile({timer:{after(){}}});expect(projectOverlay.props).toMatchObject({root:'/files-override',on:null,pane:'target-chat',space:'local-space'});
+ projectSpaces[0].machine='project-host';c.machine=null;c.openProjectFile({timer:{after(){}}});expect(projectOverlay.props.on).toBe('project-host');}
+ finally {projectSpaces=[];projectRoots=undefined;projectOverlay=null;}
 });

@@ -1,6 +1,9 @@
+import { fileActions, relativeFile } from "./file-reference.js";
+import { highlighted } from "./highlight.js";
+import { HIGHLIGHT_LANGUAGES } from "./core/syntax.js";
 import { View, div } from "gpui-kit";
 import { h_flex, v_flex, Editor, EditorState, TextView } from "gpui-base";
-import { props, panes, shared, focused, nextCommand, readTextFile, writeTextFile, appHome, theme, settings } from "herdr";
+import { props, panes, shared, focused, nextCommand, readTextFile, writeTextFile, appHome, theme, settings, exec, spaces } from "herdr";
 import * as fs from "fs/promises";
 import { MAX_TEXT, language, documentKind, parseCSV, delimiterFor, saveState } from "./core/documents.js";
 
@@ -16,7 +19,8 @@ export default class Document extends View {
         if (this.pane && focused()?.pane !== this.pane) continue;
         const doc = this.docs.get(this.active);
         if (!doc) continue;
-        if (command === "source") doc.preview = false;
+        if (command === "source") { doc.preview = false; doc.highlight = false; }
+        if (command === "highlight") doc.highlight = true;
         if (command === "preview" && doc.kind !== "text") doc.preview = true;
         if (command === "save") this.save(doc, cx);
         cx.notify();
@@ -32,15 +36,23 @@ export default class Document extends View {
   open(path, on, cx) {
     const key = `${on ?? ''}:${path}`; this.active = key;
     if (this.docs.has(key)) { cx.notify(); return; }
-    const doc = { path, on, kind: documentKind(path), saved: null, text: null, error: null, conflict: false, preview: /\.(md|markdown|csv|tsv)$/i.test(path) };
+    const doc = { path, on, kind: documentKind(path), saved: null, text: null, error: null, conflict: false, preview: /\.(md|markdown|csv|tsv|docx|xlsx|xlsm|xltx|xls|doc|xlsb)$/i.test(path) };
     this.docs.set(key, doc);
     cx.spawn(async cx => {
       try {
+        if (doc.kind === 'docx' || doc.kind === 'excel') {
+          if (on) throw new Error("Office previews currently support local files. Open a local copy to preview it.");
+          const r = await exec('python3', [`${appHome()}/mods/workspace-document/bin/herdr-office`, path], { timeout: 20000 });
+          let out; try { out = JSON.parse(r.stdout); } catch { throw new Error(r.stderr || 'Office preview could not be read.'); }
+          if (r.code !== 0 || out.error) throw new Error(out.error || 'Office preview could not be read.');
+          doc.office = out; doc.notice = out.notice; doc.text = doc.saved = out.markdown ?? ''; doc.sheet = 0;
+          cx.notify(); return;
+        }
         const text = await readTextFile(path, { on });
         if (text === null) throw new Error("File is no longer available");
         if (text.includes('\0')) throw new Error("Binary file. Office and binary previews are not available yet.");
         if (text.length > MAX_TEXT) throw new Error("File exceeds the 400,000-character editing limit");
-        doc.saved = text; doc.text = text;
+        doc.saved = text; doc.text = text; doc.highlight = doc.kind === 'text' && HIGHLIGHT_LANGUAGES.has(language(path));
         try {
           const draft = JSON.parse(await fs.readFile(this.draftPath(doc), 'utf8'));
           if (draft.path === path && draft.on === on && typeof draft.text === 'string' && draft.text !== text) {
@@ -65,7 +77,7 @@ export default class Document extends View {
   }
   check(cx) {
     const doc = this.docs.get(this.active);
-    if (!doc || doc.saved === null || doc.checking || doc.saving) return;
+    if (!doc || doc.office || doc.saved === null || doc.checking || doc.saving) return;
     doc.checking = true;
     cx.spawn(async cx => {
       try {
@@ -100,7 +112,32 @@ export default class Document extends View {
     return div().id(id).h(26).px(8).flex_none().flex().items_center().rounded(6).text_size(12)
       .bg(selected ? t.selected : t.raised).text_color(t.foreground).cursor_pointer().hover(s => s.bg(t.hover)).on_click((_e, cx) => { cx.stop_propagation(); fn(cx); cx.notify(); }).child(text);
   }
+  officePreview(doc, t) {
+    if (doc.kind === 'docx') return v_flex().flex_1().min_h(0)
+      .when(doc.office.limited, el => el.child(div().p(8).text_color(t.blocked).child('Content preview truncated at 400,000 characters.')))
+      .child(div().id(`word-${hash(doc.path)}`).flex_1().min_h(0).overflow_y_scrollbar().p(18)
+        .child(TextView.markdown(`word-content-${hash(doc.path)}`, doc.office.markdown || 'No readable text in this document.').selectable(true)));
+    const sheets = doc.office.sheets, sheet = sheets[doc.sheet ?? 0];
+    if (!sheet) return div().p(18).child('This workbook has no readable worksheets.');
+    const page = doc.page ?? 0, cols = Math.max(1, ...sheet.rows.map(r => r.length));
+    return v_flex().flex_1().min_h(0)
+      .child(h_flex().h(34).flex_none().px(8).gap(4).overflow_x_scrollbar()
+        .children(sheets.map((s, i) => this.button(`sheet-${i}`, s.name, i === doc.sheet, () => { doc.sheet = i; doc.page = 0; }, t))))
+      .child(h_flex().h(32).flex_none().px(8).gap(5).items_center()
+        .child(this.button('sheet-prev', '←', false, () => { doc.page = Math.max(0, page - 40); }, t))
+        .child(this.button('sheet-next', '→', false, () => { doc.page = Math.min(Math.max(0, sheet.rows.length - 1), page + 40); }, t))
+        .child(div().text_size(11).child(`Rows ${sheet.rows.length ? page + 1 : 0}–${Math.min(sheet.rows.length, page + 40)} / ${sheet.rows.length}${sheet.formulas ? ' · saved formula values' : ''}`)))
+      .when(sheet.limited || doc.office.limited, el => el.child(div().p(8).text_size(11).text_color(t.blocked).child('Preview limited to 500 rows, 100 columns, 100 sheets and 400,000 characters.')))
+      .child(div().id(`sheet-scroll-${hash(doc.path)}-${doc.sheet}-${page}`).flex_1().min_h(0).overflow_x_scrollbar().overflow_y_scrollbar()
+        .child(v_flex().min_w(48 + cols * 160)
+          .child(h_flex().h(26).flex_none().bg(t.raised).child(div().w(48)).children(Array.from({ length: cols }, (_, j) => div().w(160).px(9).text_size(11).child(this.columnName(j)))))
+          .children(sheet.rows.slice(page, page + 40).map((row, i) => h_flex().min_h(30).flex_none().border_b(1).border_color(t.border)
+            .child(div().w(48).flex_none().px(9).py(6).text_size(11).text_color(t.dim).child(String(page + i + 1)))
+            .children(Array.from({ length: cols }, (_, j) => div().w(160).flex_none().px(9).py(6).border_r(1).border_color(t.border).text_size(12).truncate().child(String(row[j] ?? '').replace(/\r?\n/g, ' ↵ '))))))));
+  }
+  columnName(index) { let s = ''; for (let n = index + 1; n > 0; n = Math.floor((n - 1) / 26)) s = String.fromCharCode(65 + (n - 1) % 26) + s; return s; }
   preview(doc, t) {
+    if (doc.office) return this.officePreview(doc, t);
     if (doc.kind === 'markdown') return div().id(`md-${hash(doc.path)}`).flex_1().min_h(0).overflow_y_scrollbar().p(18).child(TextView.markdown(`markdown-${hash(doc.path)}`, doc.text));
     const delimiter = doc.delimiter ?? delimiterFor(doc.text, doc.path);
     if (doc.csvText !== doc.text || doc.csvDelimiter !== delimiter) { doc.csvText = doc.text; doc.csvDelimiter = delimiter; doc.csv = parseCSV(doc.text, delimiter); }
@@ -123,15 +160,19 @@ export default class Document extends View {
     const t = theme(), doc = this.docs.get(this.active);
     return v_flex().id('document').size_full().min_h(0).bg(t.background).text_color(t.foreground)
       .child(h_flex().h(32).flex_none().overflow_x_scrollbar().gap(3).px(5).items_center().children([...this.docs].map(([key, d]) => this.button(`tab-${hash(key)}`, `${d.path.split('/').pop()}${d.text !== d.saved ? ' •' : ''}`, key === this.active, () => { this.active = key; }, t))))
-      .when(Boolean(doc), el => el.child(h_flex().min_h(38).flex_none().px(8).gap(6).items_center()
+      .when(Boolean(doc), el => el.child(h_flex().min_h(38).flex_none().px(8).gap(6).items_center().flex_wrap()
         .child(div().flex_1().min_w(0).truncate().text_size(11).text_color(t.dim).child(doc?.path ?? ''))
-        .when(doc?.kind !== 'text', el => el.children(['Source', 'Preview'].map((label, i) => this.button(`mode-${label}`, label, doc.preview === Boolean(i), () => { doc.preview = Boolean(i); }, t))))
-        .when(doc?.saved !== null && !doc?.on, el => el.child(this.button('save', doc?.saving ? 'Saving…' : 'Save', false, cx => this.save(doc, cx), t)))))
+        .when(['docx','excel'].includes(doc?.kind), el => el.child(this.button('office-reload','Reload preview',false,cx=>{this.docs.delete(`${doc.on??''}:${doc.path}`);this.open(doc.path,doc.on,cx);},t)))
+        .child(this.button('document-copy-path', 'Copy path', false, cx => { const space=spaces().find(s=>s.active),root=shared('workspace.roots')?.[space?.id]??space?.folder; cx.write_to_clipboard(relativeFile(root,doc.path)); }, t))
+        .child(this.button('document-reference', 'Reference in chat', false, () => { const space=spaces().find(s=>s.active); fileActions({ file:doc.path,on:doc.on,root:shared('workspace.roots')?.[space?.id]??space?.folder },null,true); }, t))
+        .when(doc?.kind === 'text' && HIGHLIGHT_LANGUAGES.has(language(doc?.path ?? '')), el => el.children(['Edit', 'Highlight'].map((label, i) => this.button(`code-${label}`, label, Boolean(doc.highlight) === Boolean(i), () => { doc.highlight = Boolean(i); }, t))))
+        .when(doc?.kind !== 'text' && !['docx', 'excel'].includes(doc?.kind), el => el.children(['Source', 'Preview'].map((label, i) => this.button(`mode-${label}`, label, doc.preview === Boolean(i), () => { doc.preview = Boolean(i); }, t))))
+        .when(doc?.saved !== null && !doc?.on && !doc?.office, el => el.child(this.button('save', doc?.saving ? 'Saving…' : 'Save', false, cx => this.save(doc, cx), t)))))
       .when(Boolean(doc?.conflict), el => el.child(h_flex().px(10).py(6).gap(8).items_center().bg(t.raised)
         .child(div().flex_1().text_size(12).child('File changed on disk. Your draft is retained.'))
         .child(this.button('reload', 'Discard draft and reload', false, cx => this.reload(doc, cx), t))))
       .when(Boolean(doc?.notice) || doc?.recovered || doc?.on, el => el.child(div().px(10).py(4).text_size(11).text_color(t.dim).child(doc?.recovered ? 'Recovered unsaved draft' : doc?.notice ?? 'Remote file · read only')))
-      .child(!doc ? div().p(16).child('Open a file from Files') : doc.error ? div().p(16).child(doc.error) : !doc.editor ? div().p(16).child('Loading…') : doc.preview && doc.kind !== 'text' ? this.preview(doc, t) : Editor.new(doc.editor).flex_1().min_h(0));
+      .child(!doc ? div().p(16).child('Open a file from Files') : doc.error ? div().p(16).child(doc.error) : doc.office ? this.officePreview(doc, t) : doc.highlight && doc.text !== null ? highlighted(doc, language(doc.path), t, hash(doc.path)) : !doc.editor ? div().p(16).child('Loading…') : doc.preview && doc.kind !== 'text' ? this.preview(doc, t) : Editor.new(doc.editor).flex_1().min_h(0));
   }
   async close() { for (const doc of this.docs.values()) { if (doc.text !== null) await this.draft(doc).catch(() => {}); doc.editor?.release(); } }
 }

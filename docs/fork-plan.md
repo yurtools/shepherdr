@@ -3,8 +3,7 @@
 This fork extends Shepherdr's existing Chat/Terminal workflow for Linux. Keep the
 upstream implementation and make focused changes that can be reviewed and tested
 independently. The requirements below are implemented on `main`;
-see [the usage guide](workspace.md) for behavior and limits. Office previews remain
-a later extension.
+see [the usage guide](workspace.md) for behavior and limits, including Office previews.
 
 ## Baseline and maintenance
 
@@ -42,16 +41,19 @@ a later extension.
   of the focused chat or document pane. Remember tree state per space.
 - Open files in a separate document pane, with an explicit action to open another
   pane when needed.
-- Support ordinary text files and highlighted source. Initial language targets
-  are Java, Bash and YAML; test Helm's embedded template syntax explicitly.
+- Support ordinary text files and highlighted source. Language targets
+  include HTML, CSS, TypeScript, JavaScript, Java, SQL, Bash, XML, JSON, YAML,
+  Helm, Liquibase, Python and Terraform. Use a lexical Highlight view independently
+  of installed editor grammars; keep Edit available.
 - Markdown supports Source / Preview in the document pane.
 - CSV supports Source / Preview, with the preview displayed as a table and proper
   handling of quoted fields, delimiters and multiline cells.
 - Keep source edits and previews consistent, and handle unsaved edits and external
   file changes without silently overwriting content.
-- Office previews are a later extension: worksheet data for Excel and readable
-  document content or converted pages for Word. Distinguish these read-only
-  previews from source editing and full Office layout fidelity.
+- Provide bounded local DOCX content and Excel OOXML worksheet previews. Keep
+  these read-only and document cached-formula, layout and legacy-format limits.
+- Reference project files from Files, document toolbars and an `@` picker in Chat.
+  Preserve each target pane's draft, account and space, and never auto-send.
 
 ## Side-by-side views and session history
 
@@ -69,8 +71,19 @@ Implemented on `main`:
 - History checks for a running session before reopening it, focusing its existing
   view or adding another view instead of launching a duplicate agent.
 
-Office previews, indexing other CLIs or remote session logs, and restoring Herdr's
-built-in Agents pane remain outside the current implementation.
+- **Agents** opens a right-hand panel with Open/Beside actions for existing
+  Assistant and worker sessions, without changing Sessions below Spaces.
+
+Indexing other CLIs or remote session logs remains outside the current implementation.
+
+## Scoped approval handling
+
+Implemented: approval defaults and role overrides in Settings → Agents; Ask me,
+Approved rules, Assistant review and Codex Auto-review. Exact/prefix rules retain
+account, folder, scope and expiry, with history and revocation. Assistant review
+uses request-bound tickets and a configurable policy; native review starts with
+interactive Codex sandboxing. See [approval behavior and limits](approvals.md).
+Autopilot remains a separate scheduling feature.
 
 ## Acceptance checks
 
@@ -102,4 +115,12 @@ Markdown/CSV document panes, wide Chat, extra agent views and per-space Sessions
 Native Linux checks verified account labels, Source / Preview beside the tree,
 space-scoped session lists and account-preserving history actions. Chat / Terminal
 switching and the sidebar installation retained existing agent processes. The
-development build is installed locally; there is no new release tag. See the workspace guide for remaining limitations.
+development build is installed locally; there is no new release tag.
+
+The additional implementation adds file references, the Agents panel, lexical
+source highlighting, DOCX/Excel content previews, scoped approval handling and
+Chat measurement/scroll regression fixes. Native inspection verified colored
+source, DOCX tables, Excel sheets, the Agents panel and approval controls. Pure
+policy and hook tests use isolated requests and accounts; they do not approve
+real user tasks. Native hover reproduction and full Office layout fidelity are
+not claimed. See the workspace guide for remaining limitations.

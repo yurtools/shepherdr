@@ -179,7 +179,7 @@ export function countBadge(need, ready, line) {
 // The one Settings window (mods/shepherdr-settings): most of the window's height, at most 900
 // (it draws its own frame inside, centred). p: { space?: that space's own settings, section? }.
 export function openSettings(p = {}) {
-  return openOverlay({ mod: "shepherdr-settings", kind: "dialog", frame: "none", width: 860, height: 0.92, props: p });
+  return openOverlay({ mod: "shepherdr-settings", kind: "dialog", frame: "none", width: 1040, height: 0.92, props: p });
 }
 
 // Toasts -------------------------------------------------------------------------------------

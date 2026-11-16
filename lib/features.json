@@ -431,7 +431,10 @@
       "herdr": {
         "mods": [
           "workspace-files",
-          "workspace-document"
+          "workspace-document",
+          "workspace-file-actions",
+          "workspace-file-search",
+          "workspace-approvals"
         ]
       },
       "web": {

@@ -1,3 +1,5 @@
+import { approvalArgv } from "./approval.js";
+import { measuredHeight, viewportScroll, hoverMessage, measureOrder } from "./core/chat-layout.js";
 // Chat: an agent's conversation as a chat, read from the agent's own session log, with a
 // box to write to it. The agent keeps running in its terminal; this only shows it another way.
 // Opened by the `pane-chat` header's Chat / Terminal switch in the agent pane's spot: the
@@ -314,6 +316,7 @@ export default class Chat extends View {
     this.box.on("focus", (_e, cx) => { this.focused = true; noteChatArea(this.areaKey(), { focus: true, at: Date.now() }); holdKeys(this.areaKey()); cx.notify(); });
     this.box.on("blur", (_e, cx) => { this.focused = false; noteChatArea(this.areaKey(), { focus: false, at: Date.now() }); cx.notify(); });
     this.box.on("change", (_e, cx) => {
+      if (!this.filePickerOpening) { const value=this.box.value(), sel=this.box.selected_range(), end=sel?.end??value.length, before=value.slice(0,end); if (before.endsWith('@') && (before.length===1 || /\s/.test(before[before.length-2]))) this.openProjectFile(cx, { text:value,start:end-1,end }); }
       // A big paste (over 8 KB or 200 lines) becomes a text file to send, not text in the box.
       const was = this.lastValue ?? "", now = this.box.value();
       this.lastValue = now;
@@ -401,6 +404,7 @@ export default class Chat extends View {
     this.replied = [];
     // Question cards: their state per ask, and the keyboard for their arrows and digits.
     this.cards = new AskCards({
+      terminal: () => this.addr, machine: () => this.machine,
       reply: (ask, text, cx) => this.reply(ask, text, cx),
       toTerminal: () => this.toTerminal(),
       chatAbout: () => this.box.focus(),
@@ -586,6 +590,7 @@ export default class Chat extends View {
         if (c === "call" && addonOn("voice")) this.toggleCall(cx);
         if (c === "mute") this.callMute(cx);
         if (c === "find") this.openFind(cx);
+        if (c === "project-files") this.openProjectFile(cx);
         cx.notify();
       }
     });
@@ -594,6 +599,7 @@ export default class Chat extends View {
   // Forget what was read: another log file, or this one replaced.
   reset() {
     this.records = [];
+    this.rowRevisions = new Map();
     this.start = null;
     this.end = 0;
     this.conv = null;
@@ -1772,7 +1778,8 @@ export default class Chat extends View {
           this.phase = "fresh"; p.failed = String(error.message ?? error);
           toast({ title: "Assistant did not start", body: p.failed, level: "error" }); cx.notify(); return;
         }
-        const cmd = selected?.agent ? agent.argvFor(selected, { agent: null, argv: [] }).argv.map(q).join(" ") : own;
+        const selectedArgv = selected?.agent ? await approvalArgv(agent.argvFor(selected, { agent: null, argv: [] }).argv, space?.id, this.role, folder, machine) : null;
+        const cmd = selectedArgv ? selectedArgv.map(q).join(" ") : own;
         if (body.trim() && cmd) {
           words = body.trim();
           oneOff = `herdr-${template}-${Date.now().toString(36)}`;
@@ -3232,11 +3239,15 @@ export default class Chat extends View {
 
   // What a row's height depends on: measured once per key and width.
   key(x) {
+    this.rowRevisions ??= new Map();
+    const content=x.text??x.code??'', previous=this.rowRevisions.get(x.id);
+    if(!previous||previous.content!==content)this.rowRevisions.set(x.id,{content,revision:(previous?.revision??-1)+1});
+    const revision=this.rowRevisions.get(x.id).revision;
     const q = this.findQuery();
     const found = q && String(x.text ?? x.code ?? "").toLowerCase().includes(q.toLowerCase()) ? `|f:${q}` : "";
     const open = (x.kind === "tools" || x.kind === "brief") && this.opened.has(x.id);
     const shown = open && x.steps ? x.steps.filter((s) => this.results.get(s.id) != null).length : 0;
-    return `${x.id}|${x.kind}${x.closed ? `.${x.closed}` : ""}|${open ? `o${x.steps?.length ?? 1}.${shown}` : ""}|${x.text?.length ?? x.code?.length ?? 0}|${x.from ? 1 : 0}${x.failed ? 1 : 0}${x.late ? 1 : 0}${x.waiting ? 1 : 0}${x.images ? 1 : 0}${x.files?.length ?? 0}|${x.paths?.length ?? 0}${x.paths?.every((p) => this.views[p]) ? "v" : ""}|${(x.pills ?? []).map((p) => p.emoji + (p.you ? 1 : 0) + (p.agent ? 1 : 0)).join("")}|${x.bar ? "b" : ""}${x.kind === "artifact" ? `|a${x.version ?? ""}${x.line ? "l" : ""}${x.pending ? "p" : ""}${x.peek ? `k${x.peek.paths.filter((p) => this.views[p]).length}.${x.peek.text.length}` : ""}` : ""}${x.kind === "tasknews" ? `|${x.accept ? "a" : ""}` : ""}${x.kind === "cardstrip" ? `|cs${x.sig}${x.first ? "F" : ""}${x.last ? "L" : ""}` : ""}|${x.clip ? `c${x.clip}` : ""}${x.open ? "o" : ""}${x.kind === "day" ? x.text : ""}|${x.top0 ? "T" : ""}${x.bot0 ? "B" : ""}${x.h ?? ""}${found}`;
+    return `${x.id}|r${revision}|${x.kind}${x.closed ? `.${x.closed}` : ""}|${open ? `o${x.steps?.length ?? 1}.${shown}` : ""}|${x.text?.length ?? x.code?.length ?? 0}|${x.from ? 1 : 0}${x.failed ? 1 : 0}${x.late ? 1 : 0}${x.waiting ? 1 : 0}${x.images ? 1 : 0}${x.files?.length ?? 0}|${x.paths?.length ?? 0}${x.paths?.every((p) => this.views[p]) ? "v" : ""}|${(x.pills ?? []).map((p) => p.emoji + (p.you ? 1 : 0) + (p.agent ? 1 : 0)).join("")}|${x.bar ? "b" : ""}${x.kind === "artifact" ? `|a${x.version ?? ""}${x.line ? "l" : ""}${x.pending ? "p" : ""}${x.peek ? `k${x.peek.paths.filter((p) => this.views[p]).length}.${x.peek.text.length}` : ""}` : ""}${x.kind === "tasknews" ? `|${x.accept ? "a" : ""}` : ""}${x.kind === "cardstrip" ? `|cs${x.sig}${x.first ? "F" : ""}${x.last ? "L" : ""}` : ""}|${x.clip ? `c${x.clip}` : ""}${x.open ? "o" : ""}${x.kind === "day" ? x.text : ""}|${x.top0 ? "T" : ""}${x.bot0 ? "B" : ""}${x.h ?? ""}${found}`;
   }
 
   // A row's height before it is measured: bands and gaps are as tall as spaced() made them.
@@ -4094,6 +4105,16 @@ export default class Chat extends View {
 
   // The desktop's own file picker (attach.pick(): xdg-desktop-portal's, or macOS's own): the chosen files join
   // the message as tiles, as a drop or a paste makes them.
+  openProjectFile(cx, token=null) {
+    const space=spaces().find(s=>s.active),pane=this.myPane();
+    if(!space||!pane)return;
+    const root=shared('workspace.roots')?.[space.id]??space.folder;
+    if(!root)return;
+    this.filePickerOpening=true;
+    openOverlay({mod:'workspace-file-search',kind:'dialog',frame:'none',width:680,height:0.7,props:{pane,space:space.id,root,on:space.machine??null,token}});
+    cx.timer.after(500,()=>{this.filePickerOpening=false;});
+  }
+
   pickFiles(cx) {
     cx.spawn(async (cx) => {
       const { code, paths: list } = await attach.pick();
@@ -4304,6 +4325,7 @@ export default class Chat extends View {
       .when(rec === "idle", (el) => el.child(h_flex().h(36).pl(6).pr(6).gap(4).items_center()
         // Attach on the left, as ChatGPT and Claude have it: the desktop's file picker.
         .child(this.round("chat-attach", "mods/chat/plus.svg", t, "ghost", (cx) => this.pickFiles(cx)))
+        .child(this.button('chat-project-file', '@ File', null, 'ghost', t, cx => this.openProjectFile(cx)))
         .child(div().flex_1().min_w(0).truncate().text_size(12).text_color(t.blocked).child(rec === "idle" ? this.dict.error ?? "" : ""))
         .when(Boolean(this.addr), (el) => el.children(this.pickParts(t, true)))
         .when(!this.addr && this.phase === "fresh" && Boolean(this.choice?.sel) && Boolean(cx), (el) => el.child(this.freshPick(t, cx)))
@@ -4488,6 +4510,28 @@ export default class Chat extends View {
       this.startReqAt = stq.at;
       cx.timer.after(0, (cx) => { this.startAgent(null, cx, true); });
     }
+    // A file pane hands references to this draft. This never sends, replaces text or changes accounts.
+    if (mine) {
+      const spaceId = spaces().find(s => s.active)?.id;
+      const targets = shared('workspace.chat-targets') ?? {};
+      const account = this.profileName ?? agent.NAMES[this.kind] ?? 'Assigned agent';
+      if (targets[mine]?.account !== account || targets[mine]?.space !== spaceId)
+        setShared('workspace.chat-targets', { ...targets, [mine]: { space: spaceId, account, on: this.machine ?? null } });
+      if (paneFocused && shared('workspace.chat-last')?.[spaceId] !== mine)
+        setShared('workspace.chat-last', { ...(shared('workspace.chat-last') ?? {}), [spaceId]: mine });
+      const queued = shared('workspace.file-references')?.[mine] ?? [];
+      if (queued.length && !this.referencePending) {
+        this.referencePending = true;
+        cx.timer.after(0, cx => {
+          const all=shared('workspace.file-references')??{}, current=all[mine]??[];
+          const files=current.filter(r=>r.space===spaceId && Date.now()-r.at<60000).map(r=>({path:r.file,name:r.root&&r.file.startsWith(r.root+'/')?r.file.slice(r.root.length+1):r.file,image:attach.isImage(r.file),temp:false,reference:true,on:r.on??null}));
+          const token=current.find(r=>r.token)?.token;
+          if(token && this.box.value()===token.text) this.box.set_value(token.text.slice(0,token.start)+token.text.slice(token.end));
+          this.addFiles(files); setShared('workspace.file-references',{...all,[mine]:[]}); this.referencePending=false;
+          this.saveSoon(cx); holdKeys(this.areaKey()); this.box.focus(); cx.notify();
+        });
+      }
+    }
     // Another mod sending a message as if typed here: shared "chat.sendreq" = { pane, at, text }.
     const sq = shared("chat.sendreq");
     if (sq && sq.pane === mine && sq.at !== this.sendReqAt && Date.now() - sq.at < 5000 && String(sq.text ?? "").trim()) {
@@ -4539,7 +4583,9 @@ export default class Chat extends View {
     this.lastWorking = st;
     const root = v_flex().id("chat").size_full().bg(t.background).text_color(t.foreground).text_size(13)
       .on_size_change((size, cx) => {
+        const before = `${this.width}|${this.height}`;
         this.paneSize(size);
+        if (before === `${this.width}|${this.height}`) return;
         if (this.pinned) this.stick = true;
         this.noteArea(null);
         cx.notify();
@@ -4638,19 +4684,20 @@ export default class Chat extends View {
         })
         // How far down the list a press was, for the action bands (rows take no handlers).
         .on_mouse_down("left", (e) => { this.bodyPress = unzoom(e.local_position?.y); })
-        // Rows' hover styles show on a redraw: one per 6 px the pointer moves down or up.
+        // Hover repaint follows message boundaries; moving within a long reply does not remeasure it.
         .on_mouse_move((e, cx) => {
-          const b = Math.floor(unzoom(e.local_position?.y ?? 0) / 6);
+          const b = hoverMessage(unzoom(e.local_position?.y ?? 0), this.scrollTop ?? 0, rows, sizes);
           if (b !== this.hoverBand) { this.hoverBand = b; cx.notify(); }
         })
         .on_hover((hovered, cx) => { if (!hovered) { this.hoverBand = null; cx.notify(); } })
         .on_scroll_wheel((e, cx) => {
           const y = e.delta?.y ?? 0;
           // Where the list is scrolled to, as near as known (the list doesn't say): wheel moves it.
-          this.scrollTop = Math.max(0, (this.scrollTop ?? 0) - y);
+          const movement = viewportScroll(this.scrollTop, y, sizes.reduce((a, b) => a + b, 0), Math.max(0, (this.listH ?? 0) - 8));
+          this.scrollTop = movement.offset;
           // Scrolling up to read stops following the newest; back at the bottom follows again.
           if (y > 0 && this.pinned) { this.pinned = false; cx.notify(); }
-          if (y < 0 && !this.pinned && this.range && this.range.end >= rows.length) { this.pinned = true; cx.notify(); }
+          if (y < 0 && !this.pinned && movement.bottom) { this.pinned = true; cx.notify(); }
           if (y > 0 && (this.range?.start ?? 9) <= 1) this.loadEarlier(cx);
         })
         .child(v_virtual_list("chat-rows", rows.length, sizes, (i) => rows[i].id, (range) => {
@@ -4667,7 +4714,7 @@ export default class Chat extends View {
               // Ids carry the width's generation, as the measurer's do: a reply's words keep the
               // width they were first laid out at, so after a resize (a restart's first narrow
               // frames) they'd stay narrow and tall, spilling under the next row.
-              .child(this.row(x, t, `v${this.measureGen}-`))
+              .child(this.row(x, t, `v${this.measureGen}-${this.rowRevisions?.get(x.id)?.revision??0}-`))
               .when(Boolean(flash), (el) => el.child(div().id(`flash-${x.id}`).absolute().inset_0().rounded(10).bg(t.accent + "26")
                 .opacity(this.flash.on ? 1 : 0).transition("opacity", { duration: 1100, easing: "ease-out" })));
           });
@@ -4719,17 +4766,13 @@ export default class Chat extends View {
     // measured in the last few seconds: markdown can lay out a moment after its first frame (a
     // long message first measures as one line), so a height is never taken once and kept.
     const now = Date.now();
-    const lo = Math.max(0, (this.range?.start ?? rows.length) - 2), hi = Math.min(rows.length, (this.range?.end ?? 0) + 2);
-    const fresh = rows.map((_, i) => i).filter((i) => !this.heights.has(keys[i]))
-      .sort((a, b) => Math.abs(a - near) - Math.abs(b - near)).slice(0, 30);
-    const again = rows.map((_, i) => i).filter((i) => this.heights.has(keys[i]) && ((i >= lo && i < hi) || now - (this.measuredAt.get(keys[i]) ?? 0) < 4000));
-    const order = [...new Set([...fresh, ...again])].slice(0, 60);
+    const order = measureOrder(rows, keys, this.heights, this.measuredAt, near, now);
     return div().absolute().top(0).left(0).w(this.width).h(0).overflow_hidden().opacity(0)
       .child(v_flex().w_full().children(order.map((i) => div().id(`m${this.measureGen}-${keys[i]}`).flex_none().w_full()
         .on_size_change((size, cx) => {
           if (!this.measuredAt.has(keys[i])) this.measuredAt.set(keys[i], Date.now());
-          const h = unzoom(size.height);
-          if (this.heights.get(keys[i]) === h) return;
+          const h = measuredHeight(this.heights.get(keys[i]), unzoom(size.height));
+          if (h === undefined || this.heights.get(keys[i]) === h) return;
           this.heights.set(keys[i], h);
           if (this.pinned) this.stick = true;
           if (this.anchor && Date.now() < this.anchor.until) this.reanchor = true;
@@ -4737,6 +4780,6 @@ export default class Chat extends View {
         })
         // Its words' ids carry the width's generation too, as the list's rows do: kept from an older width, a
         // reply measured at the wrap it first had there (shorter or taller than drawn: the next row over it, #775).
-        .child(this.row(rows[i], t, `m${this.measureGen}-`)))));
+        .child(this.row(rows[i], t, `m${this.measureGen}-${this.rowRevisions?.get(rows[i].id)?.revision??0}-`)))));
   }
 }

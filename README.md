@@ -16,17 +16,19 @@ native Linux UI. There is no fork-specific release yet.
 
 ## What this fork is for
 
-| Area | Target behavior | Status |
+| Area | Behavior | Status |
 | --- | --- | --- |
-| Chat / Terminal | Switch Chat / Terminal, use Wide / Comfortable, and show existing agents beside each other | Verified on Linux with the existing running agent |
-| Codex profiles | Use separate named accounts, preserving the selected profile through launch, resume, fork and restart | Implemented on the working branch |
-| Space Assistant | Choose its agent/profile in space settings; show the assignment in chat | Implemented on the working branch |
-| Chat controls | Model, Thinking level and Permissions dropdowns bound to the assigned agent | Implemented on the working branch |
-| Files | Keep a persistent tree rooted at the selected space's project folder | Implemented on the working branch |
-| Documents | Open files in a separate pane, keeping the tree visible | Implemented on the working branch |
-| Markdown and CSV | Switch between editable source and rendered Markdown or a CSV table | Implemented on the working branch |
-| Source code | Native editor language hints for Java, Bash, YAML and Helm templates | Grammar support varies with Herdr |
-| Office files | Read-only Word and Excel previews | Later extension |
+| Chat / Terminal | Switch views of the same running agent; collapse thinking and tool activity | Implemented; live switching verified on Linux |
+| Side-by-side views | Show the Assistant or existing agents beside each other; use Wide / Comfortable Chat widths | Implemented; native Linux workflow verified |
+| Codex profiles | Use separate named accounts, preserving the profile through launch, resume, fork and restart | Implemented; account lifecycle covered by automated tests |
+| Space Assistant | Choose its agent/profile in space settings; show the assignment in chat | Implemented; account selection verified in the Linux UI |
+| Chat controls | Model, Thinking level and Permissions dropdowns bound to the assigned agent | Implemented; account-bound options and restart/resume paths tested |
+| Files | Keep a persistent tree rooted at the selected space's project folder | Implemented; switching between space roots verified on Linux |
+| Documents | Open files in a separate pane, keeping the tree visible | Implemented; separate-pane workflow verified on Linux |
+| Markdown and CSV | Switch between editable source and rendered Markdown or a CSV table | Implemented; Source / Preview verified in the Linux UI |
+| Sessions | Find saved conversations below Spaces; preview, resume or open beside with the original account | Implemented; local Codex sessions across configured accounts |
+| Source code | Native editor language hints for Java, Bash, YAML and Helm templates | Partial; actual highlighting depends on Herdr's grammars |
+| Office files | Read-only Word and Excel previews | Not implemented; planned extension |
 
 The agent is assigned when a regular agent pane opens, or in the space's Assistant
 settings. The chat composer does not need another agent selector. Each Codex

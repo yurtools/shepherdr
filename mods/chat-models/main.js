@@ -112,7 +112,7 @@ export default class ModelMenu extends View {
   choose(m) {
     const was = this.sel;
     const next = { ...was, agent: m.agent, model: m.id, ...(m.agent !== was.agent ? { profile: null } : {}) };
-    if (next.effort && !m.efforts.includes(next.effort)) next.effort = null;
+    if (!m.efforts.includes(next.effort)) next.effort = m.efforts.includes(m.defaultEffort) ? m.defaultEffort : m.efforts[0] ?? null;
     if (!m.fast) next.fast = false;
     if (m.agent !== was.agent) {
       // Another agent: its own permission modes, the nearest to the one chosen.
@@ -215,7 +215,7 @@ export default class ModelMenu extends View {
   tell() {
     if (!this.settingsMode) return;
     const s = this.sel;
-    setShared("newspace.pick", { key: this.p.key, field: "settings", value: { ...s, agent: s.agent, model: s.model, effort: s.effort, fast: s.fast, perm: s.perm }, at: Date.now() });
+    setShared("newspace.pick", { key: this.p.key, field: "settings", value: { ...s, agent: s.agent, model: s.model, effort: this.level(s), fast: s.fast, perm: s.perm }, at: Date.now() });
   }
 
   render(cx) {

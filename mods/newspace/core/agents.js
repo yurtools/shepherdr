@@ -447,3 +447,13 @@ export function profileLaunch(pick, profiles) {
     throw new Error("The assigned account profile is unavailable on this machine.");
   return ["env", "-u", "CODEX_API_KEY", "-u", "OPENAI_API_KEY", "-u", "CODEX_ACCESS_TOKEN", "-u", "CODEX_SQLITE_HOME", `CODEX_HOME=${profile.home}`, "codex"];
 }
+
+// Keep a chosen thinking level when supported; otherwise send the new model's
+// advertised default explicitly, so config.toml cannot silently select another one.
+export function effortForModel(defaults, model, preferred) {
+  const entry = defaults?.models?.find(x => x.id === model);
+  if (!entry) return preferred ?? null;
+  const levels = entry.efforts ?? [];
+  if (levels.includes(preferred)) return preferred;
+  return levels.includes(entry.defaultEffort) ? entry.defaultEffort : levels[0] ?? null;
+}

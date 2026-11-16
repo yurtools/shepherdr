@@ -3,7 +3,7 @@ import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync, spawn } from "node:child_process";
-import { DEFAULTS, parseDefaults, launchPrefix, argvFor, resumeArgv, freshArgv, forkArgv } from "./agents.js";
+import { DEFAULTS, parseDefaults, effortForModel, launchPrefix, argvFor, resumeArgv, freshArgv, forkArgv } from "./agents.js";
 import { parseCSV, delimiterFor, language, fileLocation, saveState } from "./documents.js";
 
 test("account survives model restart, resume, fresh recovery and fork", () => {
@@ -71,4 +71,13 @@ test("external changes reload clean views and retain dirty drafts", () => {
 
 test("single-quoted TOML model settings produce a model ID without quote characters", () => {
   expect(parseDefaults("codex", "model\t'gpt-account-model'\nmodel_reasoning_effort\t'xhigh'\n")).toMatchObject({ model: "gpt-account-model", effort: "xhigh" });
+});
+
+test("model changes send a supported thinking level instead of inheriting an incompatible config", () => {
+  const defaults = { models: [{ id: "new-model", efforts: ["low", "high"], defaultEffort: "high" }] };
+  expect(effortForModel(defaults, "new-model", "xhigh")).toBe("high");
+  expect(effortForModel(defaults, "new-model", "low")).toBe("low");
+  const effort = effortForModel(defaults, "new-model", "xhigh");
+  const built = argvFor({ agent: "codex", model: "new-model", effort }, { agent: "codex", argv: ["codex"] });
+  expect(built.argv).toContain('model_reasoning_effort="high"');
 });

@@ -4450,7 +4450,10 @@ export default class Chat extends View {
         const base = fresh ? this.choice?.sel : this.controlPick ?? this.current();
         if (!base) return;
         const next = { ...base, [control.field]: control.value };
-        if (control.field === "model") next.effort = null;
+        if (control.field === "model") {
+          const defaults = fresh ? this.choice?.data?.profiles?.find(x => x.id === next.profile)?.defaults ?? this.choice?.data?.codexDefaults : this.dflt;
+          next.effort = next.agent === "codex" ? agent.effortForModel(defaults, next.model, base.effort) : base.effort;
+        }
         if (fresh) this.choice.sel = next; else this.controlPick = next;
         cx.notify();
       });

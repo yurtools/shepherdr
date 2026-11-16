@@ -85,3 +85,27 @@ the selected local checkout; it does not automatically follow an upstream releas
 
 Standalone Markdown preview mods can be retired after the new pane is verified.
 Blueprint remains an independent optional mod; the fork does not bundle it.
+
+## Chat width and agents beside each other
+
+Chat uses the pane width by default. Click **Wide** in its header to switch to the
+narrower **Comfortable** reading width, or click **Comfortable** to use the full
+width again. The choice is remembered across chats; row measurements, message
+actions and the composer use the same width.
+
+Click **Beside…** in any pane header and choose the space's Assistant or another
+running agent. The new pane shows that existing session; it does not launch
+another agent or change accounts. Repeat from either pane for more agents.
+Selecting an agent already shown in the current tab focuses that view.
+
+Each extra view has its own Chat / Terminal switch and **×** button. Closing it
+leaves the agent and its original tab running. Closing or ending the original
+agent still ends that session; extra views then show an ended-session notice.
+Extra Chat views have separate drafts. Model/Thinking/Permissions changes apply
+to the same underlying agent and preserve its original Chat ownership; if its
+original tab is in Terminal mode, switch that tab to Chat before applying changes
+from an extra view. A not-yet-started Assistant starts on the first message using
+its configured space account.
+
+Settings account/model menus and Chat dropdowns anchor to the control pressed,
+independently of where the previous context menu was opened.

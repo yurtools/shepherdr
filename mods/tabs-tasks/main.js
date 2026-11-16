@@ -8,13 +8,14 @@ import { startInbox, count as inboxCount, countsByTab, readyCount, readyByTab, s
 import { serveRemote } from "./secrets.js";
 import { watchService } from "./service.js";
 import { startBridge } from "./bridge.js";
-import { countBadge, H, TEXT, RADIUS } from "./ui.js";
+import { countBadge, H, TEXT, RADIUS, toast, plainError } from "./ui.js";
 import { on as addonOn } from "./addons.js";
 import { watchViews } from "./usage.js";
 // A tab's name (what runs in it while Herdr named it): core/menus.js, as the web app's tab bar names it.
 import { tabName } from "./core/menus.js";
 import { inRender } from "./live.js";
 import { dirsReady } from "./dirs.js";
+import { watchCompanions } from "./companions.js";
 
 function find(node, id) {
   if (node?.id === id) return node;
@@ -27,6 +28,7 @@ function find(node, id) {
 
 export default class Tabs extends View {
   init(_props, cx) {
+    watchCompanions(cx, e => toast({ title: "View didn't switch", body: plainError(e), level: "error" }));
     // Agents parked behind a chat whose tab or space closed end, as their pane would have (the
     // Agents list did this; the layout has none now).
     cx.timer.every(5000, () => sweep());

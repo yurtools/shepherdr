@@ -133,7 +133,8 @@
       ],
       "herdr": {
         "mods": [
-          "pane-chat"
+          "pane-chat",
+          "workspace-agents"
         ]
       },
       "web": {
@@ -142,7 +143,7 @@
         ]
       },
       "forms": {
-        "herdr": "Split, zoom, close, Chat | Terminal switch",
+        "herdr": "Split, zoom, close, Chat | Terminal switch, full-width Chat and Beside existing-agent views",
         "desktop": "Up to 3 panes side by side, Chat | Terminal switch",
         "tablet": "2 side by side in landscape, 1 in portrait",
         "phone": "One at a time; Chat | Terminal in the top bar"

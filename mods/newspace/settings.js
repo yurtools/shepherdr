@@ -21,6 +21,7 @@ import * as agent from "./agent.js";
 // The button's words and the choices on offer: core/settings.js, shared with the web app's Settings.
 import { modelLabel, choicesFrom } from "./core/settings.js";
 import { permAcross } from "./core/agents.js";
+import { popupBounds, popupAt } from "./popup.js";
 
 const ROW = 31, LABEL = 110;
 const LEVEL = { minimal: "Minimal", low: "Low", medium: "Medium", high: "High", xhigh: "Extra high", max: "Max", ultra: "Ultra", none: "None" };
@@ -94,10 +95,11 @@ export function settingsRows(t, coord, opts = {}, cx = null) {
   const row = (label, control) => h_flex().h(ROW).flex_none().px(9).gap(10).items_center()
     .child(div().w(LABEL).flex_none().text_color(t.muted).child(label))
     .child(h_flex().flex_1().min_w(0).justify_end().child(control));
-  const pickAt = (field, options, current) => openOverlay({ mod: "chat-models", kind: "popup", width: 260, height: 10 + ROW * options.length,
+  const pickAt = (field, options, current, bounds) => openOverlay({ at: popupAt(bounds, 260, 10 + ROW * options.length), mod: "chat-models", kind: "popup", width: 260, height: 10 + ROW * options.length,
     props: { pick: field, key: coord.key, options, current, width: 260, height: 10 + ROW * options.length } });
   const select = (id, content, fn) => h_flex().id(id).h(26).max_w(260).pl(8).pr(6).gap(6).items_center().rounded(7).border_1().border_color(t.input)
-    .when(!off, (el) => el.cursor_pointer().hover((s) => s.bg(t.hover)).on_click((_e, cx) => { cx.stop_propagation(); fn(); cx.notify(); }))
+    .when(!off, (el) => el.cursor_pointer().hover((s) => s.bg(t.hover)).on_mouse_down("left", (e) => { coord.rowAt = popupBounds(e); })
+      .on_click((_e, cx) => { cx.stop_propagation(); fn(coord.rowAt); cx.notify(); }))
     .children(content)
     .child(svg("mods/workspace-chrome/chevron-down.svg").size(12).flex_none().text_color(t.dim));
   const models = Object.entries(data.menus).flatMap(([a, mm]) => mm.models.map((x) => ({ id: `${a}:${x.id}`, label: x.name, icon: data.icons?.[a]?.icon, tint: data.icons?.[a]?.tint })));
@@ -107,7 +109,7 @@ export function settingsRows(t, coord, opts = {}, cx = null) {
   const perm = menu?.perms?.find((p) => p.id === sel.perm);
   return v_flex().w_full().text_size(12.8).text_color(t.foreground).when(off, (el) => el.opacity(0.45))
     .child(row("Agent", select("ns-model", [icon(sel.agent), div().min_w(0).truncate().child(m?.name ?? sel.model ?? "Choose")],
-      () => pickAt("model", models, `${sel.agent}:${sel.model}`))))
+      (bounds) => pickAt("model", models, `${sel.agent}:${sel.model}`, bounds))))
     .child(row("Reasoning", h_flex().h(26).p(2).gap(2).rounded(7).bg(t.raised).children(levels.map((e) =>
       h_flex().id(`ns-level-${e}`).h_full().px(7).justify_center().items_center().rounded(5).text_size(11.5)
         .when(level === e, (el) => el.bg(t.background).text_color(t.foreground).font_medium())
@@ -119,7 +121,7 @@ export function settingsRows(t, coord, opts = {}, cx = null) {
       .child(div().id("ns-fast-knob").absolute().top(2).left(sel.fast ? 14 : 2).size(12).rounded(6).bg(t.background).transition("left", 120)))))
     .when(Boolean(menu?.perms?.length), (el) => el.child(row("Permissions", select("ns-perm",
       [svg("mods/chat-models/shield.svg").size(14).flex_none().text_color(t.dim), div().min_w(0).truncate().child(perm?.label ?? "Default")],
-      () => pickAt("perm", menu.perms.map((p) => ({ id: p.id, label: p.label })), sel.perm)))));
+      (bounds) => pickAt("perm", menu.perms.map((p) => ({ id: p.id, label: p.label })), sel.perm, bounds)))));
 }
 
 // The answers from the model menu (settings mode) and the pick lists, into coord.sel.
@@ -159,7 +161,7 @@ export function modelButton(t, coord, opts = {}, cx = null) {
   const control = h_flex().id(`ns-model-${coord.key}`).h(28).pl(8).pr(5).gap(4).flex_none().min_w(0).items_center().rounded(7)
     .text_size(12).font_medium().text_color(off ? t.dim : t.muted).when(off, (el) => el.opacity(0.6))
     .when(!off, (el) => el.cursor_pointer().hover((s) => s.bg(t.hover).text_color(t.foreground))
-      .on_mouse_down("left", (e) => { coord.at = e.bounds ?? (e.position ? { x: e.position.x - 40, y: e.position.y - 14, width: 80, height: 28 } : null); })
+      .on_mouse_down("left", (e) => { coord.at = popupBounds(e); })
       .on_click((_e, cx) => { cx.stop_propagation(); openMenu(coord); cx.notify(); }))
     .child(div().min_w(0).truncate().child(sel && data ? opts.label ?? settingsLabel(coord) : "Loading agents…"))
     .child(svg("mods/workspace-chrome/chevron-down.svg").size(12).flex_none());
@@ -167,10 +169,13 @@ export function modelButton(t, coord, opts = {}, cx = null) {
   const profile = data.profiles.find((x) => x.id === sel.profile);
   return h_flex().gap(4).items_center()
     .child(h_flex().id(`profile-${coord.key}`).h(28).px(8).gap(4).rounded(7).text_size(12).text_color(t.muted)
-      .cursor_pointer().hover((x) => x.bg(t.hover)).on_click((_e, cx) => {
+      .cursor_pointer().hover((x) => x.bg(t.hover))
+      .on_mouse_down("left", (e) => { coord.profileAt = popupBounds(e); })
+      .on_click((_e, cx) => {
         cx.stop_propagation();
         const options = [{ id: "", label: "Codex" }, ...data.profiles.map((x) => ({ id: x.id, label: x.name ?? x.id }))];
         openOverlay({ mod: "chat-models", kind: "popup", width: 260, height: 10 + ROW * options.length,
+          at: popupAt(coord.profileAt, 260, 10 + ROW * options.length),
           props: { pick: "profile", key: coord.key, options, current: sel.profile ?? "", width: 260 } });
       }).child(profile?.name ?? "Codex").child("⌄"))
     .child(control);
@@ -186,7 +191,7 @@ export function openMenu(coord, select = null) {
   // Reasoning header and levels, Fast, Permissions (chat-models' sizes)
   const W = 340, H = 2 + 10 + 34 + 36 + 8 * 31 + 9 + 26 + 34 + 31 + 31;
   const b = coord.at;
-  const at = b ? { x: Math.max(8, b.x + b.width - W), y: b.y - H - 6 >= 8 ? b.y - H - 6 : b.y + b.height + 6 } : "pointer";
+  const at = popupAt(b, W, H, true);
   openOverlay({ mod: "chat-models", kind: "popup", frame: "none", width: W, height: H, at,
     props: { mode: "settings", key: coord.key, width: W, height: H, remote: null, select,
       current: { profile: sel.profile, agent: sel.agent, model: sel.model, effort: sel.effort ?? null, fast: Boolean(sel.fast), perm: sel.perm ?? null },

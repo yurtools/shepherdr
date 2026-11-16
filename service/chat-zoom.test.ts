@@ -7,6 +7,7 @@ import { fakeHerdr } from "./fake-herdr";
 import { fakeGpuiBase, fakeGpuiKit } from "./fake-gpui";
 
 let zoom = 1;
+let comfortable = false;
 const handlers: Record<string, ((...a: any[]) => void)[]> = {};
 function el(): any {
   const self: any = new Proxy({}, {
@@ -22,7 +23,7 @@ function el(): any {
 }
 const theme = new Proxy({}, { get: () => "#000000" });
 mock.module("herdr", () => fakeHerdr({
-  settings: () => ({ zoom }), theme: () => theme, shared: () => undefined, setShared: () => {}, agents: () => [], panes: () => [],
+  settings: () => ({ zoom }), theme: () => theme, shared: (key: string) => key === "chat.width" && comfortable ? "comfortable" : undefined, setShared: () => {}, agents: () => [], panes: () => [],
   terminals: () => [], spaces: () => [], machines: () => [], knownAgents: () => [], props: () => ({}), window: () => ({ platform: "linux" }),
   home: () => "/nonexistent-home", appHome: () => "/nonexistent-app",
   exec: async () => ({ code: 1, stdout: "", stderr: "" }), hc: async () => ({ code: 1, stdout: "", stderr: "" }),
@@ -42,7 +43,7 @@ const chat = () => {
 const cx: any = { notify: () => {} };
 
 describe("the window's chat at Herdr's zoom (GitHub #759)", () => {
-  beforeEach(() => { for (const k of Object.keys(handlers)) delete handlers[k]; });
+  beforeEach(() => { comfortable = false; for (const k of Object.keys(handlers)) delete handlers[k]; });
 
   for (const z of [1, 1.7]) {
     test(`a row 100 px tall gets 100 px in the list at zoom ${z}`, () => {
@@ -61,7 +62,7 @@ describe("the window's chat at Herdr's zoom (GitHub #759)", () => {
       // The pane, 1130 px wide at zoom 1, as the window reports it; the press on Show more's words (the column's
       // left edge, the bubble's padding in, 30 px into the words), where it's drawn.
       c.paneSize({ width: 1130 * z, height: 800 * z });
-      const pane = 1130, outer = Math.min(pane, 760 + 36), left = (pane - outer) / 2 + 18;
+      const { left } = c.edges();
       c.notePress({ local_position: { x: (left + 12 + 30) * z, y: 300 * z } });
       const rows = [{ id: "f", kind: "fold" }];
       c.clickRow("f", rows, cx, [40]);
@@ -81,4 +82,27 @@ describe("the window's chat at Herdr's zoom (GitHub #759)", () => {
     c.measurer([{ id: "a", kind: "text" }], ["a"], theme);
     expect(seen[0]).not.toBe(seen[1]);
   });
+});
+
+test("Chat uses wide panes by default, retains a comfortable option, and never grows beyond a narrow pane", () => {
+  const c = chat(); c.width = 1800;
+  expect(c.column()).toBe(1764);
+  expect(c.edges()).toEqual({ left: 18, right: 1782 });
+  comfortable = true;
+  expect(c.column()).toBe(760);
+  expect(c.edges().left).toBeGreaterThan(400);
+  c.width = 480;
+  expect(c.edges()).toEqual({ left: 18, right: 462 });
+});
+
+test("closing an extra Chat view releases its UI without releasing the original agent's permission hooks", async () => {
+  const c = chat();
+  let releases = 0, canceled = 0;
+  Object.assign(c, { companion: "extra", addr: "t1", machine: null,
+    box: { release: () => releases++ }, findBox: { release: () => releases++ },
+    scroll: { release: () => releases++ }, dict: { cancel: () => canceled++ } });
+  await c.close({});
+  expect(releases).toBe(3); expect(canceled).toBe(1);
+  expect(c.resumable()).toBe(false);
+  expect(await c.checkLost("t1", {})).toBe(false);
 });

@@ -15,7 +15,7 @@
 
 import { View, div, svg, image } from "gpui-kit";
 import { h_flex } from "gpui-base";
-import { props, run, theme, home, exec, hc, notify, nextCommand, shared, setShared } from "herdr";
+import { props, run, theme, home, exec, hc, notify, nextCommand, shared, setShared, openOverlay, focused } from "herdr";
 import { panes, terminals, spaces, inRender } from "./live.js";
 import { spaceName, chatPane, chatLabel } from "./core/spaces.js";
 import { apSpace, apWatch, apPoll, apGroup, apHeartbeatLink, COMPACT_BELOW } from "./autopilot.js";
@@ -23,6 +23,8 @@ import { button as uiButton, segmented, TEXT, RADIUS, toast, plainError } from "
 import { on as addonOn } from "./addons.js";
 // "End Claude Code?" and its buttons: core/menus.js (the web app's header asks in the same words).
 import { endAgent } from "./core/menus.js";
+import { companionFor, boundAgent, closeCompanion, requestCompanionMode, companionAgent } from "./companions.js";
+import { popupBounds, popupAt } from "./popup.js";
 
 const CHAT = "chat";
 const LABEL = "herdr.chat";
@@ -93,10 +95,16 @@ export default class Pane extends View {
         if (c === undefined) continue;
         cmd = null;
         const self = this.me();
-        if (c !== "toggle" || !self?.focused) continue;
+        if (!self?.focused) continue;
+        if (c === "close-view") { if (companionFor(self.pane)) closeCompanion(self.pane); continue; }
+        if (c === "wide" || c === "comfortable") { setShared("chat.width", c); continue; }
+        if (c === "beside") { this.openBeside(self.pane); continue; }
+        if (c !== "toggle") continue;
         if (Date.now() - this.born < 2000 || Date.now() - lastSwap < 3000) continue;
         lastSwap = Date.now();
-        if (self.mod === CHAT) { if (agentOf(self.pane)) this.toTerminal(self.pane, cx); }
+        const extra = companionFor(self.pane);
+        if (extra) this.extraMode(extra, extra.mode === "terminal" ? "chat" : "terminal", cx);
+        else if (self.mod === CHAT) { if (agentOf(self.pane)) this.toTerminal(self.pane, cx); }
         else if (chatty(self)) this.toChat(self, cx);
       }
     });
@@ -104,6 +112,13 @@ export default class Pane extends View {
 
   me() {
     return panes().find((p) => p.pane === props()?.pane);
+  }
+
+  extraMode(record, mode, _cx) { requestCompanionMode(record, mode); }
+
+  openBeside(pane) {
+    openOverlay({ mod: "workspace-agents", kind: "popup", width: 420, height: 360,
+      at: popupAt(this.besideAt, 420, 360), props: { pane } });
   }
 
   // A 24 px icon button (split, zoom, close).
@@ -187,6 +202,7 @@ export default class Pane extends View {
   // A chat pane's ✕ does what an agent pane's does: ends the agent, and the pane goes. It asks
   // first, in the header itself ("End Claude Code?" End agent / Cancel): this.ending.
   closeChat(chat) {
+    if (companionFor(chat)) { closeCompanion(chat); return; }
     this.ending = false;
     const terminal = agentOf(chat);
     if (terminal) run("terminal.kill", { terminal });
@@ -209,14 +225,27 @@ export default class Pane extends View {
     const self = this.me();
     if (!self) return div();
     // A chat pane wears its agent's header: same name, folder and status.
-    const chatMode = self.mod === CHAT;
-    const agent = chatMode ? agentOf(self.pane) : null;
+    const extra = companionFor(self.pane);
+    const chatMode = extra ? extra.mode !== "terminal" : self.mod === CHAT;
+    const agent = extra ? boundAgent(extra)?.address : chatMode ? agentOf(self.pane) : null;
     const entry = agent ? { terminal: agent } : null;
+    // The new header owns the display attachment: closing the replaced pane disposes its
+    // caller. Wait until that old pane has gone, then attach only a missing projection.
+    if (extra?.mode === "terminal" && (!extra.changing || Date.now() - extra.changing > 5000) && !panes().some(p => p.pane === extra.pendingPane) && agent && self.focused && !this.projecting && focused()?.shown !== agent) {
+      this.projecting = true;
+      cx.timer.after(0, (cx) => {
+        if (focused()?.pane === self.pane && focused()?.shown !== agent) {
+          if (extra.terminal !== agent) companionAgent(extra.id, agent);
+          else run("terminal.show", { pane: self.pane, terminal: agent });
+        }
+        cx.timer.after(300, (cx) => { this.projecting = false; cx.notify(); });
+      });
+    }
     const p = (entry && parked(entry.terminal)) ?? self;
     const lazy = chatMode && !entry && lazySlot(self.pane);
     // An artifact (mods/artifacts: mod "art-<id>") shows its title and version.
     const art = self.mod?.startsWith("art-") ? shared("artifacts.titles")?.[self.mod] ?? self.title : null;
-    const prog = self.mod === "workspace-document" ? "Document" : ((p.program?.agent || p.program?.shell) && p.program.name) || p.title || p.program?.name || "Shell";
+    const prog = extra?.label ?? (self.mod === "workspace-document" ? "Document" : ((p.program?.agent || p.program?.shell) && p.program.name) || p.title || p.program?.name || "Shell");
     // An Assistant reads as its space ("tor-gameboy"), never its role or what it runs (SHEP-36: the composer's model
     // menu says which agent): the space's name, then its folder, quieter.
     const isAssistant = Boolean(lazy) || terminals().find((x) => x.address === (agent ?? self.terminal))?.labels?.["herdr.role"] === "coordinator";
@@ -225,7 +254,7 @@ export default class Pane extends View {
     const pic = art !== null ? svg("mods/artifacts/artifacts.svg").size(14).flex_none().text_color(t.dim) : icon(p.program, 14, t.dim);
     const st = p.status;
     const pane = self.pane;
-    const canSwitch = chatMode ? Boolean(entry) || Boolean(lazy) : chatty(self);
+    const canSwitch = extra ? Boolean(agent) : chatMode ? Boolean(entry) || Boolean(lazy) : chatty(self);
     // An Assistant (chat or terminal): its Autopilot switch on the right, before the hover buttons (none while the
     // Autopilot add-on is off).
     const apFor = addonOn("autopilot") ? apSpace(agent ?? (chatMode ? null : self.terminal), lazy || null) : null;
@@ -248,6 +277,16 @@ export default class Pane extends View {
       // The folder gives way first; the switch keeps its width; the gap after pushes the rest right.
       .child(div().flex_shrink_1().min_w(0).truncate().text_color(t.dim).child(folder(p.cwd)))
       .child(div().flex_1())
+      .child(h_flex().id(`ph-beside-${pane}`).h(24).px(6).flex_none().items_center().rounded(RADIUS.control)
+        .text_color(t.muted).cursor_pointer().hover(s => s.bg(t.hover))
+        .on_mouse_down("left", e => { this.besideAt = popupBounds(e); })
+        .on_click((_e, cx) => { cx.stop_propagation(); this.openBeside(pane); })
+        .child("Beside…"))
+      .when(chatMode, el => el.child(h_flex().id(`ph-width-${pane}`).h(24).px(6).flex_none().items_center().rounded(RADIUS.control)
+        .text_color(t.dim).cursor_pointer().hover(s => s.bg(t.hover))
+        .on_click((_e, cx) => { cx.stop_propagation(); setShared("chat.width", shared("chat.width") === "comfortable" ? "wide" : "comfortable"); })
+        .child(shared("chat.width") === "comfortable" ? "Comfortable" : "Wide")))
+      .when(Boolean(extra), el => el.child(this.button(t, `ph-view-close-${pane}`, "close", null, null, () => closeCompanion(pane))))
       // The status in words, right-aligned with the controls: "Working…" with its spinner, "Needs you", nothing at
       // rest (done is the normal state, no mark).
       .when(st === "working", el => el.child(h_flex().flex_none().gap(6).items_center().text_color(t.muted)
@@ -268,11 +307,11 @@ export default class Pane extends View {
         .child(this.button(t, `ph-r-${pane}`, "split-right", "pane.split", { direction: "right", pane }))
         .child(this.button(t, `ph-d-${pane}`, "split-down", "pane.split", { direction: "down", pane }))
         .child(this.button(t, `ph-z-${pane}`, self.zoomed ? "unzoom" : "zoom", "pane.zoom", { pane }))
-        .when(!entry, el => el.child(this.button(t, `ph-x-${pane}`, "close", "pane.close", { pane })))
-        .when(Boolean(entry), el => el.child(this.button(t, `ph-x-${pane}`, "close", null, null, () => { this.ending = true; }))))
+        .when(!entry && !extra, el => el.child(this.button(t, `ph-x-${pane}`, "close", "pane.close", { pane })))
+        .when(Boolean(entry) && !extra, el => el.child(this.button(t, `ph-x-${pane}`, "close", null, null, () => { this.ending = true; }))))
       .when(canSwitch, (el) => el.child(this.switcher(t, `ph-mode-${pane}`, chatMode,
-        (cx) => this.toChat(self, cx),
+        (cx) => extra ? this.extraMode(extra, "chat", cx) : this.toChat(self, cx),
         // No agent yet: the chat starts it (no first message) and then shows its terminal.
-        (cx) => (lazy && !agentOf(pane) ? setShared("chat.startreq", { pane, at: Date.now() }) : this.toTerminal(pane, cx)))));
+        (cx) => extra ? this.extraMode(extra, "terminal", cx) : (lazy && !agentOf(pane) ? setShared("chat.startreq", { pane, at: Date.now() }) : this.toTerminal(pane, cx)))));
   }
 }

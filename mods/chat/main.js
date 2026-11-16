@@ -68,14 +68,16 @@ import { dayLabel, dayOf } from "./days.js";
 import { CallScreen } from "./call-screen.js";
 import { on as addonOn } from "./addons.js";
 import { note } from "./usage.js";
+import { popupBounds, popupAt } from "./popup.js";
+import { companionPane, companionAgent, companionRecords, boundAgent, closeCompanion } from "./companions.js";
 
 // Messages a page of history holds: the newest page first, earlier ones as the person scrolls up.
 const PAGE = 200;
 // At most this many log records (and opened tool outputs) kept in memory per chat: past it, the
 // oldest go (scrolling to the top reads them again).
 const KEEP = 2000;
-// The conversation's width at most, in px: lines stay readable in a wide pane.
-const COLUMN = 760;
+// Optional comfortable width; the default uses the available pane width.
+const COMFORTABLE_COLUMN = 760;
 const KINDS = { "claude-code": "claude", claude: "claude", codex: "codex" };
 const norm = (s) => String(s ?? "").replace(/\s+/g, " ").trim();
 // The role templates' folder on the machine a command runs on (sh -c prefix: $dir).
@@ -263,8 +265,9 @@ export default class Chat extends View {
     this.inner = _props?.inner === true;
     if (this.inner) inner.chat = this;
     const P = this.inner ? _props : props();
+    this.companion = P?.companion ?? null;
     this.origin = P?.terminal ?? null;
-    this.addr = this.origin;
+    this.addr = (this.companion && boundAgent(companionRecords()[this.companion])?.address) || this.origin;
     // No agent yet (a Coordinator tab): it may have started one already (this slot's label).
     this.role = P?.role ?? null;
     this.slot = P?.slot ?? null;
@@ -498,11 +501,11 @@ export default class Chat extends View {
     // Drafts and dictation belong to the agent's first address (its origin), so they survive
     // Chat ⇄ Terminal, restarts from here, and app restarts.
     const labels = terminals().find((x) => x.address === this.addr)?.labels ?? {};
-    this.originKey = labels["herdr.chat.origin"] || (this.slot ? `slot:${this.slot}` : null) || this.addr || "none";
+    this.originKey = (this.companion && companionRecords()[this.companion]?.origin) || labels["herdr.chat.origin"] || (this.slot ? `slot:${this.slot}` : null) || this.addr || "none";
     this.typing = labels["herdr.typing"] ? { addr: this.addr, at: Number(labels["herdr.typing"]) || 0 } : null;
     this.dict = new Dictation(this.originKey);
     if (addonOn("voice")) warmAudio();
-    this.draftFile = `${appHome()}/data/chat-drafts/${safe(this.originKey)}.json`;
+    this.draftFile = `${appHome()}/data/chat-drafts/${safe(this.companion ? `${this.originKey}:view:${this.companion}` : this.originKey)}.json`;
     if (!this.addr && this.role) this.phase = "fresh";
     if (this.phase === "fresh") this.loadChoice(cx);
     this.loadFirst(cx, labels);
@@ -613,7 +616,7 @@ export default class Chat extends View {
     this.scroll.release();
     this.dict.cancel();
     if (this.call) await this.hangup();
-    if (!this.addr || this.machine) return;
+    if (!this.addr || this.machine || this.companion) return;
     await exec("sh", ["-c", 'rm -f "$1/open/$2"; for f in "$1/req/$2".*.json; do [ -f "$f" ] && grep -q \'"turn_id"\' "$f" && : > "$1/ans/${f##*/}"; done; true', "x", this.askDir, this.addr]);
   }
 
@@ -670,7 +673,7 @@ export default class Chat extends View {
   // moment the chat knows its agent (not only once its conversation shows): an agent started
   // from here may ask in its first seconds, and without the flag the hook leaves it to the CLI.
   async flag() {
-    if (this.machine || !this.addr || this.phase === "ended") return;
+    if (this.machine || !this.addr || this.phase === "ended" || this.companion) return;
     await exec("sh", ["-c", 'mkdir -p "$1/open" "$1/req" "$1/ans" && touch "$1/open/$2"', "x", this.askDir, this.addr]);
   }
 
@@ -761,7 +764,7 @@ export default class Chat extends View {
   // A new ask: the agent waits on the person, as when it's blocked.
   askAlert() {
     // A thread's worker alerts from its own tab's chat or the Inbox, not twice.
-    if (this.thread) return;
+    if (this.thread || this.companion) return;
     const mine = this.myPane();
     const looking = Boolean(mine) && focused()?.pane === mine && window()?.active;
     const k = terminals().find((x) => x.address === this.addr);
@@ -1051,6 +1054,7 @@ export default class Chat extends View {
   // Did the agent at `addr` stop because the session it resumed is gone ("No conversation
   // found")? Then a new one starts by itself. Looked at once per agent.
   async checkLost(addr, cx, t = null) {
+    if (this.companion) return false; // recovery belongs to the original view
     if (this.lostTried.has(addr)) return false;
     this.lostTried.add(addr);
     if (!t) { try { t = JSON.parse((await hc(["get", addr, "--json"])).stdout || "null"); } catch {} }
@@ -1124,7 +1128,7 @@ export default class Chat extends View {
       const next = terminals().find((x) => x.state === "live" && x.address !== this.addr && x.labels?.["herdr.chat.origin"] === this.originKey);
       if (next) { this.follow_to(next.address); return; }
       // It ended because the session it resumed is gone: a new one starts by itself.
-      if (!gone && t && !this.thread && await this.checkLost(this.addr, cx, t)) return;
+      if (!gone && t && !this.thread && !this.companion && await this.checkLost(this.addr, cx, t)) return;
       // A thread's worker that ended: its conversation stays to read, the box goes (composer()).
       if (this.thread) {
         // Read once from its own log, when the list gave one (read-only, with Resume).
@@ -1141,12 +1145,12 @@ export default class Chat extends View {
     // Parked behind this chat, the terminal lost core keep (terminal.park turns it off): turn it
     // back on, so the agent survives a lost core like any pane's terminal.
     // A thread only shows a task worker, which has no pane by design: its keep is Herdr's.
-    if (!this.thread && t.keep === false && !t.labels?.["herdr.tab"] && !panes().some((p) => p.terminal === this.addr)) await hc(["keep", this.addr]);
+    if (!this.thread && !this.companion && t.keep === false && !t.labels?.["herdr.tab"] && !panes().some((p) => p.terminal === this.addr)) await hc(["keep", this.addr]);
     // The agent lost its link to this chat (herdr.chat) while it has no pane of its own: link it
     // again, or the header, the agents list and the sweep take it for an agent without a chat.
     // Only to the pane this chat last knew as its own, while that is still a chat pane.
     const pane = this.lastPane ?? (this.slot && this.slotRec()?.pane) ?? null;
-    if (!this.thread && !this.inner && !this.swapping && !t.labels?.["herdr.chat"] && pane && !panes().some((p) => p.terminal === this.addr)
+    if (!this.thread && !this.inner && !this.companion && !this.swapping && !t.labels?.["herdr.chat"] && pane && !panes().some((p) => p.terminal === this.addr)
       && panes().some((p) => p.pane === pane && p.mod === "chat")) await hc(["label", this.addr, `herdr.chat=${chatLabel(pane)}`]);
     const kind = KINDS[t.status?.app] ?? KINDS[t.foreground?.name];
     // Back at its shell because the session it resumed is gone: a new agent starts there.
@@ -1200,6 +1204,7 @@ export default class Chat extends View {
   // Shows another terminal from now on (the agent was restarted).
   follow_to(addr) {
     this.addr = addr;
+    if (this.companion) companionAgent(this.companion, addr);
     this.flag();
     // The box comes back once the new agent's conversation shows: give it the keyboard again.
     this.wasFocused = false;
@@ -1348,7 +1353,7 @@ export default class Chat extends View {
         if (!this.path || Date.now() - last > 4000) { last = Date.now(); await this.locate(cx); }
         if (this.phase === "ended" && !this.swapping) {
           // A thread stays open on its notice; ✕ closes it.
-          if (this.thread) return;
+          if (this.thread || this.companion) return;
           // An Assistant that ran and ended (its /exit, GitHub #1039): its tab stays, with Restart Assistant (the same
           // conversation, resumed) where its chat was. Closing it is the person's call.
           if (this.resumable()) { this.endedAssistant = true; cx.notify(); return; }
@@ -2153,7 +2158,7 @@ export default class Chat extends View {
 
   // An Assistant whose agent ended after it ran: its session can be resumed (restartAssistant()).
   resumable() {
-    return Boolean(!this.thread && !this.inner && this.assistant() && this.addr && this.path && agent.sessionOf(this.kind, this.path));
+    return Boolean(!this.thread && !this.inner && !this.companion && this.assistant() && this.addr && this.path && agent.sessionOf(this.kind, this.path));
   }
 
   // The Coordinator tab's chat empty again, ready to start the next Assistant.
@@ -2196,14 +2201,14 @@ export default class Chat extends View {
   closeSelf() {
     if (this.inner) { backToTasks(); return; }
     const mine = this.myPane() ?? this.lastPane;
-    if (mine) run("pane.close", { pane: mine });
+    if (mine) { if (this.companion) closeCompanion(mine); else run("pane.close", { pane: mine }); }
   }
 
   // ---- message actions ----------------------------------------------------------------------
 
   // The column's left and right edges in the pane, for the action buttons under messages.
   edges() {
-    const outer = Math.min(this.width, COLUMN + 36);
+    const outer = Math.min(this.width, this.column() + 36);
     const left = (this.width - outer) / 2 + 18;
     return { left, right: left + outer - 36 };
   }
@@ -2828,7 +2833,10 @@ export default class Chat extends View {
   // Restarts the agent with what the picker chose; this chat follows the new one.
   applyPick(pick, cx) {
     if (this.thread) return this.switchTask(pick, cx);
-    const mine = this.myPane();
+    const mine = this.companion ? chatPane(terminals().find(x => x.address === this.addr)) : this.myPane();
+    if (this.companion && !panes().some(p => p.pane === mine && p.mod === "chat")) {
+      toast({ title: "Use the original agent tab", body: "Switch its terminal to Chat to apply settings here." }); return;
+    }
     if (this.restarting || !mine || !this.t) return;
     this.restarting = true;
     cx.spawn(async (cx) => {
@@ -3125,7 +3133,7 @@ export default class Chat extends View {
   foldOf(x, ps) {
     const q = this.findQuery().toLowerCase();
     if (q && String(x.text).toLowerCase().includes(q)) return null;
-    const w = Math.max(240, Math.floor(Math.min(this.width, COLUMN) * 0.8)) - 24;
+    const w = Math.max(240, Math.floor(Math.min(this.width, this.column()) * 0.8)) - 24;
     const est = ps.map((p) => (p.type === "md" ? wrapLines(p.text, w) * LINE_H : 34 + 16 + p.code.split("\n").length * 19));
     if (est.reduce((a, b) => a + b, 0) <= FOLD_TALL * LINE_H) return null;
     if (this.unfolded.has(x.id)) return { open: true, clips: new Map(), last: ps.length - 1 };
@@ -3233,7 +3241,7 @@ export default class Chat extends View {
   }
 
   guessBare(x) {
-    const w = Math.min(this.width, COLUMN) - 36;
+    const w = Math.min(this.width, this.column()) - 36;
     const lines = (text, width) => String(text ?? "").split("\n").reduce((n, l) => n + Math.max(1, Math.ceil((l.length * 7) / Math.max(120, width))), 0);
     switch (x.kind) {
       case "end": return 10;
@@ -3307,10 +3315,10 @@ export default class Chat extends View {
     // A readable column, centered when the pane is wide.
     // At a block's edge a row drops its outer room there: spaced() puts the gap between blocks.
     const col = (el, px = 18, py = 6) => h_flex().w_full().justify_center()
-      .child(div().w_full().max_w(COLUMN + 2 * px).px(px).pt(x.top0 ? 0 : py).pb(x.bot0 ? 0 : py).child(el));
+      .child(div().w_full().max_w(this.column() + 2 * px).px(px).pt(x.top0 ? 0 : py).pb(x.bot0 ? 0 : py).child(el));
     const pad = (el) => col(el, 18, 7);
     // The person's words on the right in an accent tint; the agent's on the left, quieter.
-    const most = Math.max(240, Math.floor(Math.min(this.width, COLUMN) * 0.8));
+    const most = Math.max(240, Math.floor(Math.min(this.width, this.column()) * 0.8));
     const bubble = (text, faded) => h_flex().w_full().justify_end().child(
       // An accent tint under the normal text color: readable in light and dark themes (the
       // accent's own text color on the full accent was too faint on light accents).
@@ -3349,7 +3357,7 @@ export default class Chat extends View {
           .when(!x.failed && Boolean(x.waiting), (el) => el.child(div().text_size(12).text_color(t.dim).child(x.waiting))));
       case "replyref":
         // The message this one answers, in one dim line above it.
-        return col(h_flex().w_full().h(18).justify_end().child(h_flex().max_w(Math.floor(Math.min(this.width, COLUMN) * 0.6)).gap(5).items_center()
+        return col(h_flex().w_full().h(18).justify_end().child(h_flex().max_w(Math.floor(Math.min(this.width, this.column()) * 0.6)).gap(5).items_center()
           .cursor_pointer().text_size(11.5).text_color(t.dim).hover((s) => s.text_color(t.muted))
           .child(svg("mods/chat/reply.svg").size(12).flex_none())
           .child(div().min_w(0).truncate().child(x.to))), 18, 2);
@@ -3539,7 +3547,7 @@ export default class Chat extends View {
     else if (row.kind === "tasknews") {
       // Accept's place on a Ready line: the line's right end, its padding in (as row() draws it:
       // col(…, 12, 0), then px 6).
-      const inner = Math.min(this.width, COLUMN + 24) - 24;
+      const inner = Math.min(this.width, this.column() + 24) - 24;
       const off = (this.width + inner) / 2 - 6 - (this.press?.x ?? -1);
       if (row.accept && off >= -2 && off <= (this.cardW.get("accept") ?? ACCEPT) + 2) this.acceptTask(row, cx);
       // Needs you with its card open just under it: the card takes the keys.
@@ -3607,7 +3615,7 @@ export default class Chat extends View {
     if (this.asks.length || this.sasks?.some((a) => !a.kept) || (this.addr && openCard(this.addr))) return null;
     // The agent this chat is starting, before it says anything.
     if ((this.phase === "starting" || this.phase === "finding") && this.role && this.pending.length) {
-      return h_flex().id("chat-status").flex_none().w_full().max_w(COLUMN + 36).mx_auto().h(30).px(18).gap(8).items_center().text_size(12).text_color(t.muted)
+      return h_flex().id("chat-status").flex_none().w_full().max_w(this.column() + 36).mx_auto().h(30).px(18).gap(8).items_center().text_size(12).text_color(t.muted)
         .child(svg("mods/workspace-chrome/spinner.svg").size(12).flex_none().text_color(t.working).spin(900))
         .child(div().flex_1().min_w(0).truncate().child(`Starting the ${this.role === "coordinator" ? "Assistant" : this.role}…`));
     }
@@ -3621,7 +3629,7 @@ export default class Chat extends View {
       // Only waiting (hc wait, a sleep, a monitor, a helper it waits on): calm, no spinner; a
       // message wakes it (or comes in at once).
       const waiting = this.waitingNow() && !this.stopping;
-      return h_flex().id("chat-status").flex_none().w_full().max_w(COLUMN + 28).mx_auto().h(30).px(14).gap(8).items_center().text_size(12).text_color(t.muted)
+      return h_flex().id("chat-status").flex_none().w_full().max_w(this.column() + 28).mx_auto().h(30).px(14).gap(8).items_center().text_size(12).text_color(t.muted)
         .when(waiting, (el) => el.child(svg("mods/chat/clock.svg").size(12).flex_none().text_color(t.dim)))
         .when(!waiting, (el) => el.child(svg("mods/workspace-chrome/spinner.svg").size(12).flex_none().text_color(t.working).spin(900)))
         .child(div().flex_1().min_w(0).truncate().child(doing))
@@ -3637,7 +3645,7 @@ export default class Chat extends View {
           .child(div().text_size(11).text_color(t.dim).child("Esc")));
     }
     if (st === "blocked") {
-      return div().flex_none().w_full().max_w(COLUMN + 28).mx_auto().px(14).pt(6).child(h_flex().px(12).py(10).gap(10).items_center().rounded(10)
+      return div().flex_none().w_full().max_w(this.column() + 28).mx_auto().px(14).pt(6).child(h_flex().px(12).py(10).gap(10).items_center().rounded(10)
         .bg(t.surface).border_1().border_color(t.border)
         .child(div().size(8).flex_none().rounded(4).bg(t.blocked))
         .child(v_flex().flex_1().min_w(0).gap(2)
@@ -3650,7 +3658,7 @@ export default class Chat extends View {
 
   // Why a call can't start (no key yet).
   callBar(t) {
-    const wrap = (el) => div().flex_none().w_full().max_w(COLUMN + 28).mx_auto().px(14).pt(6).child(el);
+    const wrap = (el) => div().flex_none().w_full().max_w(this.column() + 28).mx_auto().px(14).pt(6).child(el);
     if (this.callHelp) {
       return wrap(v_flex().px(12).py(10).gap(8).rounded(8).bg(t.surface).border_1().border_color(t.border)
         .child(h_flex().gap(8).items_center()
@@ -3796,7 +3804,7 @@ export default class Chat extends View {
       if (!on) return head;
       return v_flex().w_full().child(head).child(v_flex().w_full().pl(20).pt(2).children(g.items.map((h) => row(h, shown.indexOf(h)))));
     };
-    return v_flex().flex_none().w_full().max_w(COLUMN + 28).mx_auto().px(14).pt(4)
+    return v_flex().flex_none().w_full().max_w(this.column() + 28).mx_auto().px(14).pt(4)
       .children(bgGroups(shown).map((g) => (g.words ? group(g) : row(g.items[0], shown.indexOf(g.items[0])))));
   }
 
@@ -3863,7 +3871,7 @@ export default class Chat extends View {
       .text_color(t.muted).hover((s) => s.bg(t.hover).text_color(t.foreground))
       .on_click((_e, cx) => { cx.stop_propagation(); fn(cx); cx.notify(); })
       .child(label);
-    return v_flex().flex_none().w_full().max_w(COLUMN + 28).mx_auto().px(14).pt(6).gap(4).children(this.queue.map((m) =>
+    return v_flex().flex_none().w_full().max_w(this.column() + 28).mx_auto().px(14).pt(6).gap(4).children(this.queue.map((m) =>
       h_flex().id(`queued-${m.id}`).w_full().h(40).pl(10).pr(4).gap(8).items_center().rounded(8).border_1().border_color(t.border).bg(t.background)
         .child(svg("mods/chat/clock.svg").size(14).flex_none().text_color(t.dim))
         .child(v_flex().flex_1().min_w(0)
@@ -4126,9 +4134,11 @@ export default class Chat extends View {
     const model = menu?.models?.find(x => x.id === sel.model);
     const allowed = Boolean(enabled && (fresh || this.dflt) && !this.restarting);
     const control = (field, label, options) => h_flex().id(`chat-control-${field}`).h(ROUND).px(6).gap(4).flex_none().items_center().rounded(6).text_size(11.5).text_color(t.muted)
-      .when(allowed && options.length > 0, el => el.cursor_pointer().hover(x => x.bg(t.hover)).on_click((_e, cx) => {
+      .when(allowed && options.length > 0, el => el.cursor_pointer().hover(x => x.bg(t.hover))
+      .on_mouse_down("left", e => { this.controlAt = popupBounds(e); }).on_click((_e, cx) => {
         cx.stop_propagation(); this.controlFresh = fresh;
         openOverlay({ mod: "chat-models", kind: "popup", width: 310, height: Math.min(420, 10 + options.length * 31),
+          at: popupAt(this.controlAt, 310, Math.min(420, 10 + options.length * 31), true),
           props: { pick: field, key: this.controlsKey(), options, current: sel[field], width: 310 } });
       })).child(label).child("⌄");
     const out = [div().text_size(11).text_color(t.dim).child(profile?.name ?? this.profileName ?? agent.NAMES[kind] ?? kind),
@@ -4191,7 +4201,7 @@ export default class Chat extends View {
     const c = this.call;
     const word = c.muted && c.phase !== "speaking" ? "Muted"
       : { connecting: "Connecting", listening: "Listening", thinking: "Thinking", speaking: "Speaking" }[c.phase] ?? "Connecting";
-    return div().flex_none().w_full().max_w(COLUMN + 28).mx_auto().px(14).pt(8).child(div().id("chat-call-box").w_full()
+    return div().flex_none().w_full().max_w(this.column() + 28).mx_auto().px(14).pt(8).child(div().id("chat-call-box").w_full()
       .rounded(10).border_1().border_color(t.input).bg(t.background)
       .track_focus(this.callFocus)
       .on_key_down((e, cx) => {
@@ -4217,7 +4227,7 @@ export default class Chat extends View {
   composer(t, st, cx = null) {
     if (this.call) return this.callComposer(t);
     // A thread whose worker ended: read-only now.
-    if (this.thread && this.ended) return div().flex_none().w_full().max_w(COLUMN + 28).mx_auto().px(14).pt(8)
+    if (this.thread && this.ended) return div().flex_none().w_full().max_w(this.column() + 28).mx_auto().px(14).pt(8)
       .child(h_flex().w_full().h(36).px(12).gap(8).items_center().rounded(10).border_1().border_color(t.border)
         .text_size(12.5).text_color(t.dim).child(div().size(6).flex_none().rounded(3).bg(t.dim)).child(div().flex_1().child(WORDS.ended))
         .when(Boolean(this.taskKey), (el) => el.child(this.button("chat-resume", this.resuming ? WORDS.resuming : "Resume",null, "primary", t, (cx) => this.resumeTask(cx)))));
@@ -4231,7 +4241,7 @@ export default class Chat extends View {
     const recallable = !list.length && (!this.box.value() || this.recall >= 0);
     const take = (fn) => (_e, cx) => { fn(cx); cx.stop_propagation(); cx.notify(); };
     const sel = Math.min(this.slashSel, Math.max(0, list.length - 1));
-    return div().flex_none().w_full().max_w(COLUMN + 28).mx_auto().px(14).pt(8).child(v_flex().id("chat-composer").w_full().rounded(10).border_1()
+    return div().flex_none().w_full().max_w(this.column() + 28).mx_auto().px(14).pt(8).child(v_flex().id("chat-composer").w_full().rounded(10).border_1()
       // Esc stops a working agent while the box is empty and nothing is open over it.
       .key_context([list.length ? "chat_slash" : recallable ? "chat_recall" : "chat_composer",
         st === "working" && !list.length && !this.box.value().trim() && !this.quote ? "chat_stop" : null].filter(Boolean).join(" "))
@@ -4305,6 +4315,7 @@ export default class Chat extends View {
   // toast. So this does what Herdr does: a sound when it needs the person, or finished while
   // they weren't looking, and a toast unless they're looking; and looking marks done as seen.
   alerts(cx) {
+    if (this.companion) return; // the owning tab handles notifications once
     const k = terminals().find((x) => x.address === this.addr);
     // An Assistant's chat on screen is read (unread.js): its space's row in the sidebar goes back to normal.
     if (!this.thread && unread(k) && onScreen(k)) markRead(k);
@@ -4371,7 +4382,10 @@ export default class Chat extends View {
     openViewer({ id: row.art, title: row.title, version: row.line && row.v ? row.v : row.version, latest: row.version, machine: this.machine ?? null }, this.paneArea());
   }
 
+  column() { return shared("chat.width") === "comfortable" ? COMFORTABLE_COLUMN : Math.max(240, this.width - 36); }
+
   myPane() {
+    if (this.companion) return companionPane(this.companion);
     if (!this.addr && this.role) return this.slotPane();
     // A thread's pane is the one its opener recorded for this worker (openThread()).
     if (this.thread) return threadOf(this.addr);
@@ -4541,6 +4555,8 @@ export default class Chat extends View {
     if (!this.addr && !starting) return root.child(this.notice(t, WORDS.noAgent, WORDS.noAgentBody, [
       this.button("chat-close", "Close", null, "secondary", t, () => this.closeSelf())]));
     // A thread whose worker ended before its conversation was read: the same quiet words.
+    if (this.phase === "ended" && this.companion) return root.child(this.notice(t, WORDS.agentEnded, null, [
+      this.button("chat-close-view", "Close view", null, "secondary", t, () => this.closeSelf())]));
     if (this.phase === "ended" && this.thread) return root.child(this.notice(t, WORDS.taskEnded, null, [
       ...(this.taskKey ? [this.button("chat-resume", this.resuming ? WORDS.resuming : "Resume",null, "primary", t, (cx) => this.resumeTask(cx))] : []),
       this.button("chat-close", this.inner ? "Back to tasks" : "Close", null, "secondary", t, () => this.closeSelf())]));
@@ -4594,8 +4610,8 @@ export default class Chat extends View {
     // What sits under the list (an ask card, the working line) changes its height: stay on the newest.
     const below = `${this.asks.length}|${this.sasks.map((a) => a.name + (a.kept ? "+" : "")).join(",")}|${this.wasks.map((a) => a.id).join(",")}|${[this.addr, ...this.workerTasks().keys()].map((a) => openCard(a)?.id ?? "").join("")}|${st}|${this.focused}|${this.queue.length}|${Boolean(this.call)}|${this.files.length}|${Boolean(this.quote)}`;
     if (below !== this.below) { this.below = below; if (this.pinned) this.stick = true; }
-    if (Math.abs(this.heightsFor - this.width) > 1 || (this.heightsZoom ?? 1) !== zoomOf()) {
-      this.heights.clear(); this.measuredAt.clear(); this.heightsFor = this.width; this.heightsZoom = zoomOf(); this.measureGen++;
+    if (this.heightsColumn !== this.column() || Math.abs(this.heightsFor - this.width) > 1 || (this.heightsZoom ?? 1) !== zoomOf()) {
+      this.heights.clear(); this.measuredAt.clear(); this.heightsFor = this.width; this.heightsColumn = this.column(); this.heightsZoom = zoomOf(); this.measureGen++;
     }
     const keys = rows.map((x) => this.key(x));
     // Every size a real number of pixels: one NaN, zero or runaway height leaves the list blank.

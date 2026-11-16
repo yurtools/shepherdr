@@ -1,5 +1,12 @@
 # Working on Shepherdr
 
+## Fork context
+
+This checkout is the yurtools development fork. Read [CONTRIBUTING.md](CONTRIBUTING.md)
+and [docs/fork-plan.md](docs/fork-plan.md) for its branch workflow, current status
+and acceptance requirements. Keep planned features distinct from implemented behavior
+in the README and docs. Preserve upstream attribution and version history.
+
 How to run, build and lay out the code: [docs/develop.md](docs/develop.md).
 
 ## Tests

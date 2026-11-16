@@ -9,7 +9,8 @@ are implemented.
 
 - Start from upstream Shepherdr 3.1.35, commit
   `abd5a0f1aa6faf2d0ee8d6559dc7f064fdae488e`.
-- Keep `main` aligned with upstream initially; develop on `feat/workspace-ui`.
+- Keep `main` as the fork's documented baseline and reviewed changes; develop
+  workspace features on `feat/workspace-ui`. Track original history via `upstream/main`.
 - Keep the original MIT license and attribution.
 - Review upstream changes before merging them into the working branch.
 - Audit installer and update repository references before installing a fork build,

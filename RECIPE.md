@@ -1,4 +1,8 @@
-# Shepherdr
+# Shepherdr — yurtools development fork
+
+> This recipe describes the inherited Shepherdr 3.1.35 layout, not completed fork
+> features. Read [the fork README](README.md) and [implementation plan](docs/fork-plan.md)
+> before installing. No fork-specific workspace release is available yet.
 
 Mission control for your coding agents inside Herdr: your spaces in a sidebar, each with its own Assistant you talk to
 as a chat, and a Tasks panel on the right that shows which task needs you, which is ready and which is still working.

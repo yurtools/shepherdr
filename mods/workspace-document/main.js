@@ -23,6 +23,7 @@ export default class Document extends View {
         if (command === "highlight") doc.highlight = true;
         if (command === "preview" && doc.kind !== "text") doc.preview = true;
         if (command === "save") this.save(doc, cx);
+        if (command === "close-file") { const key = this.active; cx.spawn(cx => this.closeFile(key, cx)); }
         cx.notify();
       }
     });
@@ -43,18 +44,21 @@ export default class Document extends View {
         if (doc.kind === 'docx' || doc.kind === 'excel') {
           if (on) throw new Error("Office previews currently support local files. Open a local copy to preview it.");
           const r = await exec('python3', [`${appHome()}/mods/workspace-document/bin/herdr-office`, path], { timeout: 20000 });
+          if (doc.closed) return;
           let out; try { out = JSON.parse(r.stdout); } catch { throw new Error(r.stderr || 'Office preview could not be read.'); }
           if (r.code !== 0 || out.error) throw new Error(out.error || 'Office preview could not be read.');
           doc.office = out; doc.notice = out.notice; doc.text = doc.saved = out.markdown ?? ''; doc.sheet = 0;
           cx.notify(); return;
         }
         const text = await readTextFile(path, { on });
+        if (doc.closed) return;
         if (text === null) throw new Error("File is no longer available");
         if (text.includes('\0')) throw new Error("Binary file. Office and binary previews are not available yet.");
         if (text.length > MAX_TEXT) throw new Error("File exceeds the 400,000-character editing limit");
         doc.saved = text; doc.text = text; doc.highlight = doc.kind === 'text' && HIGHLIGHT_LANGUAGES.has(language(path));
         try {
           const draft = JSON.parse(await fs.readFile(this.draftPath(doc), 'utf8'));
+          if (doc.closed) return;
           if (draft.path === path && draft.on === on && typeof draft.text === 'string' && draft.text !== text) {
             doc.text = draft.text; doc.saved = draft.saved; doc.conflict = text !== draft.saved; doc.recovered = true;
           }
@@ -65,13 +69,14 @@ export default class Document extends View {
     });
   }
   editor(doc) {
+    if (doc.closed) return;
     doc.editor?.release(); const t = theme();
     doc.editor = EditorState.new({ value: doc.text, language: language(doc.path), readonly: Boolean(doc.on), font_family: settings().font_family, font_size: 12.5,
       syntax: { keyword: t.ansi5, string: t.ansi2, comment: t.dim, function: t.ansi4, type: t.ansi3, number: t.ansi1, constant: t.ansi6 } });
     doc.editor.on('change', (_e, cx) => {
       doc.text = doc.editor.value();
       const revision = doc.revision = (doc.revision ?? 0) + 1;
-      cx.timer.after(400, cx => { if (revision !== doc.revision) return; cx.spawn(async cx => { try { await this.draft(doc); } catch (e) { doc.notice = `Draft could not be saved: ${e}`; } cx.notify(); }); });
+      cx.timer.after(400, cx => { if (doc.closed || doc.closing || revision !== doc.revision) return; cx.spawn(async cx => { try { await this.draft(doc); } catch (e) { doc.notice = `Draft could not be saved: ${e}`; } cx.notify(); }); });
       cx.notify();
     });
   }
@@ -91,7 +96,7 @@ export default class Document extends View {
     });
   }
   save(doc, cx) {
-    if (doc.on || doc.saving || doc.text === doc.saved || doc.conflict) return;
+    if (doc.on || doc.closed || doc.closing || doc.saving || doc.text === doc.saved || doc.conflict) return;
     doc.saving = true;
     cx.spawn(async cx => {
       const text = doc.text, expected = doc.saved;
@@ -107,6 +112,27 @@ export default class Document extends View {
       doc.saved = disk; doc.text = disk; doc.conflict = false; doc.recovered = false; doc.notice = 'Reloaded'; this.editor(doc);
       await this.draft(doc).catch(() => {}); cx.notify();
     });
+  }
+  async closeFile(key, cx) {
+    const doc = this.docs.get(key);
+    if (!doc || doc.closing) return;
+    if (doc.saving) { doc.notice = 'File is saving. Close it after saving finishes.'; cx.notify(); return; }
+    doc.closing = true; cx.notify();
+    try {
+      if (doc.text !== null) await this.draft(doc);
+      doc.closed = true; doc.revision = (doc.revision ?? 0) + 1;
+      const keys = [...this.docs.keys()], at = keys.indexOf(key);
+      this.docs.delete(key);
+      if (this.active === key) this.active = keys[at + 1] ?? keys[at - 1] ?? null;
+      doc.editor?.release();
+    } catch (e) { doc.notice = `File could not be closed: draft could not be saved: ${e.message ?? e}`; }
+    finally { doc.closing = false; cx.notify(); }
+  }
+  fileTab(key, doc, t) {
+    return h_flex().id(`tab-${hash(key)}`).h(26).flex_none().items_center().rounded(6)
+      .bg(key === this.active ? t.selected : t.raised).text_color(t.foreground)
+      .child(this.button(`select-${hash(key)}`, `${doc.path.split('/').pop()}${doc.text !== doc.saved ? ' •' : ''}`, key === this.active, () => { this.active = key; }, t))
+      .child(this.button(`close-${hash(key)}`, doc.closing ? '…' : '×', false, cx => { cx.spawn(cx => this.closeFile(key, cx)); }, t));
   }
   button(id, text, selected, fn, t) {
     return div().id(id).h(26).px(8).flex_none().flex().items_center().rounded(6).text_size(12)
@@ -159,7 +185,7 @@ export default class Document extends View {
     if (this.pane && request?.pane === this.pane && request.at !== this.requestAt) { this.requestAt = request.at; cx.timer.after(0, cx => this.open(request.file, request.on ?? null, cx)); }
     const t = theme(), doc = this.docs.get(this.active);
     return v_flex().id('document').size_full().min_h(0).bg(t.background).text_color(t.foreground)
-      .child(h_flex().h(32).flex_none().overflow_x_scrollbar().gap(3).px(5).items_center().children([...this.docs].map(([key, d]) => this.button(`tab-${hash(key)}`, `${d.path.split('/').pop()}${d.text !== d.saved ? ' •' : ''}`, key === this.active, () => { this.active = key; }, t))))
+      .child(h_flex().h(32).flex_none().overflow_x_scrollbar().gap(3).px(5).items_center().children([...this.docs].map(([key, d]) => this.fileTab(key, d, t))))
       .when(Boolean(doc), el => el.child(h_flex().min_h(38).flex_none().px(8).gap(6).items_center().flex_wrap()
         .child(div().flex_1().min_w(0).truncate().text_size(11).text_color(t.dim).child(doc?.path ?? ''))
         .when(['docx','excel'].includes(doc?.kind), el => el.child(this.button('office-reload','Reload preview',false,cx=>{this.docs.delete(`${doc.on??''}:${doc.path}`);this.open(doc.path,doc.on,cx);},t)))
@@ -171,8 +197,8 @@ export default class Document extends View {
       .when(Boolean(doc?.conflict), el => el.child(h_flex().px(10).py(6).gap(8).items_center().bg(t.raised)
         .child(div().flex_1().text_size(12).child('File changed on disk. Your draft is retained.'))
         .child(this.button('reload', 'Discard draft and reload', false, cx => this.reload(doc, cx), t))))
-      .when(Boolean(doc?.notice) || doc?.recovered || doc?.on, el => el.child(div().px(10).py(4).text_size(11).text_color(t.dim).child(doc?.recovered ? 'Recovered unsaved draft' : doc?.notice ?? 'Remote file · read only')))
-      .child(!doc ? div().p(16).child('Open a file from Files') : doc.error ? div().p(16).child(doc.error) : doc.office ? this.officePreview(doc, t) : doc.highlight && doc.text !== null ? highlighted(doc, language(doc.path), t, hash(doc.path)) : !doc.editor ? div().p(16).child('Loading…') : doc.preview && doc.kind !== 'text' ? this.preview(doc, t) : Editor.new(doc.editor).flex_1().min_h(0));
+      .when(Boolean(doc?.notice) || doc?.recovered || doc?.on, el => el.child(div().px(10).py(4).text_size(11).text_color(t.dim).child(doc?.notice ?? (doc?.recovered ? 'Recovered unsaved draft' : 'Remote file · read only'))))
+      .child(!doc ? div().p(16).child('Open a file from Files') : doc.closing ? div().p(16).child('Closing file…') : doc.error ? div().p(16).child(doc.error) : doc.office ? this.officePreview(doc, t) : doc.highlight && doc.text !== null ? highlighted(doc, language(doc.path), t, hash(doc.path)) : !doc.editor ? div().p(16).child('Loading…') : doc.preview && doc.kind !== 'text' ? this.preview(doc, t) : Editor.new(doc.editor).flex_1().min_h(0));
   }
   async close() { for (const doc of this.docs.values()) { if (doc.text !== null) await this.draft(doc).catch(() => {}); doc.editor?.release(); } }
 }

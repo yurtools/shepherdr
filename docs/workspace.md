@@ -74,6 +74,12 @@ are remembered per space/root.
 
 Click a file to open it in a separate document pane. Further files open as tabs in
 that pane. **+ Pane**, or Shift-click on a file, requests an additional pane.
+Use **×** on a document tab to close just that file. Other tabs and the Files tree
+stay open. Unsaved edits are kept as a recoverable draft; reopen the file to
+continue editing. Closing the last file leaves an empty document pane. If draft
+storage fails, the file stays open with an error. Let an in-progress Save finish
+before closing its tab. The command `workspace-document.close-file` closes the
+active file.
 
 - Markdown: **Source / Preview** switches between the editor and rendered content.
 - CSV / TSV: **Source / Preview** switches between raw text and a table. Choose

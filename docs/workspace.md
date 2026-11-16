@@ -208,6 +208,13 @@ Chat row measurements now ignore small size jitter, stop remeasuring settled
 rows, and change their render revision when reply content changes. Hover updates
 only when crossing to another message. Scroll following uses the viewport's
 position instead of treating a partially visible final reply as the bottom.
+Expanded replies retain their natural height in the hidden measurement area.
+A one-line native Markdown placeholder cannot shrink a long reply’s scroll range;
+the estimated space stays available until the content finishes laying out.
+Markdown inside Chat leaves scrolling to the conversation list.
+Show more / Show less refreshes that message’s cached views, and callbacks from
+an earlier pane width or fold state cannot overwrite current measurements.
+Native checks cover repeated expansion and narrowing beside file preview.
 Regression tests cover these paths; the exact long-conversation mouse-hover
 scenario still needs confirmation in everyday use because the native automation
 interface cannot synthesize that pointer interaction.

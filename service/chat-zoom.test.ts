@@ -9,12 +9,14 @@ import { fakeGpuiBase, fakeGpuiKit } from "./fake-gpui";
 let zoom = 1;
 let comfortable = false;
 let historyMissing = false;
+let markdownScrolling:boolean[]=[];
 let projectSpaces:any[]=[];let projectRoots:any;let projectOverlay:any;
 const handlers: Record<string, ((...a: any[]) => void)[]> = {};
 function el(): any {
   const self: any = new Proxy({}, {
     get(_t, k) {
       if (k === "then") return undefined;
+      if (k === "scrollable") return (value:boolean) => { markdownScrolling.push(value); return self; };
       if (k === "when") return (c: unknown, f: (e: any) => any) => (c ? f(self) : self);
       if (k === "on_size_change") return (f: any) => { (handlers.size ??= []).push(f); return self; };
       if (k === "on_mouse_down") return (_b: string, f: any) => { (handlers.down ??= []).push(f); return self; };
@@ -130,4 +132,43 @@ test("project references search the Files root on the space's machine, independe
  try {c.openProjectFile({timer:{after(){}}});expect(projectOverlay.props).toMatchObject({root:'/files-override',on:null,pane:'target-chat',space:'local-space'});
  projectSpaces[0].machine='project-host';c.machine=null;c.openProjectFile({timer:{after(){}}});expect(projectOverlay.props.on).toBe('project-host');}
  finally {projectSpaces=[];projectRoots=undefined;projectOverlay=null;}
+});
+
+test("an old-width measurement cannot overwrite the resized reply's height",()=>{
+ zoom=1;handlers.size=[];const c=chat();const row:any={id:'long',kind:'agent',text:'long reply'};
+ c.measurer([row],['key'],theme);const old=handlers.size[0];
+ c.measureGen++;c.width=400;c.heights.clear();c.measuredAt.clear();handlers.size=[];
+ c.measurer([row],['key'],theme);handlers.size[0]({width:400,height:1800},cx);
+ old({width:600,height:23},cx);expect(c.heights.get('key')).toBe(1800);
+});
+test("Show more after a preview resize remeasures the reply instead of restoring its cached placeholder",()=>{
+ zoom=1;comfortable=false;handlers.size=[];const c=chat();c.findQuery=()=>'';c.opened=new Set();c.results=new Map();c.unfolded=new Set(['reply']);c.scroll={scroll_to_item(){}};
+ const row:any={id:'reply',blk:'reply',kind:'agent',text:'A paragraph. '.repeat(500)},fold:any={id:'fold:reply',of:'reply',blk:'reply',kind:'fold',open:true};
+ const other:any={id:'previous',kind:'agent',text:'Earlier reply'};const oldKey=c.key(row),otherKey=c.key(other);c.heights.set(otherKey,90);c.heights.set(oldKey,23);c.measuredAt.set(oldKey,Date.now()-10000);
+ c.measurer([row],[oldKey],theme); // settled old entries do not get another hidden view
+ expect(handlers.size).toHaveLength(0);
+ c.toggleFold(fold,[other,row,fold]);c.toggleFold({...fold,open:false},[other,{...row,clip:420},fold]);
+ const freshKey=c.key(row);expect(freshKey).not.toBe(oldKey);expect(c.heights.has(oldKey)).toBe(false);expect(c.heights.get(otherKey)).toBe(90);
+ c.width=400;c.measureGen++;c.measurer([row],[freshKey],theme);expect(handlers.size).toHaveLength(1);
+ handlers.size[0]({width:400,height:2500},cx);expect(c.heights.get(freshKey)).toBe(2500);expect(c.unfolded.has('reply')).toBe(true);
+});
+test("a delayed callback from before collapse cannot restore an obsolete expanded-row height",()=>{
+ zoom=1;handlers.size=[];const c=chat();c.findQuery=()=>'';c.opened=new Set();c.results=new Map();c.unfolded=new Set(['reply']);c.scroll={scroll_to_item(){}};
+ const row:any={id:'reply',blk:'reply',kind:'agent',text:'Long reply'},fold:any={id:'fold:reply',of:'reply',blk:'reply',kind:'fold'};const key=c.key(row);
+ c.measurer([row],[key],theme);const old=handlers.size[0];c.toggleFold(fold,[row,fold]);old({width:600,height:23},cx);expect(c.heights.has(key)).toBe(false);expect(c.measuredAt.has(key)).toBe(false);
+});
+
+test("expanded and folded replies leave wheel scrolling to the conversation list",()=>{
+ markdownScrolling=[];comfortable=false;const c=chat();c.findMark=(text:string)=>text;c.mentionsIn=(text:string)=>text;
+ const text='A long paragraph. '.repeat(500);
+ c.rowBare({id:'expanded',kind:'agent',text},theme);c.rowBare({id:'folded',kind:'agent',text,clip:420},theme);c.rowBare({id:'prompt',kind:'user',text},theme);
+ expect(markdownScrolling).toEqual([false,false,false]);
+});
+
+test("a long reply keeps its estimated space until native Markdown finishes, even after the old settling deadline",()=>{
+ zoom=1;comfortable=false;handlers.size=[];const c=chat(),row={id:'long',kind:'agent',text:'A paragraph with visible words. '.repeat(200)};
+ c.measurer([row],['expanded'],theme);handlers.size[0]({width:600,height:23.2},cx);
+ expect(c.heights.has('expanded')).toBe(false);expect(c.measuredAt.has('expanded')).toBe(false);
+ handlers.size=[];c.measurer([row],['expanded'],theme);expect(handlers.size).toHaveLength(1);
+ handlers.size[0]({width:600,height:1800},cx);expect(c.heights.get('expanded')).toBe(1800);expect(c.measuredAt.has('expanded')).toBe(true);
 });

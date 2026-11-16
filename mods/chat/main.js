@@ -1,5 +1,5 @@
 import { approvalArgv } from "./approval.js";
-import { measuredHeight, viewportScroll, hoverMessage, measureOrder } from "./core/chat-layout.js";
+import { measuredHeight, viewportScroll, hoverMessage, measureOrder, pendingMarkdownHeight } from "./core/chat-layout.js";
 // Chat: an agent's conversation as a chat, read from the agent's own session log, with a
 // box to write to it. The agent keeps running in its terminal; this only shows it another way.
 // Opened by the `pane-chat` header's Chat / Terminal switch in the agent pane's spot: the
@@ -3163,6 +3163,15 @@ export default class Chat extends View {
   // stops following the newest, so what is being read stays put; closing one read from far
   // down brings its start back into view.
   toggleFold(row, rows) {
+    // Reopening must not reuse an unfinished measurement from before a resize/collapse.
+    // Revise only this message: the native Markdown views and hidden measuring boxes
+    // get fresh identities without resetting the rest of a long conversation.
+    const ids = new Set(rows.filter(r => r.blk === row.of || r.of === row.of || r.bar?.of === row.of || r.id === row.of).map(r => r.id));
+    for (const id of ids) {
+      const previous = this.rowRevisions?.get(id);
+      if (previous) this.rowRevisions.set(id, { ...previous, revision: previous.revision + 1 });
+    }
+    for (const key of this.heights.keys()) if (ids.has(key.split('|')[0])) { this.heights.delete(key); this.measuredAt.delete(key); }
     this.pinned = false;
     if (!this.unfolded.has(row.of)) { this.unfolded.add(row.of); return; }
     this.unfolded.delete(row.of);
@@ -3337,14 +3346,14 @@ export default class Chat extends View {
     const bubble = (text, faded) => h_flex().w_full().justify_end().child(
       // An accent tint under the normal text color: readable in light and dark themes (the
       // accent's own text color on the full accent was too faint on light accents).
-      div().max_w(most).px(12).py(8).rounded(12).bg(t.accent + "33").border_1().border_color(t.accent + "4d")
+      div().max_w(most).flex_none().px(12).py(8).rounded(12).bg(t.accent + "33").border_1().border_color(t.accent + "4d")
         .text_color(t.foreground).when(faded, (el) => el.opacity(0.55))
-        .child(TextView.markdown(`${pre}chat-md-${x.id}`, this.findMark(typed(this.mentionsIn(text))) || " ").selectable(true)));
+        .child(TextView.markdown(`${pre}chat-md-${x.id}`, this.findMark(typed(this.mentionsIn(text))) || " ").scrollable(false).selectable(true).flex_none()));
     const theirs = (text) => h_flex().w_full().justify_start().child(
-      div().max_w(most).px(12).py(8).rounded(12).bg(t.raised).text_color(t.foreground)
+      div().max_w(most).flex_none().px(12).py(8).rounded(12).bg(t.raised).text_color(t.foreground)
         // Folded: only the lines that show (shownLines()), as their own view
-        .child(x.clip ? this.clipped(t.raised, x.clip, TextView.markdown(`${pre}chat-md-fold-${x.id}`, this.findMark(this.mentionsIn(shownLines(text, x.clip, most - 24))) || " ").selectable(true))
-          : TextView.markdown(`${pre}chat-md-${x.id}`, this.findMark(this.mentionsIn(text)) || " ").selectable(true)));
+        .child(x.clip ? this.clipped(t.raised, x.clip, TextView.markdown(`${pre}chat-md-fold-${x.id}`, this.findMark(this.mentionsIn(shownLines(text, x.clip, most - 24))) || " ").scrollable(false).selectable(true).flex_none())
+          : TextView.markdown(`${pre}chat-md-${x.id}`, this.findMark(this.mentionsIn(text)) || " ").scrollable(false).selectable(true).flex_none()));
     const fileLine = (label) => h_flex().gap(5).items_center().text_size(12).text_color(t.dim)
       .child(svg("mods/chat/paperclip.svg").size(12).flex_none()).child(div().truncate().child(label));
     switch (x.kind) {
@@ -3400,7 +3409,7 @@ export default class Chat extends View {
               .child(div().flex_1().min_w(0).truncate().child(open ? "" : String(x.text ?? "").split("\n").find((l) => l.trim()) ?? ""))
               .when(x.at > 1e12, (el) => el.child(div().flex_none().text_color(t.dim).child(clock(x.at)))))
             .when(open, (el) => el.child(h_flex().w_full().pl(26).pt(6).pb(2).child(div().max_w(most).px(12).py(8).rounded(12).bg(t.raised)
-              .text_size(13).text_color(t.foreground).child(TextView.markdown(`${pre}chat-brief-${x.id}`, x.text || " ").selectable(true))))), 12, 0);
+              .text_size(13).text_color(t.foreground).child(TextView.markdown(`${pre}chat-brief-${x.id}`, x.text || " ").scrollable(false).selectable(true))))), 12, 0);
         }
         return col(v_flex().w_full().px(6).py(QUIET_PY).rounded(7).cursor_pointer().hover((s) => s.bg(t.hover))
           .child(h_flex().gap(6).items_center().text_size(12).text_color(t.dim)
@@ -3408,7 +3417,7 @@ export default class Chat extends View {
             .child(div().flex_none().text_color(t.muted).child(x.label))
             .when(!open && !x.bare, (el) => el.child(div().flex_1().min_w(0).truncate().child(String(x.text ?? "").split("\n").find((l) => l.trim()) ?? ""))))
           .when(open, (el) => el.child(div().pl(18).pt(6).text_size(12.5).text_color(t.muted)
-            .child(TextView.markdown(`${pre}chat-brief-${x.id}`, literal(x.text) || " ").selectable(true)))), 12, 0);
+            .child(TextView.markdown(`${pre}chat-brief-${x.id}`, literal(x.text) || " ").scrollable(false).selectable(true)))), 12, 0);
       }
       case "video":
         // A video the agent showed: the window can't play one, so a line that opens it in the system's player (clickRow)
@@ -3517,7 +3526,7 @@ export default class Chat extends View {
         return pad(v_flex().w_full().gap(4).px(12).py(10).rounded(10).border_1().border_color(t.border)
           .child(div().text_size(12).font_medium().text_color(x.closed ? t.dim : t.blocked)
             .child(x.closed === "answered" ? WORDS.askedAnswered : x.closed ? WORDS.askedClosed : WORDS.asked))
-          .child(div().text_color(x.closed ? t.muted : t.foreground).child(TextView.markdown(`${pre}chat-md-${x.id}`, x.text).selectable(true))));
+          .child(div().text_color(x.closed ? t.muted : t.foreground).child(TextView.markdown(`${pre}chat-md-${x.id}`, x.text).scrollable(false).selectable(true))));
       case "error":
         return pad(div().w_full().text_size(12.5).text_color(t.blocked).child(x.text));
       case "tools": {
@@ -4765,14 +4774,21 @@ export default class Chat extends View {
     // Rows never measured, nearest first; and, measured again, the rows on screen and those
     // measured in the last few seconds: markdown can lay out a moment after its first frame (a
     // long message first measures as one line), so a height is never taken once and kept.
+    const generation = this.measureGen;
+    const revisions = rows.map(row => this.rowRevisions?.get(row.id)?.revision ?? 0);
     const now = Date.now();
     const order = measureOrder(rows, keys, this.heights, this.measuredAt, near, now);
     return div().absolute().top(0).left(0).w(this.width).h(0).overflow_hidden().opacity(0)
-      .child(v_flex().w_full().children(order.map((i) => div().id(`m${this.measureGen}-${keys[i]}`).flex_none().w_full()
+      .child(v_flex().w_full().flex_none().children(order.map((i) => div().id(`m${this.measureGen}-${keys[i]}`).flex_none().w_full()
         .on_size_change((size, cx) => {
-          if (!this.measuredAt.has(keys[i])) this.measuredAt.set(keys[i], Date.now());
+          // Size callbacks can arrive after a pane resize or a fold toggle. They
+          // belong to the layout that created them, never the current cache.
+          if (generation !== this.measureGen || revisions[i] !== (this.rowRevisions?.get(rows[i].id)?.revision ?? 0)) return;
           const h = measuredHeight(this.heights.get(keys[i]), unzoom(size.height));
           if (h === undefined || this.heights.get(keys[i]) === h) return;
+          const textWidth = Math.max(240, Math.floor(Math.min(this.width, this.column()) * 0.8)) - 24;
+          if (pendingMarkdownHeight(rows[i], h, textWidth)) return;
+          if (!this.measuredAt.has(keys[i])) this.measuredAt.set(keys[i], Date.now());
           this.heights.set(keys[i], h);
           if (this.pinned) this.stick = true;
           if (this.anchor && Date.now() < this.anchor.until) this.reanchor = true;

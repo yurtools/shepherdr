@@ -216,7 +216,7 @@ export default class Pane extends View {
     const lazy = chatMode && !entry && lazySlot(self.pane);
     // An artifact (mods/artifacts: mod "art-<id>") shows its title and version.
     const art = self.mod?.startsWith("art-") ? shared("artifacts.titles")?.[self.mod] ?? self.title : null;
-    const prog = ((p.program?.agent || p.program?.shell) && p.program.name) || p.title || p.program?.name || "Shell";
+    const prog = self.mod === "workspace-document" ? "Document" : ((p.program?.agent || p.program?.shell) && p.program.name) || p.title || p.program?.name || "Shell";
     // An Assistant reads as its space ("tor-gameboy"), never its role or what it runs (SHEP-36: the composer's model
     // menu says which agent): the space's name, then its folder, quieter.
     const isAssistant = Boolean(lazy) || terminals().find((x) => x.address === (agent ?? self.terminal))?.labels?.["herdr.role"] === "coordinator";

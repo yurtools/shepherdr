@@ -5,9 +5,10 @@ built on [Herdr](https://herdr.dev). The goal is a central agent conversation wi
 Chat / Terminal switching, reliable Codex account selection, and a separate file
 pane with Source / Preview views.
 
-**Status: development planning.** The runtime is still upstream Shepherdr 3.1.35.
-This fork currently adds documentation and a roadmap; the workspace changes below
-are not implemented, and there is no fork-specific release yet.
+**Status: development implementation on `feat/workspace-ui`.** The runtime is based
+on upstream Shepherdr 3.1.35. Account profiles and the separate document pane are
+implemented on the working branch. Markdown/CSV panes and account labels have been
+verified in the native Linux UI. There is no fork-specific release yet.
 
 [Roadmap](docs/fork-plan.md) · [Contributing](CONTRIBUTING.md) ·
 [Issues](https://github.com/yurtools/shepherdr/issues) ·
@@ -17,18 +18,18 @@ are not implemented, and there is no fork-specific release yet.
 
 | Area | Target behavior | Status |
 | --- | --- | --- |
-| Chat / Terminal | Switch views in the same pane, retaining the running agent; collapse thinking and tool activity | Existing upstream foundation; account handling needs validation |
-| Codex profiles | Use separate named accounts, preserving the selected profile through launch, resume, fork and restart | Planned |
-| Space Assistant | Choose its agent/profile in space settings; show the assignment in chat | Named-profile support planned |
-| Chat controls | Model, Thinking level and Permissions dropdowns bound to the assigned agent | Planned integration and validation |
-| Files | Keep a persistent tree rooted at the selected space's project folder | Planned fix |
-| Documents | Open files in a separate pane, keeping the tree visible | Planned |
-| Markdown and CSV | Switch between editable source and rendered Markdown or a CSV table | Planned |
-| Source code | Highlight Java, Bash and YAML, with Helm template support evaluated explicitly | Planned |
+| Chat / Terminal | Switch views in the same pane, retaining the running agent; collapse thinking and tool activity | Verified on Linux with the existing running agent |
+| Codex profiles | Use separate named accounts, preserving the selected profile through launch, resume, fork and restart | Implemented on the working branch |
+| Space Assistant | Choose its agent/profile in space settings; show the assignment in chat | Implemented on the working branch |
+| Chat controls | Model, Thinking level and Permissions dropdowns bound to the assigned agent | Implemented on the working branch |
+| Files | Keep a persistent tree rooted at the selected space's project folder | Implemented on the working branch |
+| Documents | Open files in a separate pane, keeping the tree visible | Implemented on the working branch |
+| Markdown and CSV | Switch between editable source and rendered Markdown or a CSV table | Implemented on the working branch |
+| Source code | Native editor language hints for Java, Bash, YAML and Helm templates | Grammar support varies with Herdr |
 | Office files | Read-only Word and Excel previews | Later extension |
 
 The agent is assigned when a regular agent pane opens, or in the space's Assistant
-settings. The chat composer should not need another agent selector. Each Codex
+settings. The chat composer does not need another agent selector. Each Codex
 profile keeps its own login and state.
 
 ## Get the development source
@@ -51,10 +52,10 @@ Linux; this does not claim new cross-platform validation.
 
 ## Installation and updates
 
-There is no installer for the planned workspace features yet. The existing
+The working branch includes an installer for the development build. The existing
 [installation guide](docs/install.md) describes the inherited Shepherdr runtime,
-including its services, helpers and agent hooks. Installing this checkout today
-installs that baseline, not the features marked Planned above.
+including its services, helpers and agent hooks. Install from `feat/workspace-ui` for the workspace changes described in the
+[usage guide](docs/workspace.md); `main` remains the earlier documented baseline.
 
 Development installs use a scratch root, as described in
 [Contributing](CONTRIBUTING.md). Changes to an active Herdr installation are a
@@ -63,6 +64,7 @@ do not replace a fork checkout with an upstream clone to update it.
 
 ## Documentation
 
+- [Workspace UI usage and account configuration](docs/workspace.md)
 - [Implementation plan and acceptance checks](docs/fork-plan.md)
 - [Contribution and fork maintenance workflow](CONTRIBUTING.md)
 - [Upstream provenance and inherited documentation](docs/upstream.md)

@@ -14,6 +14,9 @@ function machine(clis: string[]) {
   const hub: any = {
     call: async (_: string, a: { argv: string[] }) => {
       // hermetic: where agents install system-wide (core/clean-env.js AGENT_PATH) left out, this VM has them there
+      if (a.argv[0] === "sh" && a.argv[2]?.includes("command -v")) {
+        return { code: clis.includes(a.argv.at(-1)!) ? 0 : 1, stdout: "", stderr: "" };
+      }
       const argv = a.argv.map((x) => x.replace(":/opt/homebrew/bin:/usr/local/bin", ""));
       const p = Bun.spawnSync(argv, { env: { HOME: home, PATH: `${bin}:/usr/bin:/bin` } });
       const b64 = (x: Uint8Array) => Buffer.from(x).toString("base64");

@@ -962,7 +962,24 @@ def add_hooks(r, rec):
     app = r.p(APP)
     done = []
     by_file = {}
-    for f, event, entry in HOOKS:
+    definitions = list(HOOKS)
+    try:
+        config = json.loads(read(r.p(f"{APP}/data/agent-profiles.json")) or b"{}")
+        for profile in config.get("profiles", []):
+            account = profile.get("home", "")
+            if profile.get("agent") != "codex" or not os.path.isabs(account):
+                continue
+            real = os.path.realpath(account)
+            if os.path.commonpath([os.path.realpath(r.root), real]) != os.path.realpath(r.root):
+                r.notes.append("A Codex profile is outside this install root; its hooks must be configured separately")
+                continue
+            rel = os.path.join(os.path.relpath(real, r.root), "hooks.json")
+            if rel == ".codex/hooks.json":
+                continue
+            definitions.extend((rel, event, entry) for f, event, entry in HOOKS if f == ".codex/hooks.json")
+    except (OSError, ValueError, TypeError, AttributeError):
+        r.notes.append("Agent profiles could not be read; profile hooks were not installed")
+    for f, event, entry in definitions:
         by_file.setdefault(f, []).append((event, entry))
     for f, entries in by_file.items():
         path = r.p(f)

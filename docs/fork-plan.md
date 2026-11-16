@@ -2,8 +2,9 @@
 
 This fork extends Shepherdr's existing Chat/Terminal workflow for Linux. Keep the
 upstream implementation and make focused changes that can be reviewed and tested
-independently. This document records requirements; it does not claim the features
-are implemented.
+independently. The requirements below now have an initial implementation on `feat/workspace-ui`;
+see [the usage guide](workspace.md) for behavior and limits. Office previews remain
+a later extension.
 
 ## Baseline and maintenance
 
@@ -66,5 +67,11 @@ are implemented.
    installation. Do not use a settings-mod check that can synchronize real
    settings to other machines.
 
-The initial fork setup changes documentation only. No runtime fixes, release,
-service activation or live Herdr installation are included in that setup.
+## Development validation
+
+The working branch now implements named Codex profiles, account-preserving session
+commands, account-bound chat controls, a persistent Files tree, and separate
+Markdown/CSV document panes. Native Linux checks verified account labels and
+Source / Preview rendering beside the tree. Chat / Terminal switching retained
+the existing agent process. The development build is installed locally; there is
+no new release tag. See the workspace guide for remaining limitations.

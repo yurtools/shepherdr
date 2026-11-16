@@ -16,7 +16,7 @@ import sys
 import time
 
 from .base import ASK_HOME, ENTRY, Fail, git, hc_json, now, run, WORKTREES
-from .settings import agent_key, ASSISTANT_TEMPLATES, trust_roots, bare, BRANCH_PATTERN, branch_pattern_problem, keep_review, notes, notes_part, review_limits, settings_block, settings_for
+from .settings import agent_key, agent_index, ASSISTANT_TEMPLATES, trust_roots, bare, BRANCH_PATTERN, branch_pattern_problem, keep_review, notes, notes_part, review_limits, settings_block, settings_for
 from .templates import instructions
 from .agents import detail, LINE_MAX, live_agents, SUMMARY_MAX
 from .github import finish, remote_of
@@ -137,14 +137,14 @@ def own_argv(argv, folder=None):
         # #977: Shepherdr's own hooks in ~/.codex/hooks.json (the chat's question card) trusted for
         # this launch too, else a new or updated one stops the worker at "Hooks need review" with
         # nobody at its keys. Only ours, exactly as written there: the person's own stay theirs.
-        state.update(own_codex_hooks())
+        state.update(own_codex_hooks(out))
         # Its folder trusted for this run (#866: "Trust this folder?" would stop it before the brief, nobody at the
         # keys), its repository's root too: Codex asks for that one in a worktree. Skipped when argv says already.
         roots = [] if any(str(a).startswith("projects") for a in out) else trust_roots(folder)
         trust = ["-c", "projects={" + ",".join(f'{json.dumps(r)}={{trust_level="trusted"}}' for r in roots) + "}"] if roots else []
-        return out[:1] + ["-c", f"hooks.PermissionRequest=[{{hooks=[{{type=\"command\",command={json.dumps(hook)},timeout={ASK_TIMEOUT}}}]}}]",
+        return out[:agent_index(out) + 1] + ["-c", f"hooks.PermissionRequest=[{{hooks=[{{type=\"command\",command={json.dumps(hook)},timeout={ASK_TIMEOUT}}}]}}]",
                           "-c", "hooks.state={" + ",".join(f'{json.dumps(k)}={{trusted_hash="sha256:{v}"}}' for k, v in state.items()) + "}",
-                          *trust] + out[1:]
+                          *trust] + out[agent_index(out) + 1:]
     return out
 
 
@@ -157,11 +157,12 @@ def codex_hook_hash(ident):
 CODEX_EVENTS = {"SessionStart": "session_start", "PermissionRequest": "permission_request"}
 
 
-def own_codex_hooks():
+def own_codex_hooks(argv=None):
     """{hooks.state key: hash} for Shepherdr's own hooks in Codex's hooks.json (the installer's
     session-note.sh and ask-hook.sh), as Codex keys and hashes them; {} when there are none or
     one has a shape whose hash we can't be sure of (it then asks, as before)."""
-    path = os.path.join(os.environ.get("CODEX_HOME") or os.path.expanduser("~/.codex"), "hooks.json")
+    account = next((x.split("=", 1)[1] for x in argv or [] if x.startswith("CODEX_HOME=")), None)
+    path = os.path.join(account or os.environ.get("CODEX_HOME") or os.path.expanduser("~/.codex"), "hooks.json")
     try:
         with open(path) as f:
             hooks = json.load(f).get("hooks") or {}
@@ -370,7 +371,8 @@ def resume_argv(argv, session, folder=None):
         has = mode is None or any(a == "--permission-mode" or a.startswith("--permission-mode=") for a in argv)
         return argv + ([] if has else ["--permission-mode", mode]) + ["--resume", session]
     if k == "codex":
-        return [argv[0], "resume"] + argv[1:] + [session]
+        at = next(i for i, word in enumerate(argv) if os.path.basename(word) == "codex")
+        return argv[:at + 1] + ["resume"] + argv[at + 1:] + [session]
     return None
 
 

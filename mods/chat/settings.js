@@ -35,7 +35,12 @@ export async function loadChoices(machine = null) {
   const installed = Object.fromEntries(["claude", "codex"].map((k) => [k, prog(k) ? prog(k).installed !== false : k === "claude"]));
   const icons = Object.fromEntries(["claude", "codex"].map((k) => [k, { icon: prog(k)?.icon ?? null, tint: Boolean(prog(k)?.tint) }]));
   const { menus, permDefault, defaults } = choicesFrom({ claude, codex }, installed);
-  return { menus, icons, installed, permDefault, defaults };
+  const profiles = await agent.profiles(machine);
+  for (const profile of profiles) {
+    profile.defaults = await agent.defaults("codex", machine, { home: profile.home });
+    profile.menu = agent.menuFor("codex", profile.defaults);
+  }
+  return { menus, icons, installed, permDefault, defaults, profiles, codexDefaults: codex };
 }
 
 // The last choice made (data/coordinator-last.json) when it still fits what is offered, else
@@ -43,9 +48,10 @@ export async function loadChoices(machine = null) {
 export async function lastUsed(data) {
   let s = null;
   try { s = JSON.parse(await fs.readFile(LAST(), "utf8")); } catch {}
-  const m = s && data.menus[s.agent]?.models?.find((x) => x.id === s.model);
-  return m ? { agent: s.agent, model: s.model, effort: m.efforts.includes(s.effort) ? s.effort : null, fast: Boolean(s.fast && m.fast),
-    perm: data.menus[s.agent].perms.some((p) => p.id === s.perm) ? s.perm : data.permDefault[s.agent] } : { ...data.defaults };
+  const menu = data.profiles?.find((x) => x.id === s?.profile)?.menu ?? data.menus[s?.agent];
+  const m = s && menu?.models?.find((x) => x.id === s.model);
+  return m ? { agent: s.agent, ...(s.profile ? { profile: s.profile } : {}), model: s.model, effort: m.efforts.includes(s.effort) ? s.effort : null, fast: Boolean(s.fast && m.fast),
+    perm: menu.perms.some((p) => p.id === s.perm) ? s.perm : data.permDefault[s.agent] } : { ...data.defaults };
 }
 
 export async function saveLastUsed(sel) {
@@ -124,6 +130,12 @@ function applyReply(coord, cx) {
   cx.timer.after(0, (cx) => {
     if (reply.field === "settings" && reply.value?.agent) coord.sel = { ...reply.value };
     if (reply.field === "model") { const [a, ...id] = String(reply.value).split(":"); choose(coord, a, id.join(":")); }
+    if (reply.field === "profile") {
+      const profile = coord.data.profiles?.find((x) => x.id === reply.value);
+      coord.sel = { ...coord.sel, agent: "codex", profile: profile?.id ?? null,
+        model: profile?.defaults?.model ?? coord.data.menus.codex?.models[0]?.id ?? null,
+        effort: profile?.defaults?.effort ?? null, fast: false };
+    }
     if (reply.field === "perm") coord.sel = { ...coord.sel, perm: reply.value };
     cx.notify();
   });
@@ -143,19 +155,33 @@ export function modelButton(t, coord, opts = {}, cx = null) {
   const off = Boolean(opts.disabled) || !sel || !data;
   coord.key ??= `ns-${Math.random().toString(36).slice(2, 8)}`;
   if (sel && data) applyReply(coord, cx);
-  return h_flex().id(`ns-model-${coord.key}`).h(28).pl(8).pr(5).gap(4).flex_none().min_w(0).items_center().rounded(7)
+  coord.lockAgent = Boolean(opts.lockAgent);
+  const control = h_flex().id(`ns-model-${coord.key}`).h(28).pl(8).pr(5).gap(4).flex_none().min_w(0).items_center().rounded(7)
     .text_size(12).font_medium().text_color(off ? t.dim : t.muted).when(off, (el) => el.opacity(0.6))
     .when(!off, (el) => el.cursor_pointer().hover((s) => s.bg(t.hover).text_color(t.foreground))
       .on_mouse_down("left", (e) => { coord.at = e.bounds ?? (e.position ? { x: e.position.x - 40, y: e.position.y - 14, width: 80, height: 28 } : null); })
       .on_click((_e, cx) => { cx.stop_propagation(); openMenu(coord); cx.notify(); }))
     .child(div().min_w(0).truncate().child(sel && data ? opts.label ?? settingsLabel(coord) : "Loading agents…"))
     .child(svg("mods/workspace-chrome/chevron-down.svg").size(12).flex_none());
+  if (opts.lockAgent || sel?.agent !== "codex" || !data?.profiles?.length) return control;
+  const profile = data.profiles.find((x) => x.id === sel.profile);
+  return h_flex().gap(4).items_center()
+    .child(h_flex().id(`profile-${coord.key}`).h(28).px(8).gap(4).rounded(7).text_size(12).text_color(t.muted)
+      .cursor_pointer().hover((x) => x.bg(t.hover)).on_click((_e, cx) => {
+        cx.stop_propagation();
+        const options = [{ id: "", label: "Codex" }, ...data.profiles.map((x) => ({ id: x.id, label: x.name ?? x.id }))];
+        openOverlay({ mod: "chat-models", kind: "popup", width: 260, height: 10 + ROW * options.length,
+          props: { pick: "profile", key: coord.key, options, current: sel.profile ?? "", width: 260 } });
+      }).child(profile?.name ?? "Codex").child("⌄"))
+    .child(control);
 }
 
 // The model menu over the button. Its height is the menu at its tallest (as the chat counts it).
 // select: { agent, model } that comes chosen (a typed /model sonnet), told back at once.
 export function openMenu(coord, select = null) {
   const { sel, data } = coord;
+  const profile = data.profiles?.find((x) => x.id === sel.profile);
+  const selectedMenu = profile?.menu ?? data.menus[sel.agent];
   // border and padding, agent tabs, search, the list (it scrolls past 8 rows), separator,
   // Reasoning header and levels, Fast, Permissions (chat-models' sizes)
   const W = 340, H = 2 + 10 + 34 + 36 + 8 * 31 + 9 + 26 + 34 + 31 + 31;
@@ -163,8 +189,8 @@ export function openMenu(coord, select = null) {
   const at = b ? { x: Math.max(8, b.x + b.width - W), y: b.y - H - 6 >= 8 ? b.y - H - 6 : b.y + b.height + 6 } : "pointer";
   openOverlay({ mod: "chat-models", kind: "popup", frame: "none", width: W, height: H, at,
     props: { mode: "settings", key: coord.key, width: W, height: H, remote: null, select,
-      current: { agent: sel.agent, model: sel.model, effort: sel.effort ?? null, fast: Boolean(sel.fast), perm: sel.perm ?? null },
-      menus: data.menus, icons: data.icons, permDefault: data.permDefault } });
+      current: { profile: sel.profile, agent: sel.agent, model: sel.model, effort: sel.effort ?? null, fast: Boolean(sel.fast), perm: sel.perm ?? null },
+      menus: coord.lockAgent ? { [sel.agent]: selectedMenu } : { ...data.menus, ...(profile ? { codex: selectedMenu } : {}) }, icons: data.icons, permDefault: data.permDefault } });
 }
 
 // Also known as settingsButton (the name agreed for the New space dialog).

@@ -39,7 +39,7 @@ export default class ModelMenu extends View {
     this.p = p;
     if (p.pick) { this.handle = cx.focus_handle(); cx.timer.after(0, () => this.handle.focus()); return; }
     const c = p.current ?? {};
-    this.was = { agent: c.agent, model: c.model, effort: c.effort ?? null, fast: Boolean(c.fast), perm: c.perm ?? null };
+    this.was = { ...("profile" in c ? { profile: c.profile } : {}), agent: c.agent, model: c.model, effort: c.effort ?? null, fast: Boolean(c.fast), perm: c.perm ?? null };
     this.sel = { ...this.was };
     // Typed as /model <name> in the chat: that model comes chosen, Restart ready.
     const pre = p.select && this.models().find((m) => m.agent === p.select.agent && m.id === p.select.model);
@@ -111,7 +111,7 @@ export default class ModelMenu extends View {
 
   choose(m) {
     const was = this.sel;
-    const next = { ...was, agent: m.agent, model: m.id };
+    const next = { ...was, agent: m.agent, model: m.id, ...(m.agent !== was.agent ? { profile: null } : {}) };
     if (next.effort && !m.efforts.includes(next.effort)) next.effort = null;
     if (!m.fast) next.fast = false;
     if (m.agent !== was.agent) {
@@ -135,7 +135,7 @@ export default class ModelMenu extends View {
 
   restart(cx) {
     const s = this.sel;
-    setShared("chat.restartreq", { pane: this.p.pane, at: Date.now(), pick: { agent: s.agent, model: s.model, effort: this.level(s), fast: s.fast, perm: s.perm } });
+    setShared("chat.restartreq", { pane: this.p.pane, at: Date.now(), pick: { ...s, agent: s.agent, model: s.model, effort: this.level(s), fast: s.fast, perm: s.perm } });
     // first among the recent ones, here and in the web's menu
     if (s.model) cx.spawn(async () => {
       const now = parsePicks(await readTextFile(picksPath()).catch(() => ""));
@@ -204,7 +204,7 @@ export default class ModelMenu extends View {
       closeOverlay(p.overlay);
     };
     return v_flex().id("pick-list").w(p.width ?? 260).h(p.height ?? 200).p(5).bg(t.popover).text_size(12.8).text_color(t.foreground)
-      .track_focus(this.handle)
+      .track_focus(this.handle).overflow_y_scrollbar()
       .children((p.options ?? []).map((o) => this.row(t, `pick-${o.id}`, true, () => pick(o))
         .when(Boolean(o.icon), (el) => el.child(o.tint ? svg(o.icon).size(14).flex_none().text_color(t.foreground) : image(o.icon).size(14).flex_none()))
         .child(div().flex_1().min_w(0).truncate().child(o.label))
@@ -215,7 +215,7 @@ export default class ModelMenu extends View {
   tell() {
     if (!this.settingsMode) return;
     const s = this.sel;
-    setShared("newspace.pick", { key: this.p.key, field: "settings", value: { agent: s.agent, model: s.model, effort: s.effort, fast: s.fast, perm: s.perm }, at: Date.now() });
+    setShared("newspace.pick", { key: this.p.key, field: "settings", value: { ...s, agent: s.agent, model: s.model, effort: s.effort, fast: s.fast, perm: s.perm }, at: Date.now() });
   }
 
   render(cx) {

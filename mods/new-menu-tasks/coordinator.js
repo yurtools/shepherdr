@@ -101,6 +101,8 @@ function script(name, args) {
 
 // Where a space's coordinator works: its focused (else first) terminal's folder.
 function folderOf(space) {
+  const configured = shared("workspace.roots")?.[space?.id];
+  if (configured) return configured;
   const mine = new Set(space.tabs.map((t) => t.id));
   const p = panes().find((p) => mine.has(p.tab) && p.focused && p.cwd) ?? panes().find((p) => mine.has(p.tab) && p.cwd);
   // A pane in Chat mode isn't a terminal pane: its agent's folder stands in for it.
@@ -181,6 +183,9 @@ export async function openCoordinator(space, show = true, settings = null) {
     setShared("coordinator.pending", { ...(shared("coordinator.pending") ?? {}), [space.id]: { settings, at: Date.now() } });
     toast({ title: `${space.machine} is offline`, body: "Its Assistant starts when it's back." });
     return;
+  }
+  if (!shared("workspace.roots")) {
+    try { setShared("workspace.roots", JSON.parse(await readTextFile(`${appHome()}/data/workspace-folders.json`) ?? "{}")); } catch {}
   }
   const folder = folderOf(space);
   // Unless the New space dialog chose, the coordinator runs what Shepherdr settings say for the space.

@@ -9,12 +9,13 @@
 
 import { exec, hc, appHome } from "herdr";
 // The rules (names, menus, argv) are core/agents.js, shared with the web app.
-import { DEFAULTS, parseDefaults } from "./core/agents.js";
+import { DEFAULTS, parseDefaults, profileLaunch } from "./core/agents.js";
 import { chatLabel } from "./core/spaces.js";
 export * from "./core/agents.js";
 
-export async function defaults(kind, machine) {
-  const r = await exec("sh", ["-c", DEFAULTS, "defaults", kind], { on: machine }).catch(() => null);
+export async function defaults(kind, machine, opts = {}) {
+  const r = await exec("sh", ["-c", DEFAULTS, "defaults", kind, opts.home ?? "", String(opts.pid ?? "")], { on: machine }).catch(() => null);
+  if (opts.pid && (!r || r.code !== 0)) throw new Error("Cannot read this agent account. Try again once it is running.");
   return parseDefaults(kind, r?.stdout ?? "");
 }
 
@@ -41,3 +42,16 @@ export async function restart(t, built, pane) {
   return addr;
 }
 
+
+// Profiles are machine-local. Only their IDs belong in synchronized role choices.
+export async function profiles(machine = null) {
+  const r = await exec("sh", ["-c", "f=\"${HERDR_APP_HOME:-$HOME/.config/herdr-app}/data/agent-profiles.json\"; if [ -f \"$f\" ]; then cat \"$f\"; else printf '{\"profiles\":[]}'; fi"], { on: machine });
+  if (r.code !== 0) throw new Error("Cannot read agent profiles");
+  const data = JSON.parse(r.stdout);
+  return (data.profiles ?? []).filter((x) => typeof x.id === "string" && /^[\w-]+$/.test(x.id)
+    && x.agent === "codex" && typeof x.home === "string" && x.home.startsWith("/") && !/[\0\r\n]/.test(x.home));
+}
+export async function profilePick(pick, machine = null) {
+  if (!pick?.profile) return pick;
+  return { ...pick, launch: profileLaunch(pick, await profiles(machine)) };
+}

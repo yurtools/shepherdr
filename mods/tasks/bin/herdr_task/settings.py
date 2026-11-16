@@ -159,6 +159,25 @@ def worktrees_on(s, space=None):
     return s.loc["kind"] == "repo" and settings_for(s, space)["tasks"].get("worktrees") is not False
 
 
+def profile_launch(pick):
+    """Machine-local account binding. Missing named profiles fail instead of changing login."""
+    if not pick.get("profile"):
+        return None
+    path = os.path.join(os.environ.get("HERDR_APP_HOME") or os.path.join(HOME, ".config", "herdr-app"),
+                        "data", "agent-profiles.json")
+    try:
+        with open(path) as stream:
+            profiles = json.load(stream).get("profiles", [])
+        profile = next(x for x in profiles if x.get("id") == pick["profile"])
+        home = profile["home"]
+        if pick.get("agent") != "codex" or profile.get("agent") != "codex" or not os.path.isabs(home) or any(x in home for x in "\0\r\n"):
+            raise ValueError("Invalid Codex account profile")
+    except (OSError, ValueError, KeyError, StopIteration, TypeError) as error:
+        raise Fail("The assigned Codex account profile is unavailable on this machine") from error
+    return ["env", "-u", "CODEX_API_KEY", "-u", "OPENAI_API_KEY", "-u", "CODEX_ACCESS_TOKEN",
+            "-u", "CODEX_SQLITE_HOME", "CODEX_HOME=" + home, "codex"]
+
+
 def argv_for(pick):
     """How to start an agent from a role's settings {agent, model, effort, fast, perm} (or its own
     argv), as the chat's agent picker builds it (mods/chat/agent.js argvFor). None: no setting."""
@@ -181,7 +200,7 @@ def argv_for(pick):
             a += ["--permission-mode", "default" if perm == "manual" else perm]
         return a
     if agent == "codex":
-        a = ["codex", "--no-daemon"]
+        a = (profile_launch(pick) or ["codex"]) + ["--no-daemon"]
         if pick.get("model"):
             a += ["-m", pick["model"]]
         if pick.get("effort"):
@@ -203,7 +222,11 @@ def worker_pick(s, task, space=None, agent=None):
     """What a task's agent runs on, {agent, model, effort, fast, perm}: Settings' worker, then the
     task's own --agent / --model / --effort, then `agent` (start --agent). Another CLI than
     Settings' starts from its own defaults (models and permissions differ per CLI)."""
-    pick = dict(settings_for(s, space)["worker"] or {})
+    roles = settings_for(s, space)
+    pick = dict(roles["worker"] or roles.get("coordinator") or {})
+    coordinator = roles.get("coordinator") or {}
+    if "profile" not in pick and pick.get("agent") == coordinator.get("agent") and coordinator.get("profile"):
+        pick["profile"] = coordinator["profile"]
     for key in (task.get("agent"), agent):
         if key and key != pick.get("agent"):
             pick = {"agent": key}
@@ -354,10 +377,13 @@ CLI_NAMES = {"claude": "Claude Code", "codex": "Codex"}
 LOGIN = {"claude": "claude auth login", "codex": "codex login"}
 
 
-def codex_models():
+def codex_models(profile=None):
     """The model ids Codex offers here: its models_cache.json, which Codex fetches for the account it is signed in
     with (a ChatGPT account gets fewer than an API key, #948); None when there is none to read."""
     home = os.environ.get("CODEX_HOME") or os.path.join(os.path.expanduser("~"), ".codex")
+    if profile:
+        prefix = profile_launch({"agent": "codex", "profile": profile})
+        home = next(x.split("=", 1)[1] for x in prefix if x.startswith("CODEX_HOME="))
     try:
         with open(os.path.join(home, "models_cache.json")) as f:
             d = json.load(f)
@@ -367,9 +393,9 @@ def codex_models():
     return ids or None
 
 
-def codex_lacks(model):
+def codex_lacks(model, profile=None):
     """The models Codex offers here when `model` isn't one of them (it would refuse to start on it), else None."""
-    ids = codex_models()
+    ids = codex_models(profile) if profile else codex_models()
     return ids if model and ids and model not in ids else None
 
 
@@ -419,7 +445,7 @@ def trust_roots(folder):
     return out
 
 
-def reviewer_command(who, model=None, effort=None, folder=None):
+def reviewer_command(who, model=None, effort=None, folder=None, profile=None):
     """The command a worker starts its reviewer with (the brief's Reviewer line): read-only, and for
     Codex on its own app server (--no-daemon, as task agents run: a shared one can keep a sign-in
     since replaced, and every turn then fails, #745). Codex would first stop on its own screens,
@@ -429,7 +455,7 @@ def reviewer_command(who, model=None, effort=None, folder=None):
     when a hook is new or changed (hooks off: a read-only reviewer needs none, and they would run
     outside its sandbox)."""
     if who == "codex":
-        a = ["codex", "--no-daemon", "--sandbox", "read-only", "--ask-for-approval", "never", "--disable", "hooks"]
+        a = (profile_launch({"agent": "codex", "profile": profile}) or ["codex"]) + ["--no-daemon", "--sandbox", "read-only", "--ask-for-approval", "never", "--disable", "hooks"]
         roots = trust_roots(folder)
         if roots:
             a += ["-c", "projects={" + ",".join(f'{json.dumps(r)}={{trust_level="trusted"}}' for r in roots) + "}"]
@@ -484,17 +510,17 @@ def task_settings(s, t, space=None, argv=None, live=False):
         other = {"claude": "codex", "codex": "claude"}.get(agent)
         want = rv.get("agent") or (other if other and shutil.which(other) else agent)
         who, said = want, ""
-        if want != agent and cli_here(want) == "signed-out":
+        if not rv.get("profile") and want != agent and cli_here(want) == "signed-out":
             # Signed out here, it would sit at its sign-in screen and never review (#745): the task's own CLI does.
             who, rv = agent, {}
-        elif want == "codex" and want != agent and live:
+        elif not rv.get("profile") and want == "codex" and want != agent and live:
             # #947: the periodic check can't read every answer (an unreadable auth file says an error, not "Not logged
             # in"), so a brief asks Codex now; anything but signed in would leave the reviewer on its sign-in screen
             ok, said = codex_login_now()
             if ok is False:
                 who, rv = agent, {}
         # #948: a model Codex here doesn't offer this account stops it at once: its own default instead, said
-        lacks = codex_lacks(rv.get("model")) if who == "codex" else None
+        lacks = (codex_lacks(rv.get("model"), rv["profile"]) if rv.get("profile") else codex_lacks(rv.get("model"))) if who == "codex" else None
         dropped = rv.get("model")
         if lacks:
             rv = {k: v for k, v in rv.items() if k != "model"}
@@ -509,10 +535,10 @@ def task_settings(s, t, space=None, argv=None, live=False):
         elif not rv.get("agent"):
             text += " (the other CLI)" if who != agent else " (your own CLI: no other is installed)"
         folder = t.get("worktree") or getattr(s, "loc", {}).get("folder")
-        cmd = reviewer_command(who, rv.get("model"), rv.get("effort"), folder)
+        cmd = reviewer_command(who, rv.get("model"), rv.get("effort"), folder, rv["profile"]) if rv.get("profile") else reviewer_command(who, rv.get("model"), rv.get("effort"), folder)
         if cmd:
             text += f"; start it as `{cmd}`"
-        add("Reviewer", text, {"agent": who, "model": rv.get("model"), "effort": rv.get("effort"), "command": cmd}, rv_by)
+        add("Reviewer", text, {"agent": who, "model": rv.get("model"), "effort": rv.get("effort"), "command": cmd, **({"profile": rv["profile"]} if rv.get("profile") else {})}, rv_by)
         must = sets.get("must_fix") or (k.get("must_fix") if k.get("must_fix") in LEVELS else "major")
         add("Must fix", MUST_WORDS[must], must, "task" if "must_fix" in sets else by_layer(s, space, "tasks", "must_fix", must, "major"))
         rounds = sets.get("review_rounds") or (kept or {}).get("rounds") or (rounds_cfg if rounds_cfg > 0 else 3)
@@ -634,8 +660,22 @@ def agent_argv(key, argv_json=None):
     return argv
 
 
+def agent_index(argv):
+    i = 0
+    if argv and os.path.basename(argv[0]) == "env":
+        i = 1
+        while i < len(argv):
+            if argv[i] in ("-u", "--unset"):
+                i += 2
+            elif "=" in argv[i] or argv[i] == "--":
+                i += 1
+            else:
+                break
+    return min(i, len(argv) - 1)
+
+
 def agent_key(argv):
-    return os.path.basename(argv[0])
+    return os.path.basename(argv[agent_index(argv)])
 
 
 def bare(i):

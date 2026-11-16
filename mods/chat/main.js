@@ -1154,12 +1154,25 @@ export default class Chat extends View {
     this.t = t;
     this.loadFirst(cx, t.labels);
     this.argv = t.foreground?.argv ?? t.argv ?? null;
+    if (kind === "codex" && this.dflt?.home && this.dfltFor === `${kind}|${t.foreground?.pid}`) {
+      const raw = this.argv ?? [], at = raw.findIndex((a) => String(a).split("/").pop() === "codex");
+      this.argv = [...agent.launchPrefix(kind, t.argv ?? raw, this.dflt.home), ...raw.slice(at + 1)];
+    }
     const pid = t.foreground?.pid;
     if (!pid) { if (this.phase !== "ready") this.set("none", cx); return; }
     // What the agent's own settings say (model, effort, speed), once per process.
     if (this.dfltFor !== `${kind}|${pid}`) {
       this.dfltFor = `${kind}|${pid}`;
-      cx.spawn(async (cx) => { this.dflt = await agent.defaults(kind, this.machine); cx.notify(); });
+      cx.spawn(async (cx) => {
+        try {
+          const defaults = await agent.defaults(kind, this.machine, { pid });
+          if (this.dfltFor !== `${kind}|${pid}`) return;
+          this.dflt = defaults;
+          this.profileName = (await agent.profiles(this.machine)).find(x => x.home === defaults.home)?.name ?? agent.NAMES[kind];
+          this.argv = [...agent.launchPrefix(kind, t.argv ?? this.argv ?? [], defaults.home), ...(this.argv ?? []).slice((this.argv ?? []).findIndex(a => /^(codex|claude)$/.test(String(a).split("/").pop())) + 1)];
+        } catch (e) { this.dfltFor = null; this.note = { id: "account-unavailable", text: String(e.message ?? e) }; }
+        cx.notify();
+      });
       cx.spawn(async (cx) => { this.cmds = await slash.commands(kind, this.machine, t.foreground?.cwd ?? t.cwd); cx.notify(); });
       cx.spawn(async (cx) => { await this.loadTasks(); cx.notify(); });
       cx.spawn(async (cx) => { await this.loadReach(); cx.notify(); });
@@ -1742,7 +1755,15 @@ export default class Chat extends View {
         const head = /^---\n([\s\S]*?)\n---\n?/.exec(src);
         const body = head ? src.slice(head[0].length) : src;
         const own = /^command:[ \t]*(.+)$/m.exec(head?.[1] ?? "")?.[1]?.trim();
-        const cmd = st?.agent && there ? agent.argvFor(st, { agent: null, argv: [] }).argv.map(q).join(" ") : own;
+        let selected = st;
+        try {
+          if (st?.agent && !there) throw new Error("The assigned agent is not installed on this machine.");
+          selected = await agent.profilePick(st, machine);
+        } catch (error) {
+          this.phase = "fresh"; p.failed = String(error.message ?? error);
+          toast({ title: "Assistant did not start", body: p.failed, level: "error" }); cx.notify(); return;
+        }
+        const cmd = selected?.agent ? agent.argvFor(selected, { agent: null, argv: [] }).argv.map(q).join(" ") : own;
         if (body.trim() && cmd) {
           words = body.trim();
           oneOff = `herdr-${template}-${Date.now().toString(36)}`;
@@ -1815,7 +1836,7 @@ export default class Chat extends View {
         const data = await choices.loadChoices(space?.machine ?? null);
         let kept = null;
         try { kept = JSON.parse(localStorage.getItem(`choice:${this.slot}`) ?? "null"); } catch {}
-        const st = kept?.agent ? kept : props()?.settings;
+        const st = props()?.settings ?? kept;
         const sel = st?.agent && data.menus[st.agent] ? { perm: data.permDefault[st.agent], effort: null, fast: false, ...st } : { ...data.defaults };
         this.choice = { sel, data, key: this.choice.key };
       } catch { this.choice = null; }
@@ -2742,6 +2763,7 @@ export default class Chat extends View {
   openPicker(at, cx, name = null) {
     const c = this.current();
     if (!c || this.picking) return;
+    if (this.kind === "codex" && !this.dflt?.home) { toast({ title: "Account settings are loading", body: "Try again once this account has been identified." }); return; }
     this.picking = true;
     cx.spawn(async (cx) => {
       try {
@@ -2760,7 +2782,7 @@ export default class Chat extends View {
         const offline = this.machine && !online(this.machine) ? this.machine : null;
         const currentRow = agent.rowFor(c.agent, c);
         // Installed agents only (and always the one running).
-        const menus = Object.fromEntries(["claude", "codex"].filter((k) => k === c.agent || installed[k])
+        const menus = Object.fromEntries([c.agent]
           .map((k) => [k, agent.menuFor(k, dflts[k], k === c.agent ? currentRow : null)]));
         // As tall as the menu can get (chat-models' sizes): border and padding, another machine's
         // offline line, agent tabs, search, the list (it scrolls past 8 rows), separator, Reasoning header
@@ -2812,7 +2834,9 @@ export default class Chat extends View {
     cx.spawn(async (cx) => {
       try {
         const t = JSON.parse((await hc(["get", this.addr, "--json"])).stdout);
-        const built = agent.argvFor(pick, { agent: this.kind, argv: t.foreground?.argv ?? [], session: agent.sessionOf(this.kind, this.path) });
+        if (this.kind === "codex" && !t.foreground?.pid) throw new Error("This account's process is no longer running.");
+        const account = this.kind === "codex" ? await agent.defaults(this.kind, this.machine, { pid: t.foreground.pid }) : null;
+        const built = agent.argvFor(pick, { agent: this.kind, argv: t.foreground?.argv ?? [], home: account?.home, session: agent.sessionOf(this.kind, this.path) });
         this.swapping = true;
         const next = await agent.restart(t, built, mine);
         this.follow_to(next);
@@ -2842,7 +2866,7 @@ export default class Chat extends View {
         const ref = k?.id != null ? String(k.id) : t.labels?.["herdr.task"];
         const folder = k?.folder ?? t.foreground?.cwd ?? t.cwd;
         if (!ref || !folder) throw new Error("This chat's task wasn't found.");
-        const built = agent.argvFor(pick, { agent: this.kind, argv: t.foreground?.argv ?? [] });
+        const built = agent.argvFor(pick, { agent: this.kind, argv: t.foreground?.argv ?? [], home: this.dflt?.home });
         const on = k?.machine ?? this.machine;
         this.swapping = true;
         const cli = (a) => exec(`${appHome()}/mods/tasks/bin/herdr-task`, a);
@@ -4089,20 +4113,34 @@ export default class Chat extends View {
   }
 
   // The bottom row's left part, the same in a call and out of it: what the agent runs on (opens the picker; not during a call).
-  pickParts(t, open) {
-    const c = this.current();
-    // Sized to its words, never cut: a narrow chat drops "· 1M" first.
-    const model = String(c?.label ?? agent.modelName(c?.model) ?? "");
-    const pick = [(this.width ?? 600) < 460 ? model.replace(/\s*·?\s*1M$/, "") : model, agent.levelName(c?.effort), c?.fast ? "Fast" : null].filter(Boolean).join(" · ") || agent.NAMES[this.kind] || "Agent";
-    return [
-      h_flex().id("chat-agent-pick").h(ROUND).pl(8).pr(5).gap(4).flex_none().items_center().rounded(6)
-        .text_size(12).font_medium().text_color(t.muted)
-        .when(open, (el) => el.cursor_pointer().hover((x) => x.bg(t.hover).text_color(t.foreground))
-          .on_mouse_down("left", (e) => { this.pickAt = e.position; })
-          .on_click((_e, cx) => { cx.stop_propagation(); this.openPicker(this.pickAt, cx); }))
-        .child(div().flex_none().whitespace_nowrap().child(pick))
-        .child(svg("mods/workspace-chrome/chevron-down.svg").size(12).flex_none()),
-    ].filter(Boolean);
+  pickParts(t, open) { return this.accountControls(t, open, false); }
+
+  controlsKey() { return `controls:${this.slot ?? this.pickKey()}`; }
+  accountControls(t, enabled, fresh) {
+    const current = fresh ? this.choice?.sel : this.current();
+    if (!current) return [];
+    const sel = !fresh && this.controlPick ? this.controlPick : current;
+    const kind = current.agent ?? this.kind;
+    const profile = fresh ? this.choice?.data?.profiles?.find(x => x.id === current.profile) : null;
+    const menu = profile?.menu ?? (fresh ? this.choice?.data?.menus?.[kind] : agent.menuFor(kind, this.dflt, agent.rowFor(kind, current)));
+    const model = menu?.models?.find(x => x.id === sel.model);
+    const allowed = Boolean(enabled && (fresh || this.dflt) && !this.restarting);
+    const control = (field, label, options) => h_flex().id(`chat-control-${field}`).h(ROUND).px(6).gap(4).flex_none().items_center().rounded(6).text_size(11.5).text_color(t.muted)
+      .when(allowed && options.length > 0, el => el.cursor_pointer().hover(x => x.bg(t.hover)).on_click((_e, cx) => {
+        cx.stop_propagation(); this.controlFresh = fresh;
+        openOverlay({ mod: "chat-models", kind: "popup", width: 310, height: Math.min(420, 10 + options.length * 31),
+          props: { pick: field, key: this.controlsKey(), options, current: sel[field], width: 310 } });
+      })).child(label).child("⌄");
+    const out = [div().text_size(11).text_color(t.dim).child(profile?.name ?? this.profileName ?? agent.NAMES[kind] ?? kind),
+      control("model", model?.name ?? sel.model ?? "Model", (menu?.models ?? []).map(x => ({ id: x.id, label: x.name }))),
+      control("effort", `Thinking: ${agent.levelName(sel.effort ?? model?.defaultEffort) ?? "Default"}`, (kind === "codex" ? ((fresh ? profile?.defaults ?? this.choice?.data?.codexDefaults : this.dflt)?.models?.find(x => x.id === sel.model)?.efforts ?? []) : model?.efforts ?? []).map(x => ({ id: x, label: agent.levelName(x) }))),
+      control("perm", menu?.perms?.find(x => x.id === sel.perm)?.label ?? "Permissions", menu?.perms ?? [])];
+    if (!fresh && this.controlPick) out.push(h_flex().id("apply-chat-controls").h(ROUND).px(8).rounded(6).bg(t.selected).text_size(11.5).cursor_pointer().on_click((_e, cx) => {
+      cx.stop_propagation();
+      if (["working", "blocked"].includes(this.t?.status?.state)) { toast({ title: "Finish the current turn first", body: "Apply settings when the agent is idle." }); return; }
+      this.applyPick(this.controlPick, cx); this.controlPick = null;
+    }).child("Apply"));
+    return out;
   }
 
   // The live row a call and dictation share, 44 px, all on its midline: a round button on each
@@ -4173,7 +4211,7 @@ export default class Chat extends View {
     const now = JSON.stringify(this.choice.sel);
     if (this.choice.saved !== undefined && now !== this.choice.saved && this.slot) try { localStorage.setItem(`choice:${this.slot}`, now); } catch {}
     this.choice.saved = now;
-    return choices.modelButton(t, this.choice, {}, cx);
+    return h_flex().gap(3).items_center().flex_wrap().children(this.accountControls(t, true, true));
   }
 
   composer(t, st, cx = null) {
@@ -4404,6 +4442,19 @@ export default class Chat extends View {
       else if (req.action === "end" ? this.call : req.action === "start" ? !this.call : true) cx.timer.after(0, (cx) => { this.toggleCall(cx); cx.notify(); });
     }
     // The model picker's Restart (mods/chat-models): shared "chat.restartreq" = { pane, at, pick }.
+    const control = shared("newspace.pick");
+    if (control?.key === this.controlsKey() && control.at !== this.controlAt && ["model", "effort", "perm"].includes(control.field)) {
+      this.controlAt = control.at;
+      cx.timer.after(0, cx => {
+        const fresh = this.controlFresh && this.phase === "fresh";
+        const base = fresh ? this.choice?.sel : this.controlPick ?? this.current();
+        if (!base) return;
+        const next = { ...base, [control.field]: control.value };
+        if (control.field === "model") next.effort = null;
+        if (fresh) this.choice.sel = next; else this.controlPick = next;
+        cx.notify();
+      });
+    }
     const rr = shared("chat.restartreq"), pk = this.pickKey();
     if (rr && pk && rr.pane === pk && rr.at !== this.restartReqAt && Date.now() - rr.at < 5000) {
       this.restartReqAt = rr.at;

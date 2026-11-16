@@ -12,7 +12,7 @@ import { exec } from "./model.ts";
 import * as NS from "../core/newspace.js";
 import * as SP from "../core/spaces.js";
 import { AGENT_PATH, cleanCommand } from "../core/clean-env.js";
-import { argvFor, NAMES } from "../core/agents.js";
+import { argvFor, profileLaunch, NAMES } from "../core/agents.js";
 
 export const withWindow = () => existsSync(join(process.env.HERDR_APP_HOME || join(HOME, ".config", "herdr-app"), "mods", "spaces-chat"));
 
@@ -80,7 +80,14 @@ export async function execTemplate(hub: Hub, name: string, machine: string | nul
   const has = async (prog: string) => (await exec(hub, ["sh", "-c", `${AGENT_PATH} command -v "$1" >/dev/null 2>&1`, "x", prog], machine).catch(() => null))?.code === 0;
   let cmd = own;
   if (pick?.agent === "claude" || pick?.agent === "codex") {
-    if (await has(pick.agent)) cmd = argvFor(pick, { agent: null, argv: [] }).argv.map(shellWord).join(" ");
+    if (await has(pick.agent)) {
+      let launch = null;
+      if (pick.profile) {
+        const result = await exec(hub, ["sh", "-c", 'cat "${HERDR_APP_HOME:-$HOME/.config/herdr-app}/data/agent-profiles.json"'], machine);
+        launch = profileLaunch(pick, JSON.parse(result.stdout || "{}").profiles ?? []);
+      }
+      cmd = argvFor({ ...pick, ...(launch ? { launch } : {}) }, { agent: null, argv: [] }).argv.map(shellWord).join(" ");
+    }
     else if (!(await has(own.split(/\s+/)[0]))) {
       throw new Error(`${(NAMES as Record<string, string>)[pick.agent] ?? pick.agent} isn't installed on ${machine ?? "this computer"}. Install it, or pick another agent for the Assistant in Settings › Agents.`);
     }

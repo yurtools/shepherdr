@@ -59,8 +59,8 @@
       },
       "forms": {
         "herdr": "Right-click: Mark read, Pin, Rename + icon, Notify, worktrees, Close, Space settings",
-        "desktop": "Right-click or ⋯ menu, dialogs",
-        "tablet": "⋯ or long-press menu",
+        "desktop": "Right-click or \u22ef menu, dialogs",
+        "tablet": "\u22ef or long-press menu",
         "phone": "Long-press: action sheet; rename in a sheet"
       },
       "service": [
@@ -225,7 +225,7 @@
       },
       "forms": {
         "herdr": "+ menu, context menus, confirm and prompt dialogs",
-        "desktop": "Menus on right-click or ⋯, dialogs",
+        "desktop": "Menus on right-click or \u22ef, dialogs",
         "tablet": "Popovers",
         "phone": "Action sheets, bottom-sheet confirms"
       },
@@ -427,7 +427,10 @@
         "worktree"
       ],
       "herdr": {
-        "builtin": "Herdr's Files side panel"
+        "mods": [
+          "workspace-files",
+          "workspace-document"
+        ]
       },
       "web": {
         "files": [
@@ -435,7 +438,7 @@
         ]
       },
       "forms": {
-        "herdr": "File tree with previews",
+        "herdr": "Persistent space file tree and separate Source / Preview document pane",
         "desktop": "Tree and preview side by side",
         "tablet": "Tree, then preview",
         "phone": "Tree, then full-screen preview"
@@ -460,7 +463,7 @@
         ]
       },
       "forms": {
-        "herdr": "Changed files, +/−, diff per file",
+        "herdr": "Changed files, +/\u2212, diff per file",
         "desktop": "Split diff",
         "tablet": "Unified diff",
         "phone": "Unified diff, wrapped lines"
@@ -544,7 +547,7 @@
       },
       "forms": {
         "herdr": "Right-click a row: Pin/Unpin, group by, filters",
-        "desktop": "Right-click or ⋯",
+        "desktop": "Right-click or \u22ef",
         "tablet": "Long-press",
         "phone": "Long-press: sheet"
       },
@@ -874,7 +877,7 @@
         ]
       },
       "forms": {
-        "herdr": "Masked card in the chat; Settings › Secrets",
+        "herdr": "Masked card in the chat; Settings \u203a Secrets",
         "desktop": "Same; value goes straight to the vault",
         "tablet": "Same",
         "phone": "Same; masked field, nothing kept in the browser"
@@ -902,7 +905,7 @@
       },
       "forms": {
         "herdr": "Ctrl+K: spaces, tasks, artifacts, machines",
-        "desktop": "Ctrl+K or ⌘K",
+        "desktop": "Ctrl+K or \u2318K",
         "tablet": "Same with a keyboard; Search button",
         "phone": "Search button in the bottom bar, full screen"
       }
@@ -1120,7 +1123,7 @@
         ]
       },
       "forms": {
-        "herdr": "Switch in the Assistant header; Settings › Autopilot",
+        "herdr": "Switch in the Assistant header; Settings \u203a Autopilot",
         "desktop": "Same switch and page",
         "tablet": "Same",
         "phone": "Switch in the chat's menu; settings page"
@@ -1178,8 +1181,8 @@
         ]
       },
       "forms": {
-        "herdr": "Settings › Web: on/off, link, QR code",
-        "desktop": "Settings › Web (this device)",
+        "herdr": "Settings \u203a Web: on/off, link, QR code",
+        "desktop": "Settings \u203a Web (this device)",
         "tablet": "Same",
         "phone": "Same; how to add it to the home screen"
       },

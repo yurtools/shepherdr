@@ -59,6 +59,14 @@ def base_argv(argv):
     if at is None:
         return None, None
     kind, rest, out = kind_of(argv[at]), argv[at + 1:], [argv[at]]
+    if kind == "codex":
+        account = next((x for x in argv[:at] if x.startswith("CODEX_HOME=")), None)
+        if account:
+            clear = []
+            for i in range(at - 1):
+                if argv[i] == "-u" and argv[i + 1] in ("CODEX_API_KEY", "OPENAI_API_KEY", "CODEX_ACCESS_TOKEN", "CODEX_SQLITE_HOME"):
+                    clear += ["-u", argv[i + 1]]
+            out = ["env", *clear, account, argv[at]]
     i = 0
     while i < len(rest):
         a = rest[i]
@@ -96,7 +104,8 @@ def resume_argv(kind, argv, session, message=None):
     tail = [message] if message else []
     if kind == "claude":
         return [*argv, "--resume", session, *tail]
-    return [argv[0], "resume", *argv[1:], session, *tail]
+    at = next(i for i, word in enumerate(argv) if kind_of(word) == "codex")
+    return [*argv[:at + 1], "resume", *argv[at + 1:], session, *tail]
 
 
 def lost_message(ref=None, template=None):
@@ -185,6 +194,17 @@ def record_of(k):
     sid, log = session_of(pid)
     if not sid:
         return None
+    if kind == "codex" and not any(x.startswith("CODEX_HOME=") for x in argv):
+        account = None
+        try:
+            with open(f"/proc/{pid}/environ", "rb") as stream:
+                env = dict(x.split(b"=", 1) for x in stream.read().split(b"\0") if b"=" in x)
+            account = os.fsdecode(env.get(b"CODEX_HOME", os.fsencode(os.path.join(os.fsdecode(env.get(b"HOME", os.fsencode(HOME))), ".codex"))))
+        except (OSError, ValueError):
+            if "/sessions/" in str(log):
+                account = str(log).rsplit("/sessions/", 1)[0]
+        if account:
+            argv = ["env", "CODEX_HOME=" + account, *argv]
     return {"kind": kind, "session": sid, "log": log, "argv": argv, "cwd": fg.get("cwd") or k.get("cwd"),
             "pid": k.get("pid"), "working": status_word(k) in ("working", "blocked"), "shell": shell}
 

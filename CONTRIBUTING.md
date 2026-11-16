@@ -1,7 +1,8 @@
 # Contributing to the yurtools fork
 
 This fork is developing the account-aware workspace described in
-[the plan](docs/fork-plan.md). Fork-specific features are not implemented yet.
+[the plan](docs/fork-plan.md). The working branch implements the first account and document-pane changes; see
+[the usage guide](docs/workspace.md) for its current behavior and limits.
 Please keep changes focused so upstream improvements remain practical to merge.
 
 ## Branches and upstream

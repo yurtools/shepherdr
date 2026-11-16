@@ -70,11 +70,16 @@ if [ "$1" = claude ]; then
   f="$HOME/.claude/settings.json"
   command -v jq >/dev/null && [ -f "$f" ] && jq -r '"model\\t\\(.model // "")", "effort\\t\\(.effortLevel // "")", "fast\\t\\(if .fastMode == true then "on" else "" end)", "per\\t\\(.modelSettings // {} | with_entries(.value |= (.effortLevel // null)) | tojson)", "mode\\t\\(.permissions.defaultMode // "")"' "$f" 2>/dev/null
 else
-  f="$HOME/.codex/config.toml"
+  root="\${2:-\${CODEX_HOME:-$HOME/.codex}}"
+  if [ -n "\${3:-}" ]; then
+    root=$(python3 -c 'import os,sys; e=dict(x.split(b"=",1) for x in open("/proc/"+sys.argv[1]+"/environ","rb").read().split(b"\\0") if b"=" in x); print(os.fsdecode(e.get(b"CODEX_HOME",os.fsencode(os.path.expanduser("~/.codex")))))' "$3") || exit 2
+  fi
+  printf 'home\\t%s\\n' "$root"
+  f="$root/config.toml"
   for k in model model_reasoning_effort service_tier sandbox_mode approval_policy; do
     printf '%s\\t%s\\n' "$k" "$(sed -n "s/^$k[[:space:]]*=[[:space:]]*\\"\\{0,1\\}\\([^\\"]*\\)\\"\\{0,1\\}.*/\\1/p" "$f" 2>/dev/null | head -1)"
   done
-  c="$HOME/.codex/models_cache.json"
+  c="$root/models_cache.json"
   [ -f "$c" ] && { printf 'models\\t'; tr -d '\\n' < "$c"; echo; }
 fi
 true`;
@@ -90,6 +95,10 @@ export function parseDefaults(kind, stdout) {
     const t = line.indexOf("\t");
     if (t > 0) out[line.slice(0, t)] = line.slice(t + 1);
   }
+  if (kind === "codex") for (const key of ["model", "model_reasoning_effort", "service_tier", "sandbox_mode", "approval_policy"]) {
+    const value = out[key];
+    if (value && /^(['"])([\s\S]*)\1$/.test(value)) out[key] = value.slice(1, -1);
+  }
   let models = null;
   if (out.models) {
     try {
@@ -104,7 +113,7 @@ export function parseDefaults(kind, stdout) {
   return kind === "claude"
     ? { model: out.model || null, effort: out.effort || null, fast: Boolean(out.fast), per: parsePer(out.per), mode: out.mode || null }
     : { model: out.model || null, effort: out.model_reasoning_effort || null, fast: ["fast", "priority"].includes(out.service_tier),
-      sandbox: out.sandbox_mode || null, approval: out.approval_policy || null, models };
+      sandbox: out.sandbox_mode || null, approval: out.approval_policy || null, models, ...(out.home ? { home: out.home } : {}) };
 }
 
 // What the agent runs on now: { agent, model, effort, fast, used, window, alias }.
@@ -284,6 +293,15 @@ function agentAt(argv) {
   return argv.findIndex((a, i) => (i === 0 || !String(a).startsWith("-")) && /^(claude|codex)$/.test(String(a).split("/").pop()));
 }
 
+export function launchPrefix(kind, argv = [], home = null) {
+  const at = agentAt(argv);
+  const binary = at < 0 ? kind : argv[at];
+  const ownHome = home ?? argv.slice(0, Math.max(at, 0)).find((s) => s.startsWith("CODEX_HOME="))?.slice(11);
+  const clear = [];
+  for (let i = 0; i < at; i++) if (argv[i] === "-u" && ["CODEX_API_KEY", "OPENAI_API_KEY", "CODEX_ACCESS_TOKEN", "CODEX_SQLITE_HOME"].includes(argv[i + 1])) clear.push("-u", argv[++i]);
+  return kind === "codex" && ownHome ? ["env", ...clear, `CODEX_HOME=${ownHome}`, binary] : [binary];
+}
+
 // The old agent's flags worth keeping (permissions, folders, ...), without what is chosen again
 // or a first message.
 function kept(kind, argv) {
@@ -322,7 +340,7 @@ function stripSession(kind, argv) {
   argv = argv ?? [];
   const at = agentAt(argv);
   if (at < 0) return null;
-  const rest = argv.slice(at + 1), out = [argv[at]];
+  const rest = argv.slice(at + 1), out = launchPrefix(kind, argv);
   let resumed = false;
   for (let i = 0; i < rest.length; i++) {
     const a = rest[i];
@@ -348,8 +366,9 @@ function stripSession(kind, argv) {
 export function argvFor(pick, old) {
   const same = pick.agent === old.agent;
   const flags = same ? kept(pick.agent, old.argv ?? []) : [];
+  const prefix = pick.launch ?? launchPrefix(pick.agent, same ? old.argv ?? [] : [], same ? old.home : null);
   if (pick.agent === "claude") {
-    const a = ["claude", ...flags];
+    const a = [...prefix, ...flags];
     if (pick.model) a.push("--model", pick.model);
     if (pick.effort) a.push("--effort", pick.effort);
     a.push("--settings", JSON.stringify({ fastMode: Boolean(pick.fast) }));
@@ -367,8 +386,8 @@ export function argvFor(pick, old) {
   if (pick.perm === "full") a.push("--dangerously-bypass-approvals-and-sandbox");
   else if (pick.perm === "read-only") a.push("-s", "read-only", "-a", "on-request");
   else if (pick.perm) a.push("-s", "workspace-write", "-a", "on-request");
-  if (same && old.session) return { argv: ["codex", "resume", ...a, old.session], resume: true, base: ["codex", ...a] };
-  return { argv: ["codex", ...a], resume: false, base: ["codex", ...a] };
+  if (same && old.session) return { argv: [...prefix, "resume", ...a, old.session], resume: true, base: [...prefix, ...a] };
+  return { argv: [...prefix, ...a], resume: false, base: [...prefix, ...a] };
 }
 
 // The conversation's id, from its log's file name.
@@ -381,7 +400,8 @@ export function sessionOf(kind, path) {
 // and speed, resuming `session`.
 export function resumeArgv(kind, argv, session) {
   const out = stripSession(kind, argv)?.out ?? [kind];
-  return kind === "claude" ? [...out, "--resume", session] : [out[0], "resume", ...out.slice(1), session];
+  const at = agentAt(out);
+  return kind === "claude" ? [...out, "--resume", session] : [...out.slice(0, at + 1), "resume", ...out.slice(at + 1), session];
 }
 
 // A copy of the conversation in a new tab beside this one, through the CLI's own fork.
@@ -396,7 +416,8 @@ export function forkArgv(kind, argv, session) {
         ...["model_reasoning_effort", "service_tier"].flatMap((k) => (o[k] ? ["-c", `${k}="${o[k]}"`] : []))];
     })();
   const flags = [...kept(kind, argv), ...same];
-  return kind === "claude" ? ["claude", ...flags, "--resume", session, "--fork-session"] : ["codex", "fork", ...flags, session];
+  const prefix = launchPrefix(kind, argv);
+  return kind === "claude" ? [...prefix, ...flags, "--resume", session, "--fork-session"] : [...prefix, "fork", ...flags, session];
 }
 
 // #1050: a fork of a task's conversation while the task's agent runs works in the same folder, so two agents would
@@ -418,3 +439,11 @@ export const FORK_LIVE = {
   verb: "Fork anyway",
   cancel: "Keep the live one",
 };
+
+export function profileLaunch(pick, profiles) {
+  if (!pick?.profile) return null;
+  const profile = profiles.find(x => x.id === pick.profile);
+  if (!profile || profile.agent !== "codex" || pick.agent !== "codex" || typeof profile.home !== "string" || !profile.home.startsWith("/") || /[\0\r\n]/.test(profile.home))
+    throw new Error("The assigned account profile is unavailable on this machine.");
+  return ["env", "-u", "CODEX_API_KEY", "-u", "OPENAI_API_KEY", "-u", "CODEX_ACCESS_TOKEN", "-u", "CODEX_SQLITE_HOME", `CODEX_HOME=${profile.home}`, "codex"];
+}

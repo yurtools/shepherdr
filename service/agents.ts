@@ -41,8 +41,9 @@ export class Agents {
     return p;
   }
 
-  private async defaults(kind: string, machine: string | null) {
-    const r = await sh(this.hub, DEFAULTS, ["defaults", kind], machine).catch(() => null);
+  private async defaults(kind: string, machine: string | null, pid?: number) {
+    const r = await sh(this.hub, DEFAULTS, ["defaults", kind, "", String(pid ?? "")], machine).catch(() => null);
+    if (pid && kind === "codex" && (!r || r.code !== 0)) throw new Error("Cannot identify this agent account.");
     return parseDefaults(kind, r?.stdout ?? "");
   }
 
@@ -72,6 +73,7 @@ export class Agents {
     let meta = reader?.conv?.meta ?? {};
     // a resumed conversation's log names the model it ran on before: until this process writes, its arguments say
     if (t.created_ms && meta.at && meta.at < t.created_ms) meta = { used: meta.used, window: meta.window };
+    dflts[kind] = await this.defaults(kind, machine, t.foreground?.pid);
     const c = current(kind, t.foreground?.argv ?? t.argv ?? [], meta, dflts[kind]);
     const row = rowFor(kind, c);
     const menus = Object.fromEntries(["claude", "codex"].filter((k) => k === kind || !have || have.has(k)).map((k) => [k, menuFor(k, dflts[k], k === kind ? row : null)]));
@@ -138,7 +140,7 @@ export class Agents {
     if (!t || t.state !== "live") throw new Error("That agent isn't running.");
     const machine = addr.includes("/") ? addr.split("/")[0] : null;
     const kind = kindOf(t) ?? reader?.kind ?? "claude";
-    const dflt = await this.defaults(kind, machine);
+    const dflt = await this.defaults(kind, machine, t.foreground?.pid);
     let meta = reader?.conv?.meta ?? {};
     if (t.created_ms && meta.at && meta.at < t.created_ms) meta = { used: meta.used, window: meta.window };
     const c = current(kind, t.foreground?.argv ?? t.argv ?? [], meta, dflt);
@@ -181,7 +183,8 @@ export class Agents {
     const t: any = this.hub.terminals.get(addr);
     if (!t || t.state !== "live") throw new Error("That agent isn't running.");
     const kind = kindOf(t) ?? "claude";
-    const old = { agent: kind, argv: t.foreground?.argv ?? t.argv ?? [], session: sessionOf(kind, reader?.path ?? null) };
+    const account = await this.defaults(kind, addr.includes("/") ? addr.split("/")[0] : null, t.foreground?.pid);
+    const old = { agent: kind, home: account?.home, argv: t.foreground?.argv ?? t.argv ?? [], session: sessionOf(kind, reader?.path ?? null) };
     const built = argvFor({ agent: pick.kind, model: pick.model, effort: pick.effort, fast: pick.speed === "fast", perm: pick.perm ?? current(kind, old.argv, {}, {}).perm }, old);
     const pane = t.labels?.["herdr.chat"] ?? "";
     const task = t.labels?.["herdr.task"];

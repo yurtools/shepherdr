@@ -32,12 +32,26 @@
                 "mod": "spaces-chat"
               },
               "size": {
-                "weight": 1
+                "px": 240
               },
               "min": 90
+            },
+            {
+              "id": "sidebar-sessions",
+              "type": "block",
+              "content": {
+                "mod": "workspace-sessions",
+                "props": {
+                  "sidebar": true
+                }
+              },
+              "size": {
+                "weight": 1
+              },
+              "min": 160
             }
           ],
-          "resizable": false
+          "resizable": true
         },
         {
           "id": "sidebar-footer",

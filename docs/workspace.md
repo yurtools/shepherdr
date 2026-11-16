@@ -112,7 +112,12 @@ independently of where the previous context menu was opened.
 
 ## Closed conversations
 
-Click **Sessions** beside the tab bar’s **+** to open this space’s saved Codex
+**Sessions** lives in the sidebar directly below **Spaces** and follows the selected
+space. Drag the divider to adjust their heights. Search or filter the list, then
+click a conversation to preview it and use its resume controls. The list refreshes
+automatically; **Refresh** updates it immediately.
+
+The session preview shows this space’s saved Codex
 conversations. **Closed** is the default; **All** also shows conversations that are
 still running. Search by conversation title, tab name, account or folder. Each
 row identifies its account and last activity; the right side previews recent

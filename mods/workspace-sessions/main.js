@@ -5,12 +5,11 @@ import { spaces, inRender } from "./live.js";
 import { historyScope, historyRead, requestSession } from "./session-history.js";
 import { button, segmented, plainError } from "./ui.js";
 import { keepKeys, dropKeys } from "./keyholder.js";
-const stamp = ms => {
-  const d = new Date(ms), months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-  return `${months[d.getMonth()]} ${d.getDate()} · ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
-};
+import Sidebar from "./sidebar.js";
+import { stamp } from "./stamp.js";
 export default class Sessions extends View {
   init(_props, cx) {
+    if (props()?.sidebar) { this.sidebar = new Sidebar(); this.sidebar.init(cx); return; }
     this.handle = cx.focus_handle(); this.handle.focus();
     this.keyHolder = `dialog:sessions:${props()?.overlay ?? "history"}`;
     keepKeys(this.keyHolder);
@@ -30,7 +29,7 @@ export default class Sessions extends View {
       }
     });
   }
-  close() { this.search?.release(); dropKeys(this.keyHolder); }
+  close() { if (this.sidebar) return this.sidebar.close(); this.search?.release(); dropKeys(this.keyHolder); }
   refresh(cx) {
     this.loading = true; this.error = null;
     cx.spawn(async (cx) => {
@@ -39,7 +38,7 @@ export default class Sessions extends View {
         this.scope = historyScope(space); this.spaceName = space.name || "This space";
         const result = await historyRead("list", this.scope);
         this.rows = result.sessions; this.truncated = result.truncated;
-        const first = this.rows.find(r => !r.terminal) ?? this.rows[0];
+        const first = this.rows.find(r => r.key === props()?.selected) ?? this.rows.find(r => !r.terminal) ?? this.rows[0];
         if (first) this.select(first, cx);
       } catch (e) { this.error = plainError(e); }
       this.loading = false; cx.notify();
@@ -61,7 +60,7 @@ export default class Sessions extends View {
     requestSession(this.scope, this.selected.key, beside ? props()?.pane : null);
     closeOverlay(props()?.overlay);
   }
-  render(cx) { return inRender(() => this.draw(cx)); }
+  render(cx) { return inRender(() => this.sidebar ? this.sidebar.draw(cx) : this.draw(cx)); }
   draw(cx) {
     const t = theme(), selected = this.selected, q = this.search.value().trim().toLowerCase();
     const filtered = this.rows.filter(r => (this.filter === "all" || !r.terminal) && (!q || `${r.title} ${r.tabTitle ?? ""} ${r.account} ${r.cwd}`.toLowerCase().includes(q)));

@@ -16,9 +16,9 @@ export async function historyRead(command, scope, key = null) {
   if (r.code !== 0 || out.error) throw new Error(out.error || r.stderr || "Couldn't read session history.");
   return out;
 }
-export function openHistory(space = spaces().find(s => s.active)) {
+export function openHistory(space = spaces().find(s => s.active), selected = null) {
   openOverlay({ mod: "workspace-sessions", kind: "dialog", frame: "none", width: 1080, height: 0.86,
-    props: { space: space?.id, pane: focused()?.pane } });
+    props: { space: space?.id, pane: focused()?.pane, selected } });
 }
 export function requestSession(scope, key, beside = null) {
   setShared("sessions.openreq", { ...scope, key, beside, at: Date.now(), nonce: Math.random() });

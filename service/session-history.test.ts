@@ -2,16 +2,20 @@ import { beforeEach, expect, mock, test } from "bun:test";
 import { fakeHerdr } from "./fake-herdr";
 import { fakeGpuiBase, fakeGpuiKit } from "./fake-gpui";
 let verified = true;
-let calls: any[] = [], row: any, ps: any[], ts: any[];
+let calls: any[] = [], row: any, ps: any[], ts: any[], ss: any[], viewProps: any;
+let listRead: ((args: string[]) => Promise<any>) | null;
 const state = new Map<string, any>();
 mock.module("herdr", () => fakeHerdr({
-  props: () => ({ overlay: "history-dialog" }),
+  props: () => viewProps,
+  focused: () => ({ pane: "target" }),
+  openOverlay: (args: any) => calls.push(["overlay", args]),
   appHome: () => "/fake-app", shared: (k: string) => state.get(k), setShared: (k: string, v: any) => state.set(k, v),
   panes: () => ps, terminals: () => ts,
-  spaces: () => [{ id: "space", folder: "/project", tabs: [{ id: "tab" }] }],
+  spaces: () => ss,
   run: (name: string, args: any) => calls.push([name, args]),
   hc: async (args: string[]) => { calls.push(["hc", args]); return { code: 0, stdout: "{}", stderr: "" }; },
   exec: async (bin: string, args: string[]) => {
+    if (bin === "python3" && args[1] === "list" && listRead) return listRead(args);
     if (bin === "python3") return { code: 0, stdout: JSON.stringify({ session: row, liveVerified: verified }), stderr: "" };
     const name = args[1], data = JSON.parse(args[2]); calls.push([name, data]);
     if (name === "tab.new" || name === "terminal.open") { ps.push({ pane: "old", terminal: "t5", tab: "tab" }); return { code: 0, stdout: JSON.stringify({ tab: "tab", terminal: "t5" }), stderr: "" }; }
@@ -22,8 +26,11 @@ mock.module("herdr", () => fakeHerdr({
 mock.module("gpui-kit", () => fakeGpuiKit());
 mock.module("gpui-base", () => fakeGpuiBase());
 const { default: Sessions } = await import("../mods/workspace-sessions/main.js");
+const { default: Sidebar } = await import("../mods/workspace-sessions/sidebar.js");
 const H = await import("../mods/tabs-tasks/session-history.js");
 beforeEach(() => {
+  ss = [{ id: "space", name: "First space", active: true, folder: "/project", tabs: [{ id: "tab" }] }];
+  viewProps = { overlay: "history-dialog" }; listRead = null;
   verified = true; calls = []; ps = [{ pane: "target", tab: "tab" }]; ts = []; state.clear();
   row = { home: "/account-two", session: "00000000-0000-0000-0000-000000000001", key: "key", cwd: "/project", title: "Saved chat", model: "model-one", effort: "high", sandbox: "workspace-write", approval: "on-request" };
 });
@@ -80,4 +87,45 @@ test("session search holds the keyboard against the chat behind it and releases 
   expect(state.get("keyboard.holder").who).toBe("dialog:sessions:history-dialog");
   dialog.close();
   expect(state.get("keyboard.holder").who).toBeNull();
+});
+
+// Keep async tasks controllable so a response from the previous space can arrive last.
+function sidebarContext() {
+  const pending: Promise<any>[] = [];
+  const cx: any = { notify() {}, timer: { every() {} }, spawn(fn: any) { pending.push(fn(cx)); } };
+  return { cx, flush: () => Promise.all(pending) };
+}
+const listResult = (title: string) => ({ code: 0, stdout: JSON.stringify({ sessions: [{ ...row, title }] }), stderr: "" });
+test("sidebar follows the selected space and explicit folder without taking the keyboard", async () => {
+  const scopes: string[][] = [];
+  listRead = async args => { scopes.push(args); return listResult(args[args.indexOf("--space") + 1]); };
+  state.set("workspace.roots", { second: "/override" });
+  const sidebar: any = new Sidebar(), { cx, flush } = sidebarContext();
+  sidebar.init(cx); await flush();
+  expect(state.has("keyboard.holder")).toBe(false);
+  expect(sidebar.rows[0].title).toBe("space");
+  ss = [{ id: "second", active: true, folder: "/other" }];
+  sidebar.sync(cx);
+  expect(sidebar.rows).toEqual([]);
+  await flush();
+  expect(sidebar.rows[0].title).toBe("second");
+  expect(scopes.at(-1)).toContain("/override");
+  sidebar.open(sidebar.rows[0]);
+  expect(calls.at(-1)).toEqual(["overlay", expect.objectContaining({ props: { space: "second", pane: "target", selected: "key" } })]);
+  sidebar.close();
+});
+test("a late history response cannot replace the newly selected space or a closed sidebar", async () => {
+  let resolveOld: any;
+  listRead = args => args.includes("space") ? new Promise(resolve => { resolveOld = resolve; }) : Promise.resolve(listResult("New space"));
+  const sidebar: any = new Sidebar(), { cx, flush } = sidebarContext();
+  sidebar.init(cx);
+  ss = [{ id: "second", active: true, folder: "/other" }];
+  sidebar.sync(cx);
+  await Promise.resolve(); await Promise.resolve();
+  resolveOld(listResult("Old space")); await flush();
+  expect(sidebar.rows[0].title).toBe("New space");
+  listRead = () => new Promise(resolve => { resolveOld = resolve; });
+  sidebar.sync(cx, true); sidebar.close();
+  resolveOld(listResult("Closed view")); await flush();
+  expect(sidebar.rows[0].title).toBe("New space");
 });

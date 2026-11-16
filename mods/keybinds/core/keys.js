@@ -40,6 +40,9 @@ export const NAMES = {
   "chat.dictate": () => "Dictate",
   "chat.call": () => "Start a call",
   "chat.find": () => "Find in the chat",
+  "workspace-document.save": () => "Save document",
+  "workspace-document.source": () => "Show source",
+  "workspace-document.preview": () => "Show preview",
 };
 
 // What a terminal key types, by its text.
@@ -49,6 +52,7 @@ const SENDS = { "\u0017": "Delete the word before", "\u001bb": "Word left", "\u0
 export const ORDER = ["Tabs", "Spaces", "Panes", "Agents", "Terminal", "App"];
 export function groupOf(section, action) {
   if (section === "terminal") return "Terminal";
+  if (section === "mod:workspace-document") return "Documents";
   if (section.startsWith("mod:")) return section.slice(4).replace(/^./, (c) => c.toUpperCase()).replace(/-/g, " ");
   if (/^tab\.|^tabs-tasks\.(close|rename-tab)$/.test(action)) return "Tabs";
   if (/^space\.|^tabs-tasks\.(newspace|rename-space)$/.test(action)) return "Spaces";

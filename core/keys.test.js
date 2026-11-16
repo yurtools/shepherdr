@@ -12,15 +12,18 @@ test("keys as people read them, as the window's Keybinds shows them", () => {
   expect(keyText("ctrl-shift-k", true)).toBe("⌃⇧K");
 });
 
-test("Shepherdr's keys.json grouped: the layout's own key replaces the global one, Alt+1–9 folds, Chat is its own group", () => {
+test("Shepherdr's keys.json grouped: the layout's own key replaces the global one, Alt+1–9 folds, Chat and Documents have their own groups", () => {
   const g = grouped(flatKeys(repoKeys), { layout: "shepherdr" });
-  expect(g.map((x) => x.group)).toEqual(["Tabs", "Spaces", "Panes", "Terminal", "Chat", "App"]);
+  expect(g.map((x) => x.group)).toEqual(["Tabs", "Spaces", "Panes", "Terminal", "Chat", "Documents", "App"]);
   const row = (group, name) => g.find((x) => x.group === group)?.rows.find((r) => r.name === name);
   expect(row("Tabs", "Show tab 1–9").keys).toEqual(["Alt+1–9"]);
   expect(row("Tabs", "Close tab").keys).toEqual(["Ctrl+Shift+W"]);
   expect(row("App", "Jump to a space, task or artifact").keys).toEqual(["Ctrl+K", "Ctrl+Shift+K"]);
   expect(row("App", "Keybinds").keys).toEqual(["Ctrl+Shift+/", "Ctrl+Shift+?"]);
   expect(row("Chat", "Find in the chat").keys).toEqual(["Ctrl+F"]);
+  expect(row("Documents", "Save document").keys).toEqual(["Ctrl+S"]);
+  expect(row("Documents", "Show source").keys).toEqual(["Ctrl+Shift+O"]);
+  expect(row("Documents", "Show preview").keys).toEqual(["Ctrl+Shift+P"]);
 });
 
 test("the web's keys are the window's: each one bound the same in Shepherdr's keys.json or Herdr's defaults, every one named", () => {

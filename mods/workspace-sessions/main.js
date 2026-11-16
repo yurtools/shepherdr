@@ -4,6 +4,7 @@ import { props, theme, closeOverlay, nextCommand } from "herdr";
 import { spaces, inRender } from "./live.js";
 import { historyScope, historyRead, requestSession } from "./session-history.js";
 import { button, segmented, plainError } from "./ui.js";
+import { keepKeys, dropKeys } from "./keyholder.js";
 const stamp = ms => {
   const d = new Date(ms), months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
   return `${months[d.getMonth()]} ${d.getDate()} · ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
@@ -11,9 +12,13 @@ const stamp = ms => {
 export default class Sessions extends View {
   init(_props, cx) {
     this.handle = cx.focus_handle(); this.handle.focus();
+    this.keyHolder = `dialog:sessions:${props()?.overlay ?? "history"}`;
+    keepKeys(this.keyHolder);
+    cx.timer.every(1500, () => keepKeys(this.keyHolder));
     this.search = InputState.new({ placeholder: "Search conversations or accounts…" });
     this.search.on("change", (_e, cx) => cx.notify());
     this.search.focus();
+    cx.timer.after(300, () => this.search.focus());
     this.filter = "closed"; this.rows = []; this.messages = []; this.loading = true;
     this.refresh(cx);
     cx.spawn(async (cx) => {
@@ -25,7 +30,7 @@ export default class Sessions extends View {
       }
     });
   }
-  close() { this.search?.release(); }
+  close() { this.search?.release(); dropKeys(this.keyHolder); }
   refresh(cx) {
     this.loading = true; this.error = null;
     cx.spawn(async (cx) => {

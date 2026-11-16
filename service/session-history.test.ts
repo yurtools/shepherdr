@@ -1,9 +1,11 @@
 import { beforeEach, expect, mock, test } from "bun:test";
 import { fakeHerdr } from "./fake-herdr";
+import { fakeGpuiBase, fakeGpuiKit } from "./fake-gpui";
 let verified = true;
 let calls: any[] = [], row: any, ps: any[], ts: any[];
 const state = new Map<string, any>();
 mock.module("herdr", () => fakeHerdr({
+  props: () => ({ overlay: "history-dialog" }),
   appHome: () => "/fake-app", shared: (k: string) => state.get(k), setShared: (k: string, v: any) => state.set(k, v),
   panes: () => ps, terminals: () => ts,
   spaces: () => [{ id: "space", folder: "/project", tabs: [{ id: "tab" }] }],
@@ -17,6 +19,9 @@ mock.module("herdr", () => fakeHerdr({
     return { code: 0, stdout: "{}", stderr: "" };
   },
 }));
+mock.module("gpui-kit", () => fakeGpuiKit());
+mock.module("gpui-base", () => fakeGpuiBase());
+const { default: Sessions } = await import("../mods/workspace-sessions/main.js");
 const H = await import("../mods/tabs-tasks/session-history.js");
 beforeEach(() => {
   verified = true; calls = []; ps = [{ pane: "target", tab: "tab" }]; ts = []; state.clear();
@@ -66,4 +71,13 @@ test("resume is blocked when active sessions cannot be checked", async () => {
   verified = false;
   await expect(H.openSavedSession({ space: "space", key: "key" })).rejects.toThrow("Cannot check running sessions");
   expect(calls.length).toBe(0);
+});
+
+test("session search holds the keyboard against the chat behind it and releases it on close", () => {
+  const dialog: any = new Sessions();
+  const cx: any = { focus_handle: () => ({ focus() {} }), spawn() {}, timer: { every() {}, after(_ms: number, fn: any) { fn(); } } };
+  dialog.init({}, cx);
+  expect(state.get("keyboard.holder").who).toBe("dialog:sessions:history-dialog");
+  dialog.close();
+  expect(state.get("keyboard.holder").who).toBeNull();
 });

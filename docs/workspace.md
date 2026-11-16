@@ -1,6 +1,6 @@
 # Workspace UI development build
 
-The implementation lives on `feat/workspace-ui`. It is based on upstream 3.1.35;
+The implementation is available on `main`. It is based on upstream 3.1.35;
 there is no new tagged release. Office previews remain a later extension.
 
 ## Everyday workflow
@@ -104,7 +104,7 @@ install before deploying into a live Herdr configuration. From the fork checkout
 update and review the installation with:
 
 ```bash
-git switch feat/workspace-ui
+git switch main
 git pull --ff-only
 python3 bin/shepherdr install --source "$PWD" --yes --keys keep --dry-run
 ```

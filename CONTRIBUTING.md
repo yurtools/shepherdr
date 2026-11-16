@@ -1,15 +1,15 @@
 # Contributing to the yurtools fork
 
 This fork is developing the account-aware workspace described in
-[the plan](docs/fork-plan.md). The working branch implements named accounts,
+[the plan](docs/fork-plan.md). The `main` branch implements named accounts,
 document panes, side-by-side agent views and per-space session history; see
 [the usage guide](docs/workspace.md) for its current behavior and limits.
 Please keep changes focused so upstream improvements remain practical to merge.
 
 ## Branches and upstream
 
-- `main`: the fork's documented baseline and reviewed changes.
-- `feat/workspace-ui`: integration branch for the planned workspace changes.
+- `main`: the fork's implemented workspace and reviewed changes.
+- `feat/workspace-ui`: the original workspace integration branch, now integrated into `main`.
 - `upstream/main`: the original project's history, fetched from
   `https://github.com/eliasstravik/shepherdr.git`.
 
@@ -18,10 +18,10 @@ After cloning the fork, add upstream once:
 ```bash
 git remote add upstream https://github.com/eliasstravik/shepherdr.git
 git fetch upstream
-git switch feat/workspace-ui
+git switch main
 ```
 
-Create focused branches from the integration branch and target pull requests back
+Create focused branches from `main` and target pull requests back
 at `yurtools/shepherdr`, choosing the appropriate base explicitly. The default
 branch is `main`; do not accidentally open a fork-specific pull request upstream.
 

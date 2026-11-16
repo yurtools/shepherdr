@@ -2,7 +2,7 @@
 
 This fork extends Shepherdr's existing Chat/Terminal workflow for Linux. Keep the
 upstream implementation and make focused changes that can be reviewed and tested
-independently. The requirements below now have an initial implementation on `feat/workspace-ui`;
+independently. The requirements below are implemented on `main`;
 see [the usage guide](workspace.md) for behavior and limits. Office previews remain
 a later extension.
 
@@ -10,10 +10,10 @@ a later extension.
 
 - Start from upstream Shepherdr 3.1.35, commit
   `abd5a0f1aa6faf2d0ee8d6559dc7f064fdae488e`.
-- Keep `main` as the fork's documented baseline and reviewed changes; develop
-  workspace features on `feat/workspace-ui`. Track original history via `upstream/main`.
+- Keep `main` as the fork's implemented workspace and reviewed changes; develop
+  further changes on focused feature branches. Track original history via `upstream/main`.
 - Keep the original MIT license and attribution.
-- Review upstream changes before merging them into the working branch.
+- Review upstream changes before merging them into `main`.
 - Audit installer and update repository references before installing a fork build,
   so an update cannot silently replace the fork with an upstream release.
 - Use scratch-root installs and isolated test fixtures during development.
@@ -55,7 +55,7 @@ a later extension.
 
 ## Side-by-side views and session history
 
-Implemented on `feat/workspace-ui`:
+Implemented on `main`:
 
 - **Wide / Comfortable** controls Chat's reading width.
 - **Beside…** opens an extra view of the space Assistant or a running agent,
@@ -96,7 +96,7 @@ built-in Agents pane remain outside the current implementation.
 
 ## Development validation
 
-The working branch now implements named Codex profiles, account-preserving session
+The `main` branch implements named Codex profiles, account-preserving session
 commands, account-bound chat controls, a persistent Files tree, separate
 Markdown/CSV document panes, wide Chat, extra agent views and per-space Sessions.
 Native Linux checks verified account labels, Source / Preview beside the tree,

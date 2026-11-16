@@ -5,7 +5,7 @@ built on [Herdr](https://herdr.dev). The goal is a central agent conversation wi
 Chat / Terminal switching, reliable Codex account selection, and a separate file
 pane with Source / Preview views.
 
-**Status: development implementation on `feat/workspace-ui`.** The runtime is based
+**Status: development implementation on `main`.** The runtime is based
 on upstream Shepherdr 3.1.35. Named accounts, separate document panes, side-by-side
 agent views and per-space session history are implemented and verified in the
 native Linux UI. There is no fork-specific release yet.
@@ -39,11 +39,11 @@ profile keeps its own login and state.
 ```bash
 git clone https://github.com/yurtools/shepherdr.git
 cd shepherdr
-git switch feat/workspace-ui
+git switch main
 ```
 
-`main` contains the fork's documented baseline. `feat/workspace-ui` is the working
-branch for the workspace features in the [usage guide](docs/workspace.md).
+`main` contains the implemented workspace features in the [usage guide](docs/workspace.md).
+Use focused feature branches for further development.
 Upstream history remains available at [eliasstravik/shepherdr](https://github.com/eliasstravik/shepherdr).
 
 For development, start with [Contributing](CONTRIBUTING.md) and the
@@ -54,10 +54,10 @@ Linux; this does not claim new cross-platform validation.
 
 ## Installation and updates
 
-The working branch includes an installer for the development build. The existing
+The `main` branch includes an installer for the development build. The existing
 [installation guide](docs/install.md) describes the inherited Shepherdr runtime,
-including its services, helpers and agent hooks. Install from `feat/workspace-ui` for the workspace changes described in the
-[usage guide](docs/workspace.md); `main` remains the earlier documented baseline.
+including its services, helpers and agent hooks. Install from `main` for the
+workspace features described in the [usage guide](docs/workspace.md).
 
 Development installs use a scratch root, as described in
 [Contributing](CONTRIBUTING.md). Changes to an active Herdr installation are a

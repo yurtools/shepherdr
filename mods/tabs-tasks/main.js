@@ -16,6 +16,7 @@ import { tabName } from "./core/menus.js";
 import { inRender } from "./live.js";
 import { dirsReady } from "./dirs.js";
 import { watchCompanions } from "./companions.js";
+import { watchSessionHistory, openHistory } from "./session-history.js";
 
 function find(node, id) {
   if (node?.id === id) return node;
@@ -28,6 +29,7 @@ function find(node, id) {
 
 export default class Tabs extends View {
   init(_props, cx) {
+    watchSessionHistory(cx, e => toast({ title: "Session did not open", body: plainError(e), level: "error" }));
     watchCompanions(cx, e => toast({ title: "View didn't switch", body: plainError(e), level: "error" }));
     // Agents parked behind a chat whose tab or space closed end, as their pane would have (the
     // Agents list did this; the layout has none now).
@@ -62,6 +64,7 @@ export default class Tabs extends View {
         if (c === undefined) continue;
         cmd = null;
         const tab = spaces().find(s => s.active)?.tabs.find(t => t.active);
+        if (c === "sessions") openHistory();
         if (c === "close" && tab) closeTab(tab.id);
         // F2 / Shift+F2 (keys.json): our Rename dialogs for the shown tab and space.
         if (c === "rename-tab" && tab) renameTab(tab);
@@ -207,6 +210,9 @@ export default class Tabs extends View {
       .on_mouse_move((e) => { this.right = e.position.x - e.local_position.x + e.bounds.width; })
       .on_scroll_wheel(e => { if (Math.abs(e.delta.y) >= 1) run(e.delta.y > 0 ? "tab.prev" : "tab.next"); })
       .child(h_flex().id("tab-scroll").flex_1().min_w(0).h_full().items_center().gap(3).overflow_x_scrollbar().children(tabsShown ? shown.map(item) : []))
+      .when(Boolean(space), el => el.child(h_flex().id("tab-sessions").h(H.sm).px(8).flex_none().items_center().rounded(RADIUS.control)
+        .text_size(TEXT.label).text_color(t.muted).cursor_pointer().hover(s => s.bg(t.hover))
+        .on_mouse_down("left", stop).on_click(() => openHistory(space)).child("Sessions")))
       .child(button("tab-new", "+", () => openOverlay({ mod: "new-menu-tasks", kind: "popup", width: 250, height: 543, props: { right: this.right } })))
       .when(enabled.includes("files"), el => el.child(panelButton("files", "Files", "mods/files/file.svg")))
       .when(enabled.includes("changes"), el => el.child(panelButton("changes", "Changes", "mods/changes/changes.svg")))

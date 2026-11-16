@@ -109,3 +109,33 @@ its configured space account.
 
 Settings account/model menus and Chat dropdowns anchor to the control pressed,
 independently of where the previous context menu was opened.
+
+## Closed conversations
+
+Click **Sessions** beside the tab bar’s **+** to open this space’s saved Codex
+conversations. **Closed** is the default; **All** also shows conversations that are
+still running. Search by conversation title, tab name, account or folder. Each
+row identifies its account and last activity; the right side previews recent
+messages without starting an agent or showing thinking/tool output.
+
+**Resume** opens the same conversation in a new Chat tab using its original
+Codex account. **Beside** resumes it alongside the pane from which Sessions was
+opened. For an already-running conversation these actions focus its original
+chat or add an extra view, rather than launch another process. Resumed sessions
+are ordinary agent chats and do not replace the space’s current Assistant.
+
+History includes saved logs that predate this feature, from the primary Codex
+home and the named profiles configured for this machine. Folder history includes
+sessions in the project folder and its subfolders. Chats observed after this
+feature is installed also remember their space and custom tab name, preserving
+that association if the project folder changes. Closing a tab ends its process;
+its saved conversation remains available here. No authentication files or
+transcript copies are put in the history metadata index.
+
+This initial history view supports local Codex conversations. Other CLIs and
+remote machines are not indexed yet. Preview is limited to 12 recent sampled
+text messages; Resume loads the full conversation through Codex. Saved launch
+options are retained when available; folder history restores the recorded model,
+thinking level and basic permissions, defaulting to workspace write with approval
+when older logs contain no permission metadata. Session availability depends on
+the original CLI logs still existing and the original account remaining configured.

@@ -134,7 +134,8 @@
       "herdr": {
         "mods": [
           "pane-chat",
-          "workspace-agents"
+          "workspace-agents",
+          "workspace-sessions"
         ]
       },
       "web": {

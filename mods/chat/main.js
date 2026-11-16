@@ -68,6 +68,7 @@ import { dayLabel, dayOf } from "./days.js";
 import { CallScreen } from "./call-screen.js";
 import { on as addonOn } from "./addons.js";
 import { note } from "./usage.js";
+import { rememberChatSession } from "./session-history.js";
 import { popupBounds, popupAt } from "./popup.js";
 import { companionPane, companionAgent, companionRecords, boundAgent, closeCompanion } from "./companions.js";
 
@@ -1064,6 +1065,8 @@ export default class Chat extends View {
     if (t.state !== "live" && (t.exit_code ?? 1) === 0) return false;
     const screen = (await hc(["read", addr, "--lines", "40"]).catch(() => null))?.stdout ?? "";
     if (!LOST.test(screen.split("\n").slice(-30).join("\n"))) return false;
+    // Explicit history resumes must never silently turn into a fresh conversation.
+    if (t.labels?.["herdr.session"]) { this.resumeMissing = true; return false; }
     // One start for it, whichever chat saw it first (its own, its Assistant's): shared "chat.lost"
     // = { [address]: when }.
     const lost = shared("chat.lost") ?? {};
@@ -1199,6 +1202,7 @@ export default class Chat extends View {
       this.reset();
       this.pinned = true;
     }
+    rememberChatSession(this, cx);
   }
 
   // Shows another terminal from now on (the agent was restarted).
@@ -4568,7 +4572,8 @@ export default class Chat extends View {
     if (this.phase === "ended" && !this.swapping) return root.child(this.notice(t, WORDS.agentEnded, null, [
       this.button("chat-close", "Close chat", null, "secondary", t, () => this.closeSelf())]));
     const open = this.button("chat-open-terminal", WORDS.openTerminal,"mods/workspace-chrome/terminal.svg", "primary", t, () => this.toTerminal());
-    if (this.phase === "unsupported") return root.child(this.notice(t, WORDS.unsupported, WORDS.unsupportedBody, [open]));
+    if (this.phase === "unsupported") return root.child(this.notice(t, this.resumeMissing ? "Couldn’t resume this conversation" : WORDS.unsupported,
+      this.resumeMissing ? "Codex couldn’t find the saved session in its original account. Open Terminal to inspect the error." : WORDS.unsupportedBody, [open]));
     if (this.phase === "none") return root.child(this.notice(t, WORDS.notFound, WORDS.notFoundBody, [open]));
     if ((this.phase === "finding" && !starting) || this.phase === "ended") return root.child(this.notice(t, this.swapping ? WORDS.restarting : WORDS.opening, null));
 

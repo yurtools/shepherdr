@@ -8,6 +8,7 @@ import { fakeGpuiBase, fakeGpuiKit } from "./fake-gpui";
 
 let zoom = 1;
 let comfortable = false;
+let historyMissing = false;
 const handlers: Record<string, ((...a: any[]) => void)[]> = {};
 function el(): any {
   const self: any = new Proxy({}, {
@@ -26,7 +27,7 @@ mock.module("herdr", () => fakeHerdr({
   settings: () => ({ zoom }), theme: () => theme, shared: (key: string) => key === "chat.width" && comfortable ? "comfortable" : undefined, setShared: () => {}, agents: () => [], panes: () => [],
   terminals: () => [], spaces: () => [], machines: () => [], knownAgents: () => [], props: () => ({}), window: () => ({ platform: "linux" }),
   home: () => "/nonexistent-home", appHome: () => "/nonexistent-app",
-  exec: async () => ({ code: 1, stdout: "", stderr: "" }), hc: async () => ({ code: 1, stdout: "", stderr: "" }),
+  exec: async () => ({ code: 1, stdout: "", stderr: "" }), hc: async () => ({ code: 1, stdout: historyMissing ? "No conversation found with id example" : "", stderr: "" }),
   readTextFile: async () => null, writeTextFile: async () => {}, watchFolder: () => {},
 }));
 mock.module("gpui-kit", () => fakeGpuiKit({ View: class {}, div: el, svg: el, image: el }));
@@ -105,4 +106,14 @@ test("closing an extra Chat view releases its UI without releasing the original 
   expect(releases).toBe(3); expect(canceled).toBe(1);
   expect(c.resumable()).toBe(false);
   expect(await c.checkLost("t1", {})).toBe(false);
+});
+
+test("a missing explicitly resumed history session never falls back to a new conversation", async () => {
+  const c = chat(); historyMissing = true;
+  let fresh = 0;
+  Object.assign(c, { lostTried: new Set(), lostSession: async () => fresh++ });
+  try {
+    await c.checkLost("saved", {}, { argv: ["codex", "resume", "00000000-0000-0000-0000-000000000001"], labels: { "herdr.session": "key" }, state: "live" });
+    expect(c.resumeMissing).toBe(true); expect(fresh).toBe(0);
+  } finally { historyMissing = false; }
 });

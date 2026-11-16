@@ -1,0 +1,252 @@
+#!/usr/bin/env python3
+"""Machine-local Codex history. Reads metadata/transcripts, never authentication files."""
+import argparse
+import hashlib
+import json
+import os
+from pathlib import Path
+import re
+import subprocess
+import sys
+import tempfile
+
+UUID = re.compile(r"^[0-9a-fA-F]{8}-(?:[0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$")
+MAX_FILES = 5000
+HEAD = 131072
+TAIL = 262144
+
+def app_home():
+    return Path(os.environ.get("HERDR_APP_HOME", str(Path.home() / ".config/herdr-app")))
+
+def load(path, default):
+    try:
+        return json.loads(Path(path).read_text())
+    except (OSError, ValueError):
+        return default
+
+def accounts():
+    first = Path(os.environ.get("CODEX_HOME", str(Path.home() / ".codex"))).expanduser().resolve()
+    out = [{"id": "codex", "name": "Codex", "home": str(first)}]
+    for p in load(app_home() / "data/agent-profiles.json", {}).get("profiles", []):
+        if p.get("agent") != "codex" or not Path(p.get("home", "")).is_absolute():
+            continue
+        home = str(Path(p["home"]).resolve())
+        if not any(a["home"] == home for a in out):
+            out.append({"id": p["id"], "name": p.get("name", p["id"]), "home": home})
+    return out
+
+def session_key(home, sid):
+    return hashlib.sha256((str(Path(home).resolve()) + "\0" + sid).encode()).hexdigest()
+
+def chunks(path):
+    with path.open("rb") as f:
+        # Session metadata may carry large instructions: read its entire first line, bounded.
+        first = f.readline(2 * 1024 * 1024)
+        rest = f.read(HEAD)
+        size = f.seek(0, 2)
+        tail_at = max(len(first) + len(rest), size - TAIL)
+        f.seek(tail_at)
+        tail = f.read(TAIL)
+    lines = first.splitlines() + rest.splitlines()
+    if tail_at < size:
+        lines += tail.splitlines()[1:]
+    for line in lines:
+        try:
+            obj = json.loads(line)
+            if isinstance(obj, dict):
+                yield obj
+        except (ValueError, UnicodeDecodeError):
+            continue
+
+def message_text(obj):
+    p = obj.get("payload", {})
+    if not isinstance(p, dict):
+        return None
+    if obj.get("type") == "response_item" and p.get("type") == "message" and p.get("channel") != "analysis" and p.get("role") in ("user", "assistant"):
+        role = p["role"]
+        text = "\n".join(c.get("text", "") for c in p.get("content", []) if isinstance(c, dict) and isinstance(c.get("text"), str) and c.get("type") in ("input_text", "output_text"))
+    elif obj.get("type") == "event_msg" and p.get("type") in ("user_message", "agent_message"):
+        role = "user" if p["type"] == "user_message" else "assistant"
+        text = p.get("message", "")
+    else:
+        return None
+    if not isinstance(text, str) or not text.strip() or text.strip() == "." or text.startswith(("<environment_context>", "# AGENTS.md", "<permissions instructions>", "<user_instructions>", "<developer_instructions>", "<hc ")):
+        return None
+    return {"role": role, "text": text}
+
+def metadata(path):
+    meta, context, hint = {}, {}, None
+    for obj in chunks(path):
+        if obj.get("type") == "session_meta" and isinstance(obj.get("payload"), dict):
+            meta = obj["payload"]
+        elif obj.get("type") == "turn_context" and isinstance(obj.get("payload"), dict):
+            context = obj["payload"]
+        message = message_text(obj)
+        if hint is None and message and message["role"] == "user":
+            hint = " ".join(message["text"].split())[:100]
+    sid = meta.get("id") or meta.get("session_id")
+    if not UUID.fullmatch(str(sid)) or not isinstance(meta.get("cwd"), str):
+        return None
+    # Internal subagents belong under their parent, not the person's session list.
+    if isinstance(meta.get("source"), dict) and "subagent" in meta["source"]:
+        return None
+    policy = context.get("sandbox_policy", {})
+    sandbox = policy.get("type") if isinstance(policy, dict) else policy
+    return {"session": sid, "cwd": meta["cwd"], "model": context.get("model"), "effort": context.get("effort"),
+            "sandbox": sandbox, "approval": context.get("approval_policy"), "created": meta.get("timestamp"), "titleHint": hint}
+
+def inside(folder, cwd):
+    try:
+        Path(cwd).resolve().relative_to(Path(folder).resolve())
+        return True
+    except (ValueError, OSError):
+        return False
+
+def active_logs():
+    found, names, verified = {}, {}, True
+    try:
+        data = json.loads(subprocess.run(["hc", "ls", "--json"], capture_output=True, text=True, timeout=3, check=True).stdout)
+        for item in data.get("terminals", []):
+            if item.get("state") != "live" or "/" in item.get("address", ""):
+                continue
+            t = json.loads(subprocess.run(["hc", "get", item["address"], "--json"], capture_output=True, text=True, timeout=3, check=True).stdout)
+            label = t.get("labels", {}).get("herdr.session")
+            if label:
+                names[label] = item["address"]
+            argv = (t.get("foreground") or {}).get("argv") or t.get("argv") or []
+            if item.get("agent") != "codex" and not any(Path(str(a)).name == "codex" for a in argv):
+                continue
+            pid = (t.get("foreground") or {}).get("pid")
+            queue, seen = [pid] if pid else [], set()
+            while queue and len(seen) < 64:
+                p = queue.pop()
+                if p in seen:
+                    continue
+                seen.add(p)
+                try:
+                    for fd in Path(f"/proc/{p}/fd").iterdir():
+                        try:
+                            target = os.readlink(fd)
+                            if "/rollout-" in target and target.endswith(".jsonl"):
+                                found[str(Path(target).resolve())] = item["address"]
+                        except OSError:
+                            pass
+                    children = Path(f"/proc/{p}/task/{p}/children").read_text().split()
+                    queue.extend(int(c) for c in children)
+                except OSError:
+                    pass
+    except (OSError, ValueError, subprocess.SubprocessError):
+        verified = False
+    return found, names, verified
+
+def sessions(folder, space, live=True):
+    roots = load(app_home() / "data/workspace-folders.json", {})
+    folder = roots.get(space) or folder
+    if not folder or not Path(folder).is_absolute():
+        raise ValueError("Choose a project folder for this space first.")
+    live_paths, live_keys, verified = active_logs() if live else ({}, {}, True)
+    rows, truncated = [], False
+    records = app_home() / "data/session-history"
+    for account in accounts():
+        root = Path(account["home"])
+        titles = {}
+        try:
+            for line in (root / "session_index.jsonl").read_text().splitlines():
+                try:
+                    x = json.loads(line)
+                    titles[x["id"]] = x.get("thread_name")
+                except (ValueError, KeyError, TypeError):
+                    pass
+        except OSError:
+            pass
+        files = []
+        for dirname in ("sessions", "archived_sessions"):
+            for p in (root / dirname).glob("**/*.jsonl"):
+                if len(files) >= MAX_FILES:
+                    truncated = True
+                    break
+                files.append(p)
+        for path in files:
+            try:
+                info = metadata(path)
+                if not info:
+                    continue
+                key = session_key(root, info["session"])
+                saved = load(records / (key + ".json"), {})
+                if saved.get("space"):
+                    if saved["space"] != space:
+                        continue
+                elif not inside(folder, info["cwd"]):
+                    continue
+                saved_title = saved.get("title")
+                generic = {account["name"], "Codex", "Assistant", "Chat"}
+                title = saved_title if saved_title and saved_title not in generic and not str(saved_title).isdigit() else titles.get(info["session"]) or saved_title or info.get("titleHint") or "Codex conversation"
+                row = {**info, "key": key, "kind": "codex", "home": str(root), "account": account["name"], "profile": account["id"],
+                       "path": str(path.resolve()), "space": space, "folder": folder,
+                       "title": title, "tabTitle": saved_title,
+                       "updated": int(path.stat().st_mtime * 1000), "argv": saved.get("argv") or [],
+                       "terminal": live_paths.get(str(path.resolve())) or live_keys.get(key), "associated": bool(saved.get("space"))}
+                rows.append(row)
+            except (OSError, ValueError, TypeError):
+                continue
+    rows.sort(key=lambda r: r["updated"], reverse=True)
+    # Account+session is the identity, even when a log moved into archived_sessions.
+    unique = {r["key"]: r for r in reversed(rows)}
+    return {"sessions": sorted(unique.values(), key=lambda r: r["updated"], reverse=True), "truncated": truncated, "folder": folder, "liveVerified": verified}
+
+def capture(row):
+    if row.get("kind") != "codex" or not UUID.fullmatch(str(row.get("session"))):
+        return
+    home = str(Path(row.get("home", "")).resolve())
+    if home not in {a["home"] for a in accounts()} or not row.get("space"):
+        return
+    key = session_key(home, row["session"])
+    dest = app_home() / "data/session-history"
+    dest.mkdir(parents=True, exist_ok=True, mode=0o700)
+    # Only metadata: no credentials, prompt text or transcript copies in this index.
+    data = {k: row[k] for k in ("space", "title", "argv") if k in row}
+    fd, tmp = tempfile.mkstemp(dir=dest)
+    try:
+        with os.fdopen(fd, "w") as f:
+            json.dump(data, f)
+        os.replace(tmp, dest / (key + ".json"))
+    finally:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+
+def preview(row):
+    out = []
+    for obj in chunks(Path(row["path"])):
+        message = message_text(obj)
+        if not message:
+            continue
+        message["text"] = message["text"][:6000]
+        if not out or message != out[-1]:
+            out.append(message)
+    return out[-12:]
+
+
+def main():
+    p = argparse.ArgumentParser()
+    p.add_argument("command", choices=("list", "get", "preview", "capture"))
+    p.add_argument("data", nargs="?")
+    p.add_argument("--folder")
+    p.add_argument("--space")
+    p.add_argument("--key")
+    a = p.parse_args()
+    if a.command == "capture":
+        capture(json.loads(a.data)); print('{"ok":true}'); return
+    result = sessions(a.folder, a.space)
+    if a.command != "list":
+        row = next((r for r in result["sessions"] if r["key"] == a.key), None)
+        if not row:
+            raise ValueError("This session is no longer available in this space/account.")
+        result = {"session": row, "liveVerified": result["liveVerified"], **({"messages": preview(row)} if a.command == "preview" else {})}
+    print(json.dumps(result))
+
+if __name__ == "__main__":
+    try:
+        main()
+    except (OSError, ValueError, TypeError) as error:
+        print(json.dumps({"error": str(error)}))
+        sys.exit(1)

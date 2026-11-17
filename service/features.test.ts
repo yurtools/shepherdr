@@ -7,7 +7,7 @@ mock.module('herdr',()=>fakeHerdr({appHome:()=>'/app',home:()=>'/person',spaces:
  shared:(k:string)=>state.get(k),setShared:(k:string,v:any)=>state.set(k,v),run:(cmd:string,args:any)=>calls.push([cmd,args]),
  hc:async(args:any)=>{calls.push(['hc',args]);return {code:0,stdout:'{}'}},
  exec:async(bin:string,args:string[])=>{calls.push([bin,args]);return {code:0,stdout:bin==='herdr-app'?'{"tab":"feature-tab","pane":"feature-pane"}':'{}',stderr:''};}}));
-const {openFeature}=await import('../mods/workspace-launchers/features.js');
+const {openFeature,featureSettings}=await import('../mods/workspace-launchers/features.js');
 beforeEach(()=>{calls=[];ps=[];ts=[];ss=[{id:'space',tabs:[]}];state=new Map();});
 const record:any={id:'stable-feature',space:'space',name:'Browser tabs',folder:'/repo',settings:{agent:'codex',profile:'account-two'},session:'saved-id',home:'/account-two',argv:['env','CODEX_HOME=/account-two','codex']};
 test('a feature opens with its persistent identity, original account and resumable record',async()=>{
@@ -28,4 +28,11 @@ test('a closed view reattaches the same live Feature Assistant',async()=>{
 test('a stopped feature resumes in its existing pane rather than creating a second tab',async()=>{
  ps=[{pane:'old-pane',mod:'chat',tab:'old-tab'}];ss[0].tabs=[{id:'old-tab'}];await openFeature({...record,pane:'old-pane'});
  expect(calls.some(c=>c[0]==='herdr-app')).toBe(false);expect(state.get('workspace.feature.resume').record.id).toBe(record.id);
+});
+
+test('Feature Assistant account choices override the Assistant account, including an explicit primary account',()=>{
+ const base={agent:'codex',profile:'codex-account-2',model:'gpt-model'};
+ expect(featureSettings({coordinator:base})).toEqual(base);
+ expect(featureSettings({coordinator:base,feature:{agent:'codex',model:'other'}})).toEqual({agent:'codex',model:'other'});
+ expect(featureSettings({coordinator:{agent:'codex'},feature:base}).profile).toBe('codex-account-2');
 });

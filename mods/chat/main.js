@@ -1463,7 +1463,7 @@ export default class Chat extends View {
     const list = this.suggestions();
     if (list.length) {
       const c = list[Math.min(this.slashSel, list.length - 1)];
-      if (c.task || c.space || c.skill) { this.pick(c, cx); const v = this.box.value(); cx.timer.after(30, () => this.box.set_value(v)); return; }
+      if (c.task || c.space || c.skill || c.skillPicker) { this.pick(c, cx); const v = this.box.value(); cx.timer.after(30, () => this.box.set_value(v)); return; }
       if (this.box.value().trim() !== `/${c.name}`) { this.pick(c, cx); cx.timer.after(30, () => this.box.set_value(`/${c.name} `)); return; }
     }
     this.send(cx, hold);
@@ -1667,12 +1667,13 @@ export default class Chat extends View {
     const sk = slash.skillSuggestions(v, this.skills ?? []); if (sk !== null) return sk;
     const w = slash.typing(v);
     if (w === null || !this.cmds.length) return [];
-    return slash.match(this.cmds, w);
+    return slash.match(this.cmds, w).map(c => ({...c,skillPicker:(this.kind??this.choice?.sel?.agent) === "codex" && c.name === "skills"}));
   }
 
   pick(c, cx) {
+    if(c.skillPicker){this.box.set_value("$");this.slashOff=null;this.box.focus();cx.notify();return;}
     if (c.skill) {
-      const text=this.box.value().replace(/\$[\w:.-]*$/,`$${c.name} `); this.box.set_value(text); this.slashOff=text;
+      const text=this.box.value().replace(/(?:\/)?\$[\w:.-]*$/,`$${c.name} `); this.box.set_value(text); this.slashOff=text;
     } else if (c.space) {
       const next = mentions.pickInto(this.box.value(), c.space);
       this.picked = [...this.picked.filter((x) => x.name !== c.space.name), c.space];
@@ -2267,7 +2268,7 @@ export default class Chat extends View {
       if (what === "time") add("time", timeW - ACT_GAP, ACT_GAP, { hover: true, text: time });
       // The pills PILL_GAP apart, PILL_EDGE from what comes before or after them.
       else if (what === "pills") (bar.pills ?? []).forEach((p, i) => add(`pill:${p.emoji}`, PILL, i ? PILL_GAP : PILL_EDGE, { pill: p }));
-      else add(what, ACT, what === "react" && bar.side !== "user" ? PILL_EDGE : ACT_GAP, { hover: true });
+      else add(what, ACT, what === "react" && bar.side !== "user" ? PILL_EDGE : ACT_GAP, { hover: what !== "feature" });
     }
     const x0 = bar.side === "user" ? right - at : left;
     for (const p of parts) p.x += x0;
@@ -2438,19 +2439,33 @@ export default class Chat extends View {
 
   clipboardMenu(kind,e,cx,text='') {
     cx.stop_propagation(); this.pressMoved=kind!=='input';
-    openOverlay({mod:'workspace-clipboard',kind:'popup',width:220,height:kind==='input'?140:172,at:{x:e.position.x,y:e.position.y},props:{key:this.pickKey()??this.areaKey(),kind,text,value:this.box.value(),range:this.box.selected_range()}});
+    const at={x:e.position.x,y:e.position.y};
+    const open=(selected)=>openOverlay({mod:'workspace-clipboard',kind:'popup',width:220,height:kind==='input'?140:172,at,
+      props:{key:this.pickKey()??this.areaKey(),kind,text,selected,value:this.box.value(),range:this.box.selected_range()}});
+    if(kind==='input'){open(null);return;}
+    // The popup takes focus and a menu press clears native TextView selection.
+    // Capture it through the native copy handler before either happens; restore a prior text clipboard.
+    const before=cx.read_from_clipboard();
+    window.dispatch_action('shell_root::Copy');
+    cx.timer.after(30,cx=>{const selected=cx.read_from_clipboard();if(typeof before==='string')cx.write_to_clipboard(before);open(selected??'');});
   }
+
   clipboardAction(req,cx) {
     if(req.kind!=='input') {
       if(req.action==='message')cx.write_to_clipboard(req.text);
-      else if(req.action==='copy')window.dispatch_action('input::Copy');
+      else if(req.action==='copy'&&typeof req.selected==='string')cx.write_to_clipboard(req.selected);
       return;
     }
     if(req.value!==this.box.value()){toast({title:'Text changed',body:'Open the clipboard menu again.'});return;}
     const range=req.range??{start:0,end:0},text=this.box.value().slice(range.start,range.end);
     if(req.action==='copy'||req.action==='cut')cx.write_to_clipboard(text);
     if(req.action==='cut'){this.box.set_selected_range(range);this.box.replace('');this.saveSoon(cx);}
-    if(req.action==='paste'){this.box.focus();this.box.set_selected_range(range);window.dispatch_action('input::Paste');}
+    if(req.action==='paste'){
+      this.box.focus();this.box.set_selected_range(range);
+      const pasted=cx.read_from_clipboard();
+      if(typeof pasted==='string'){this.box.replace(pasted);this.saveSoon(cx);}
+      else cx.spawn(async cx=>{try{this.addFiles(await attach.fromClipboard());this.saveSoon(cx);}catch(e){this.error=String(e?.message??e);}cx.notify();});
+    }
     if(req.action==='select-all'){this.box.focus();this.box.set_selected_range({start:0,end:this.box.value().length});}
   }
 
@@ -3373,7 +3388,8 @@ export default class Chat extends View {
   bar(bar, t, bottom, hover) {
     const done = this.copied === bar.id;
     const icon = (a) => div().size(ACT).flex().items_center().justify_center().rounded(5).cursor_pointer()
-      .text_color(done && a === "copy" ? t.foreground : t.dim).hover((s) => s.bg(t.hover).text_color(t.foreground))
+      .accessibility_label(a === "feature" ? "Create feature from this reply" : a)
+      .text_color(a === "feature" ? t.accent : done && a === "copy" ? t.foreground : t.dim).hover((s) => s.bg(t.hover).text_color(t.foreground))
       .child(svg(`mods/chat/${done && a === "copy" ? "check" : ICONS[a]}.svg`).size(14));
     const pill = (p) => h_flex().w(PILL).h(PILL_H).gap(4).items_center().justify_center().rounded(PILL_H / 2).border_1().cursor_pointer()
       .when(p.you, (el) => el.bg(t.accent + "26").border_color(t.accent))
@@ -4368,7 +4384,8 @@ export default class Chat extends View {
       // The padding is around the textarea, not on it: its own height is then exactly its rows
       // (auto-grow, 1 to 8), so it never overflows itself by the padding, which showed a
       // scrollbar in an empty box and made it scroll a few pixels on each new line.
-      .child(div().relative().w_full().min_h(TEXT_ROW).px(12).pt(9).pb(4)
+      .child(div().id("chat-entry").relative().w_full().min_h(TEXT_ROW).px(12).pt(9).pb(4)
+        .on_mouse_down("right",(e,cx)=>this.clipboardMenu("input",e,cx))
         // Measured, unseen: a line's height, and the words' height at the box's width (sizeBox()).
         .child(div().id("chat-line-h").absolute().top(0).left(0).opacity(0).text_size(13).child("Xg")
           .on_size_change((size, cx) => { if (Math.abs((this.lineH ?? 0) - size.height) > 0.1) { this.lineH = size.height; this.sizeBox(); cx.notify(); } }))
@@ -4376,7 +4393,7 @@ export default class Chat extends View {
           .child(div().id("chat-text-h").w_full().text_size(13)
             .child(/\n$/.test(this.box.value()) || !this.box.value() ? `${this.box.value()} ` : this.box.value())
             .on_size_change((size, cx) => { if (Math.abs((this.textH ?? 0) - size.height) > 0.1) { this.textH = size.height; this.sizeBox(); cx.notify(); } })))
-        .child(Textarea.new(this.box).on_mouse_down("right",(e,cx)=>this.clipboardMenu("input",e,cx)).w_full().text_size(13).text_color(t.foreground)
+        .child(Textarea.new(this.box).w_full().text_size(13).text_color(t.foreground)
           .when(Boolean(this.boxSpare && this.lineH), (el) => el.mb(-this.lineH)))
         .when(!this.box.value().trim(), (el) => el.child(div().absolute().top(9).left(12).text_size(13).text_color(t.dim)
           .child(this.asks.length || st === "blocked" ? WORDS.replyInstead : this.placeholder()))))

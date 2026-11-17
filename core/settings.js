@@ -63,7 +63,7 @@ export const SAME_AS_ALL_MACHINES = "Inherited from all machines";
 export const ROLES = [
   { id: "coordinator", title: "Assistant", about: "Plans the work and starts a task for each part.", file: "assistant.md",
     told: "What every Assistant is told first" },
-  { id: "feature", title: "Feature Assistant", about: "Coordinates one feature, using this space’s account and shared workers/reviewer.", file: "feature.md", told: "What every Feature Assistant is told first" },
+  { id: "feature", title: "Feature Assistant", about: "Coordinates one feature with its assigned agent/account and shared workers/reviewer.", file: "feature.md", told: "What every Feature Assistant is told first" },
   { id: "worker", title: "Workers", about: "Do one task each.", file: "worker.md", told: "What every worker is told first" },
   { id: "reviewer", title: "Reviewer", about: "Checks each task's work before it's ready.", file: "reviewer.md",
     told: "What every reviewer is told first" },

@@ -37,7 +37,8 @@ Both use the shared Worker, Reviewer, review, worktree and task settings.
   no API key is required. The original Fork action retains its existing behavior.
 - **Shepherdr settings → Agents → Feature Assistant** chooses its model,
   thinking level, permissions and instructions; the space can override these.
-  A Codex Feature Assistant uses the space Assistant's configured account.
+  Features inherit the space Assistant’s account until you configure a Feature
+  Assistant agent/account override. The account picker is available alongside its model.
 - **Features** below Spaces lists the selected space's features with the
   Assistant icon and existing status colors. Click to focus or resume one;
   **+** starts another. The check mark marks it Completed, and **All** includes
@@ -86,14 +87,16 @@ not been automated or asserted by the local browser fixtures.
 **+ → Manage…** edits Agents and Web chats. Agent entries update `programs.json`
 without changing account wrappers or credentials. Disable hides an entry from this
 menu; Remove deletes a custom override and keeps the entry hidden if it is built in.
-Names, executable arguments and icons are editable. Web-chat entries have a name,
+Configured launchers appear first in a scrollable list, including named-account
+wrappers such as Codex (Account 2). The editor has persistent field labels and a live
+icon preview. Names, executable arguments and icons are editable. Web-chat entries have a name,
 URL and browser profile. Shortcuts and hidden agents are saved in
 `data/workspace-launchers.json`. Changes appear when reopening the menu.
 
 ## Skills, commands and clipboard menus
 
-In a local Codex Chat, type **$** for the assigned account's skills, including shared
-user and project skills. **/skills** opens the same picker. Disabled skill entries
+In a local Codex Chat, type **$** or **/$** for the assigned account's skills, including shared
+user and project skills. **/skills**, or **/ → Skills**, opens the same picker. Disabled skill entries
 in that account's config are omitted. **/status** is handled as a native CLI command
 before reply quotes, task references or approval-card answers can alter it, and
 shows its result in Terminal. In a not-yet-started conversation, it opens the agent
@@ -102,7 +105,11 @@ CLI menus continue to use Terminal.
 
 Right-click the Chat input for **Cut / Copy / Paste / Select all**. Operations keep
 the captured selection and do not edit a draft that changed while the menu was open.
-Reply menus offer native selected-text Copy and Copy message. Terminal menus offer
+Reply menus offer selected-text Copy and Copy message. Selected text is captured
+before the popup takes focus. The native SDK exposes it only through Copy: a prior
+text clipboard is restored until you choose an action, but opening this menu with
+a non-text clipboard can replace it with the selection. Keyboard Copy avoids this
+menu snapshot. Terminal menus offer
 Copy, Paste and Select all; Cut is disabled because terminal output is read-only.
 When right-click belongs to a terminal program, **Shift+right-click** opens Herdr's menu.
 

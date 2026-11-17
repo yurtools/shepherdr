@@ -75,7 +75,7 @@ export default class NewMenu extends View {
       .child(this.row("terminal", svg("icons/shell.svg").size(14), NEW_MENU.terminal, () => run("tab.new", { space: space?.id }), shortcut("tab.new")))
       .child(this.row("coordinator", svg("mods/coordinator/network.svg").size(14), aRow.label, coordinate,
         aRow.hint, canCoordinate))
-      .child(this.row("browser", svg("mods/coordinator/network.svg").size(14), "New browser tab…", () => openOverlay({mod:"workspace-launchers",kind:"dialog",width:600,height:310,props:{mode:"browser"}})))
+      .child(this.row("browser", svg("mods/coordinator/network.svg").size(14), "New browser tab…", () => openOverlay({mod:"workspace-launchers",kind:"dialog",width:640,height:490,props:{mode:"browser"}})))
       .child(this.row("feature", svg("mods/coordinator/network.svg").size(14), "Start feature…", () => startFeature(space)))
       .children(this.catalog.chats.map(chat => this.row(`web-${chat.id}`, svg("mods/coordinator/network.svg").size(14), chat.name, () => { setShared("workspace.browser.request",{...chat,space:space?.id,at:Date.now(),nonce:Math.random()}); })))
       .child(div().h(28).flex_none().px(8).flex().items_center().text_size(TEXT.label).font_medium().text_color(t.dim).child(NEW_MENU.agents))
@@ -87,6 +87,6 @@ export default class NewMenu extends View {
       .child(this.row("space", svg("mods/workspace-chrome/plus.svg").size(14), NEW_MENU.space, () => run("tabs-tasks.newspace"), shortcut("tabs-tasks.newspace") || shortcut("space.new")))
       .child(this.row("worktree", svg("mods/workspace-chrome/branch.svg").size(14), NEW_MENU.worktreeNew, () => openOverlay({ mod: "worktree", kind: "dialog", width: 460, height: 280, props: { space: space?.id, folder: panes().find(p => p.focused)?.cwd, action: "new" } }), "", Boolean(space)))
       .child(this.row("worktree-open", svg("mods/workspace-chrome/branch.svg").size(14), NEW_MENU.worktreeOpen, () => openOverlay({ mod: "worktree", kind: "dialog", width: 560, height: 480, props: { space: space?.id, folder: panes().find(p => p.focused)?.cwd, action: "open" } }), "", Boolean(space)))
-      .child(this.row("manage-launchers", svg("mods/workspace-chrome/settings.svg").size(14), "Manage…", () => openOverlay({mod:"workspace-launchers",kind:"dialog",width:660,height:700,props:{mode:"manage"}})));
+      .child(this.row("manage-launchers", svg("mods/workspace-chrome/settings.svg").size(14), "Manage…", () => openOverlay({mod:"workspace-launchers",kind:"dialog",width:940,height:740,props:{mode:"manage"}})));
   }
 }

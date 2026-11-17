@@ -5,7 +5,7 @@
 import { exec, appHome } from "herdr";
 
 // The lists and the scan are core/slash.js, shared with the web app.
-import { SCAN, scanned, commandList } from "./core/slash.js";
+import { SCAN, scanned, commandList, match } from "./core/slash.js";
 export { opensMenu, typing, match } from "./core/slash.js";
 
 const cache = new Map();
@@ -23,6 +23,6 @@ export async function skills(machine,cwd,home) {
  if(r.code)throw new Error(r.stderr||'Skills could not be read.');return JSON.parse(r.stdout);
 }
 export function skillSuggestions(text,skills) {
- const m=/(?:^|\s)\$([\w:.-]*)$/.exec(text);if(!m)return null;
+ const m=/(?:^|\s)(?:\/)?\$([\w:.-]*)$/.exec(text);if(!m)return null;
  return match(skills,m[1]).map(s=>({...s,skill:true,key:`skill-${s.name}`}));
 }

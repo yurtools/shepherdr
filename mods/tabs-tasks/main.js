@@ -1,3 +1,4 @@
+import { watchTerminalClipboard } from './workspace-store.js';
 import { watchBrowserTabs } from "./workspace-browser.js";
 import { View, div, svg, image } from "gpui-kit";
 import { h_flex } from "gpui-base";
@@ -31,6 +32,7 @@ function find(node, id) {
 
 export default class Tabs extends View {
   init(_props, cx) {
+    watchTerminalClipboard(cx,e=>toast({title:"Clipboard action failed",body:plainError(e),level:"error"}));
     watchBrowserTabs(cx, e => toast({ title: "Browser did not open", body: plainError(e), level: "error" }));
     watchFeatures(cx, e => toast({ title: "Feature did not open", body: plainError(e), level: "error" }));
     watchSessionHistory(cx, e => toast({ title: "Session did not open", body: plainError(e), level: "error" }));

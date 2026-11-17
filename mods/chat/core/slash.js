@@ -15,10 +15,10 @@ export const CLAUDE = [
   ["usage", "Show plan usage"],
 ];
 export const CODEX = [
-  ["model", "Choose the model and effort"], ["approvals", "Choose what runs without asking"], ["review", "Review changes"],
+  ["model", "Choose the model and effort"], ["skills", "List your available skills"], ["approvals", "Choose what runs without asking"], ["review", "Review changes"],
   ["new", "Start a new conversation"], ["init", "Write an AGENTS.md for this project"], ["compact", "Summarize the conversation to free context"],
   ["diff", "Show the git diff"], ["mention", "Mention a file"], ["status", "Show session settings and usage"],
-  ["skills", "List your available skills"], ["mcp", "List MCP tools"], ["resume", "Resume another conversation"], ["fork", "Fork this conversation"],
+  ["mcp", "List MCP tools"], ["resume", "Resume another conversation"], ["fork", "Fork this conversation"],
   ["logout", "Sign out"], ["quit", "Exit Codex"],
 ];
 // Commands that open a menu in the CLI when given no arguments.

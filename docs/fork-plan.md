@@ -80,7 +80,7 @@ implementation. Named Feature records also retain Claude sessions captured by a 
 
 The current development branch adds independent Feature Assistants with stable IDs,
 shared Worker/Reviewer settings, per-feature task ownership and the space
-Assistant's Codex account. It also adds persistent per-space browser pages, web-chat
+Assistant's Codex account by default, with a selectable Feature role override. It also adds persistent per-space browser pages, web-chat
 shortcuts and **+ → Manage…** for agent/shortcut configuration. These are native
 local-space features; see [the workspace guide](workspace.md) for controls and limits.
 

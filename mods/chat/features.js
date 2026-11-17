@@ -5,12 +5,19 @@ import { readShepherdr, shepherdrFor } from './coordinator.js';
 import { chatLabel, chatPane } from './core/spaces.js';
 import { workspaceCall } from './workspace-store.js';
 export { workspaceCall } from './workspace-store.js';
+export function featureSettings(cfg) {
+ const base=cfg.coordinator??{}, role=cfg.feature;
+ const pick={...base,...(role??{})};
+ // An explicit primary-account choice has no profile key; do not inherit Account 2.
+ if(role&&!Object.prototype.hasOwnProperty.call(role,'profile'))delete pick.profile;
+ return pick;
+}
 export const featureRecords = () => shared('workspace.features') ?? [];
 export function featureRequest(id) { setShared('workspace.feature.request', { id, at: Date.now(), nonce: Math.random() }); }
 export function startFeature(space = spaces().find(s=>s.active), context = '', source = null) {
  if(!space) return;
  if(context) setShared('workspace.feature.request',{create:{space:space.id,folder:shared('workspace.roots')?.[space.id]??space.folder,context,source,autoName:true},at:Date.now(),nonce:Math.random()});
- else openOverlay({mod:'workspace-launchers',kind:'dialog',width:600,height:330,props:{mode:'feature',space:space.id}});
+ else openOverlay({mod:'workspace-launchers',kind:'dialog',width:600,height:340,props:{mode:'feature',space:space.id}});
 }
 async function app(command,args) {
  const r=await exec('herdr-app',['do',command,JSON.stringify(args)]);let out;try{out=JSON.parse(r.stdout);}catch{throw new Error(r.stderr||'Herdr did not answer.');}
@@ -47,9 +54,7 @@ export function watchFeatures(cx,onError) {
   cx.spawn(async cx=>{try{
    let rec;
    if(req.create){
-    const cfg=shepherdrFor(await readShepherdr(),req.create.space),base=cfg.coordinator??{},pick={...base,...(cfg.feature??{})};
-    // One signed-in account per space; feature role still controls model/thinking/permissions.
-    if(base.agent==='codex'&&pick.agent==='codex'){if(base.profile)pick.profile=base.profile;else delete pick.profile;}
+    const cfg=shepherdrFor(await readShepherdr(),req.create.space),pick=featureSettings(cfg);
     rec=await workspaceCall('feature-create',{...req.create,settings:pick});
    }else rec=await workspaceCall('feature-get',{id:req.id});
    await openFeature(rec);await refresh();

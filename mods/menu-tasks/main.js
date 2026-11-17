@@ -1,3 +1,4 @@
+import { requestTerminalClipboard } from './workspace-store.js';
 // Context menus (Herdr's items). Opened as a popup with
 // props { tab: "pane" | "tab" | "space" | "global", target }.
 // ↑/↓ move, Enter runs, Esc closes. An item is [label, command, args];
@@ -146,6 +147,10 @@ export default class Menu extends View {
   choose(i, cx) {
     const it = items(props(), this.git, this.known)[i];
     if (!it || it[1] === "clipboard.disabled") return;
+    if (["terminal.copy","terminal.paste","terminal.select_all"].includes(it[1])) {
+      requestTerminalClipboard(it[1],{...props()?.target,terminal:it[2].terminal});
+      closeOverlay(props()?.overlay);return;
+    }
     closeOverlay(props()?.overlay);
     if (it[1].startsWith("coordinator.") || it[1] === "tab.close") this.agentAction(it[1], it[2]);
     // Our dialogs (the app's one footer), not Herdr's prompt and confirm.

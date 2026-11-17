@@ -31,7 +31,7 @@ import { measuredHeight, viewportScroll, hoverMessage, measureOrder, pendingMark
 
 import { View, div, svg, image } from "gpui-kit";
 import { v_flex, h_flex, TextareaState, Textarea, Scrollbar, VirtualListScrollHandle, TextView, v_virtual_list, InputState, Input } from "gpui-base";
-import { focused, props, run, theme, home, hc, exec, shared, setShared, watchFolder, window, settings, playSound, notify, appHome, readTextFile, writeTextFile, nextCommand, openOverlay, knownAgents, machines, layout } from "herdr";
+import { focused, props, run, theme, home, hc, exec, shared, setShared, watchFolder, window as appWindow, settings, playSound, notify, appHome, readTextFile, writeTextFile, nextCommand, openOverlay, knownAgents, machines, layout } from "herdr";
 import { agents, panes, terminals, spaces, inRender } from "./live.js";
 import { chatPane, chatLabel } from "./core/spaces.js";
 import * as fs from "fs/promises";
@@ -780,7 +780,7 @@ export default class Chat extends View {
     // A thread's worker alerts from its own tab's chat or the Inbox, not twice.
     if (this.thread || this.companion) return;
     const mine = this.myPane();
-    const looking = Boolean(mine) && focused()?.pane === mine && window()?.active;
+    const looking = Boolean(mine) && focused()?.pane === mine && appWindow()?.active;
     const k = terminals().find((x) => x.address === this.addr);
     if (assistant(k) && !notifies(k, "need")) return;
     if (settings()?.sounds?.enabled !== false) playSound("blocked");
@@ -1005,7 +1005,7 @@ export default class Chat extends View {
     if (card.addr === this.addr && assistant(k) && !notifies(k, "need")) return;
     if (settings()?.sounds?.enabled !== false) playSound("blocked");
     const mine = this.myPane();
-    if (Boolean(mine) && focused()?.pane === mine && window()?.active) return;
+    if (Boolean(mine) && focused()?.pane === mine && appWindow()?.active) return;
     const tab = mine && panes().find((p) => p.pane === mine)?.tab;
     toast({ title: `${task?.ref ?? toastWho(k)} · Needs you`, body: `${card.cli} is waiting on its start screen.`, level: "alert",
       action: tab ? { name: "tab.select", args: { id: tab } } : undefined });
@@ -2472,7 +2472,8 @@ export default class Chat extends View {
     // Capture it through the native copy handler before either happens; restore a prior text clipboard.
     const before=cx.read_from_clipboard();
     if(typeof before!=='string'){open(null);return;} // Preserve images and other formats the SDK cannot restore.
-    window.dispatch_action('shell_root::Copy');
+    try { window.dispatch_action('shell_root::Copy'); }
+    catch { open(null); return; } // Keep the menu usable if native selection copy is unavailable.
     cx.timer.after(30,cx=>{const selected=cx.read_from_clipboard();if(typeof before==='string')cx.write_to_clipboard(before);open(selected??'');});
   }
 
@@ -4183,7 +4184,7 @@ export default class Chat extends View {
   // here: the web app plays it.
   openVideo(path) {
     if (this.machine || !path) { toast({ title: "It's on another machine", body: "Open this chat in the web app to see it.", level: "info" }); return; }
-    const os = window()?.platform;
+    const os = appWindow()?.platform;
     (os === "macos" ? exec("open", [path]) : os === "windows" ? exec("cmd", ["/c", "start", "", path]) : exec("xdg-open", [path])).catch(() => {});
   }
 
@@ -4492,7 +4493,7 @@ export default class Chat extends View {
     const st = k?.status ?? null;
     const mine = this.myPane();
     const parked = Boolean(k) && !panes().some((p) => p.terminal === this.addr);
-    const looking = Boolean(mine) && focused()?.pane === mine && window()?.active;
+    const looking = Boolean(mine) && focused()?.pane === mine && appWindow()?.active;
     if (parked && looking && st === "done") {
       const seen = shared("chat.seen") ?? {};
       if (seen[this.addr] !== k.turn) setShared("chat.seen", { ...seen, [this.addr]: k.turn });

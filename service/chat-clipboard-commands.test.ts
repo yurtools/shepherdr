@@ -43,7 +43,13 @@ test('Skills in the slash menu opens the picker directly without sending a slash
 test('choosing a /$ suggestion inserts a normal $skill reference',()=>{
  const v:any=new Picking();let value='/$pers';v.box={value:()=>value,set_value:(s:string)=>{value=s},focus(){}};v.pick({name:'persistent-context',skill:true},{notify(){}});expect(value).toBe('$persistent-context ');
 });
-const MenuHost=new Function('openOverlay',`return class { ${method('clipboardMenu')} }`);
+// Bind the actual herdr window import as the native module does. An extracted
+// method with only a global-window mock previously hid this name collision.
+const imported=source.match(/import \{([^\n]+)\} from "herdr";/)?.[1].split(',').map(x=>x.trim()).find(x=>/^window(?:\s+as\s+\w+)?$/.test(x));
+if(!imported)throw Error('The chat must bind Herdr window state explicitly');
+const stateBinding=imported.split(/\s+as\s+/)[1]??'window';
+const MenuClass=new Function('openOverlay',stateBinding,`return class { ${method('clipboardMenu')} }`);
+const MenuHost=(open:any)=>MenuClass(open,()=>({active:true,platform:'linux'}));
 test('right-click captures reply selection before the popup clears native selection and restores the previous text clipboard',()=>{
  let clipboard='previous clipboard',popup:any;
  (globalThis as any).window={dispatch_action:(action:string)=>{expect(action).toBe('shell_root::Copy');clipboard='only the selected words'}};
@@ -56,4 +62,11 @@ test('opening a reply menu leaves non-text clipboard data untouched',()=>{
  let copied=false,popup:any;(globalThis as any).window={dispatch_action:()=>{copied=true}};
  const Host=MenuHost((args:any)=>{popup=args});const v:any=new Host();v.pickKey=()=> 'pane';v.box={value:()=>'',selected_range:()=>({start:0,end:0})};
  v.clipboardMenu('reply',{position:{x:1,y:2}},{stop_propagation(){},read_from_clipboard:()=>undefined},'reply');expect(copied).toBe(false);expect(popup.props.selected).toBe(null);
+});
+
+test('native copy-dispatch failures still open the reply menu without changing the clipboard',()=>{
+ let popup:any;let writes=0;(globalThis as any).window={dispatch_action:()=>{throw Error('copy unavailable')}};
+ const Host=MenuHost((args:any)=>{popup=args});const v:any=new Host();v.pickKey=()=> 'pane';v.box={value:()=>'',selected_range:()=>({start:0,end:0})};
+ v.clipboardMenu('reply',{position:{x:2,y:3}},{stop_propagation(){},read_from_clipboard:()=> 'previous text',write_to_clipboard:()=>writes++},'full reply');
+ expect(popup.props.selected).toBe(null);expect(popup.props.text).toBe('full reply');expect(writes).toBe(0);
 });

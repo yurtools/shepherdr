@@ -18,7 +18,7 @@ import { tabName } from "./core/menus.js";
 import { inRender } from "./live.js";
 import { dirsReady } from "./dirs.js";
 import { watchCompanions } from "./companions.js";
-import { watchFeatures } from "./features.js";
+import { watchFeatures, startFeature } from "./features.js";
 import { watchSessionHistory, openHistory } from "./session-history.js";
 
 function find(node, id) {
@@ -71,6 +71,7 @@ export default class Tabs extends View {
         cmd = null;
         const tab = spaces().find(s => s.active)?.tabs.find(t => t.active);
         if (c === "sessions") openHistory();
+        if (c === "feature") startFeature();
         if (c === "close" && tab) closeTab(tab.id);
         // F2 / Shift+F2 (keys.json): our Rename dialogs for the shown tab and space.
         if (c === "rename-tab" && tab) renameTab(tab);

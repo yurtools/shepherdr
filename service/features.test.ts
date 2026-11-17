@@ -4,10 +4,10 @@ import {fakeGpuiKit,fakeGpuiBase} from './fake-gpui';
 mock.module('gpui-kit',()=>fakeGpuiKit());mock.module('gpui-base',()=>fakeGpuiBase());
 let calls:any[],ps:any[],ts:any[],ss:any[],state:Map<string,any>;
 mock.module('herdr',()=>fakeHerdr({appHome:()=>'/app',home:()=>'/person',spaces:()=>ss,panes:()=>ps,terminals:()=>ts,
- shared:(k:string)=>state.get(k),setShared:(k:string,v:any)=>state.set(k,v),run:(cmd:string,args:any)=>calls.push([cmd,args]),
+ shared:(k:string)=>state.get(k),setShared:(k:string,v:any)=>state.set(k,v),run:(cmd:string,args:any)=>calls.push([cmd,args]),openOverlay:(spec:any)=>calls.push(['overlay',spec]),
  hc:async(args:any)=>{calls.push(['hc',args]);return {code:0,stdout:'{}'}},
  exec:async(bin:string,args:string[])=>{calls.push([bin,args]);return {code:0,stdout:bin==='herdr-app'?'{"tab":"feature-tab","pane":"feature-pane"}':'{}',stderr:''};}}));
-const {openFeature,featureSettings}=await import('../mods/workspace-launchers/features.js');
+const {openFeature,featureSettings,startFeature}=await import('../mods/workspace-launchers/features.js');
 beforeEach(()=>{calls=[];ps=[];ts=[];ss=[{id:'space',tabs:[]}];state=new Map();});
 const record:any={id:'stable-feature',space:'space',name:'Browser tabs',folder:'/repo',settings:{agent:'codex',profile:'account-two'},session:'saved-id',home:'/account-two',argv:['env','CODEX_HOME=/account-two','codex']};
 test('a feature opens with its persistent identity, original account and resumable record',async()=>{
@@ -35,4 +35,8 @@ test('Feature Assistant account choices override the Assistant account, includin
  expect(featureSettings({coordinator:base})).toEqual(base);
  expect(featureSettings({coordinator:base,feature:{agent:'codex',model:'other'}})).toEqual({agent:'codex',model:'other'});
  expect(featureSettings({coordinator:{agent:'codex'},feature:base}).profile).toBe('codex-account-2');
+});
+
+test('Start feature uses a compact form instead of the launcher-manager dimensions',()=>{
+ startFeature(ss[0]);expect(calls).toContainEqual(['overlay',expect.objectContaining({mod:'workspace-launchers',kind:'dialog',frame:'none',width:460,height:240,props:{mode:'feature',space:'space'}})]);
 });

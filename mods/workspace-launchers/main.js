@@ -3,19 +3,22 @@ import { View, div, svg, image } from 'gpui-kit';
 import { h_flex, v_flex, Input, InputState } from 'gpui-base';
 import { props, theme, closeOverlay, knownAgents, shared, setShared, spaces } from 'herdr';
 import { workspaceCall } from './features.js';
-import { button, segmented, plainError } from './ui.js';
+import { button, segmented, plainError, dialogFooter } from './ui.js';
 import { keepKeys, dropKeys } from './keyholder.js';
 const LABELS={id:'Launcher ID',name:'Name',command:'Launch command',icon:'Icon path',url:'Website URL',profile:'Browser profile'};
 const HELP={id:'A stable ID used in programs.json.',command:'Executable and arguments. Keep an account wrapper to retain its separate login.',icon:'SVG or image path, relative to Herdr’s app folder or absolute.',profile:'Same profile shares a login within a space. Use shared:name to share across spaces.'};
 export default class Launchers extends View {
  init(_props,cx) {
-  this.mode=props()?.mode??'manage';this.tab='agents';this.fields={};this.rows=[];this.loading=true;this.catalog={chats:[],hidden_agents:[]};
+  this.mode=_props?.mode??props()?.mode??'manage';this.space=_props?.space??props()?.space;this.tab='agents';this.fields={};this.rows=[];this.loading=true;this.catalog={chats:[],hidden_agents:[]};
   for(const k of Object.keys(LABELS)){
-   this.fields[k]=InputState.new({placeholder:{url:'https://chatgpt.com/',profile:'default',command:'codex --no-daemon',icon:'icons/codex.svg'}[k]??''});
+   this.fields[k]=InputState.new({placeholder:{name:this.mode==='feature'?'e.g. OpenAI knowledge bases':'',url:'https://chatgpt.com/',profile:'default',command:'codex --no-daemon',icon:'icons/codex.svg'}[k]??''});
    this.fields[k].on('change',(_e,cx)=>cx.notify());
   }
   this.handle=cx.focus_handle();this.handle.focus();this.holder=`dialog:launchers:${props()?.overlay}`;keepKeys(this.holder);
-  cx.timer.every(1500,()=>keepKeys(this.holder));this.load(cx);
+  cx.timer.every(1500,()=>keepKeys(this.holder));
+  if(this.mode==='manage')this.load(cx);
+  else{this.loading=false;cx.timer.after(0,()=>this.fields[this.mode==='browser'?'url':'name'].focus());}
+  if(this.mode==='feature')this.fields.name.on('submit',(_e,cx)=>this.save(cx));
  }
  load(cx){this.loading=true;cx.spawn(async cx=>{try{
   this.catalog=await workspaceCall('catalog');
@@ -23,20 +26,22 @@ export default class Launchers extends View {
   this.rows=launcherAgents(known,this.catalog);if(this.selected===undefined)this.select(this.rows[0]??null);this.error=null;
  }catch(e){this.error=plainError(e);}finally{this.loading=false;cx.notify();}});}
  select(row){this.selected=row?.id??row?.key??null;for(const k of Object.keys(this.fields))this.fields[k].set_value(k==='command'?(row?.run??[]).map(x=>/^[\w@%+=:,./-]+$/.test(x)?x:JSON.stringify(x)).join(' '):row?.[k]??(k==='id'?row?.key??'':''));}
- save(cx){if(this.busy)return;this.busy=true;cx.spawn(async cx=>{try{
-  const value=Object.fromEntries(Object.entries(this.fields).map(([k,v])=>[k,v.value()]));
+ save(cx){if(this.busy)return;
   if(this.mode==='feature'){
-   if(!value.name.trim())throw new Error('Enter a feature name.');
-   const space=spaces().find(s=>s.id===props()?.space);if(!space)throw new Error('Choose a space.');
-   setShared('workspace.feature.request',{create:{name:value.name.trim(),space:space.id,folder:shared('workspace.roots')?.[space.id]??space.folder},at:Date.now(),nonce:Math.random()});closeOverlay(props().overlay);return;
+   const name=this.fields.name.value().trim(),space=spaces().find(s=>s.id===this.space);
+   if(!name||!space){this.error=!name?'Enter a feature name.':'Choose a space.';cx.notify();return;}
+   setShared('workspace.feature.request',{create:{name,space:space.id,folder:shared('workspace.roots')?.[space.id]??space.folder},at:Date.now(),nonce:Math.random()});
+   closeOverlay(props().overlay);return;
   }
+  this.busy=true;cx.spawn(async cx=>{try{
+  const value=Object.fromEntries(Object.entries(this.fields).map(([k,v])=>[k,v.value()]));
   if(this.mode==='browser'){
    setShared('workspace.browser.request',{url:value.url,name:value.name||'Browser',profile:value.profile||'default',space:spaces().find(s=>s.active)?.id,at:Date.now(),nonce:Math.random()});closeOverlay(props().overlay);return;
   }
   await workspaceCall(this.tab==='agents'?'save-agent':'save-chat',value);this.select(null);this.load(cx);this.error=null;
  }catch(e){this.error=plainError(e);}finally{this.busy=false;cx.notify();}});}
  remove(cx){if(!this.selected)return;cx.spawn(async cx=>{try{await workspaceCall(this.tab==='agents'?'remove-agent':'remove-chat',{id:this.selected});this.select(null);this.load(cx);}catch(e){this.error=plainError(e);}cx.notify();});}
- field(k,t){return v_flex().gap(5).w_full().child(div().text_size(12).font_medium().child(LABELS[k]))
+ field(k,t,label=LABELS[k]){return v_flex().gap(5).w_full().child(div().text_size(12).font_medium().child(label))
   .child(div().rounded(6).border_1().border_color(t.border).px(9).py(7).bg(t.background).child(Input.new(this.fields[k]).w_full().text_size(13)))
   .when(Boolean(HELP[k]),el=>el.child(div().text_size(11).text_color(t.dim).child(HELP[k])));}
  icon(path,t,size=20,tint=false){return path?(tint?svg(path).size(size).text_color(t.foreground):image(path).size(size)):svg('icons/shell.svg').size(size).text_color(t.dim);}
@@ -66,7 +71,19 @@ export default class Launchers extends View {
      .child(div().size(58).rounded(8).border_1().border_color(t.border).flex().items_center().justify_center().child(this.icon(this.fields.icon.value(),t,28,this.rows.find(row=>row.key===this.selected)?.tint))))))
   .when(this.tab==='chats',el=>el.child(this.field('url',t)).child(this.field('profile',t)));
  }
+ featureForm(t,cx){
+  const space=spaces().find(s=>s.id===this.space);
+  return v_flex().id('new-feature-dialog').track_focus(this.handle).size_full().min_h(0).p(20).gap(12).bg(t.popover).text_color(t.foreground)
+   .on_key_down(e=>{if(e.key==='escape')closeOverlay(props().overlay);})
+   .child(div().flex_none().text_size(18).font_semibold().child('New feature'))
+   .child(div().flex_none().truncate().text_size(12).text_color(t.dim).child(space?.name?`In ${space.name}`:'Start a separate feature conversation.'))
+   .child(this.field('name',t,'Feature name').flex_none())
+   .when(Boolean(this.error),el=>el.child(div().text_size(12).text_color(t.blocked).child(this.error)))
+   .child(div().flex_1().min_h(0))
+   .child(dialogFooter({onCancel:()=>closeOverlay(props().overlay),primary:{id:'feature-create',label:'Create feature',disabled:!this.fields.name.value().trim()||!space,onClick:(_e,cx)=>this.save(cx)}}));
+ }
  render(cx){const t=theme(),simple=this.mode!=='manage';
+  if(this.mode==='feature')return this.featureForm(t,cx);
   return v_flex().id('workspace-launchers').track_focus(this.handle).size_full().min_h(0).p(20).gap(16).bg(t.popover).text_color(t.foreground)
    .on_key_down(e=>{if(e.key==='escape')closeOverlay(props().overlay);})
    .child(h_flex().items_center().child(div().flex_1().text_size(18).font_semibold().child(this.mode==='feature'?'Start feature':this.mode==='browser'?'New browser tab':'Manage launchers'))

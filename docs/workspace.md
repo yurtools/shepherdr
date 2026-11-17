@@ -29,8 +29,9 @@ A space keeps its main Assistant for discussion and coordination. Each named
 feature has an independent Feature Assistant that can start and supervise workers.
 Both use the shared Worker, Reviewer, review, worktree and task settings.
 
-- **+ → Start feature…** asks for a name and opens its conversation. Its agent
-  starts with your first message.
+- **+ → Start feature…** opens a compact form with a **Feature name** field.
+  Press Enter or **Create feature** to open its conversation. Its agent starts
+  with your first message.
 - The flag beside a reply's Fork action starts a feature with the chosen reply
   as its objective and bounded supporting context up to that point. It starts
   the feature agent, which generates its title using the normal signed-in CLI;

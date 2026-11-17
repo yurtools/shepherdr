@@ -20,7 +20,10 @@ The feature groups below are ordered by importance to the user's workflow.
   launchers, stable rendering/reconnects, and a normal-browser verification fallback.
 - Reliability: worker Chat and task resume indexing select the main Codex rollout
   rather than guardian logs; large incoming messages fold and render in bounded
-  batches; Feature activity includes its running workers.
+  batches; Feature activity includes its running workers. Approval handoff races no
+  longer create false unreadable-request cards, and fallback text is agent-neutral.
+  Reply menus use Copy message with a keyboard hint for selections; opening the
+  menu leaves the clipboard untouched and its text snapshots stay local to Chat.
 
 The entries below are retained upstream Shepherdr release history.
 

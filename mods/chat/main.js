@@ -67,6 +67,8 @@ import { Dictation, BUN_PATH, warmAudio } from "./dictate.js";
 
 // Writing down after Done this long says it's taking longer than usual (SHEP-63).
 const DICT_SLOW = 5000;
+const UNREAD_APPROVAL = "Approval request details unavailable";
+const approvalTitle = title => title === "Claude asks for something the chat can't read" ? UNREAD_APPROVAL : title;
 import { PanelHost, inner, openTaskThread, backToTasks, requestWorkerTerminal, THREAD, STACK as TASKS_STACK, BODY as THREAD_BODY, CHAT as THREAD_CHAT, TERM as THREAD_TERM, PR as THREAD_PR, BROWSER as THREAD_BROWSER } from "./panel.js";
 import { markRead, onScreen, unread } from "./unread.js";
 import { notifies } from "./notify.js";
@@ -729,10 +731,10 @@ export default class Chat extends View {
     for (const a of this.asks.filter((a) => !reqs.has(a.id))) this.askEnded(a, ends.get(a.id) || "No longer waiting");
     let added = false;
     for (const [id, text] of reqs) {
-      if (kept.some((a) => a.id === id)) continue;
+      if (kept.some((a) => a.id === id) || !text.trim()) continue;
       let req = null;
       try { req = JSON.parse(text); } catch {}
-      const w = req ? words(req) : { kind: "permission", title: "Claude asks for something the chat can't read", detail: "", unread: true };
+      const w = req ? words(req) : { kind: "permission", title: UNREAD_APPROVAL, detail: "", unread: true };
       kept.push({ id, req, words: w, machine });
       added = true;
     }
@@ -760,10 +762,13 @@ export default class Chat extends View {
     for (const id of ids) {
       if (kept.some((a) => a.id === id)) continue;
       const text = await readTextFile(`${this.askDir}/req/${id}.json`).catch(() => null);
+      // Auto-review can hand off and remove the request after it was listed.
+      // A missing request is already closed, not an unreadable new approval.
+      if (text === null) continue;
       let req = null;
       try { req = JSON.parse(text ?? ""); } catch {}
       // Unreadable here: it can only be allowed in the terminal.
-      const w = req ? words(req) : { kind: "permission", title: "Claude asks for something the chat can't read", detail: "", unread: true };
+      const w = req ? words(req) : { kind: "permission", title: UNREAD_APPROVAL, detail: "", unread: true };
       kept.push({ id, req, words: w });
       added = true;
     }
@@ -802,7 +807,7 @@ export default class Chat extends View {
   loadAskEnds() {
     if (this.askEndsOf === this.addr) return;
     this.askEndsOf = this.addr;
-    try { this.askEnds = JSON.parse(localStorage.getItem(`askends:${this.addr}`) ?? "[]") ?? []; } catch { this.askEnds = []; }
+    try { this.askEnds = (JSON.parse(localStorage.getItem(`askends:${this.addr}`) ?? "[]") ?? []).map(e => ({...e, title: approvalTitle(e.title)})); } catch { this.askEnds = []; }
   }
 
   // The card's answer goes to the waiting hook; it prints it as Claude's decision.
@@ -858,10 +863,12 @@ export default class Chat extends View {
         }
         for (const a of unread) {
           const x = by.get(a.terminal);
-          let req = null;
-          try { req = JSON.parse((await readTextFile(`${this.askDir}/req/${a.id}.json`).catch(() => null)) ?? ""); } catch {}
-          const w = req ? words(req) : { kind: "permission", title: "Claude asks for something the chat can't read", detail: "", unread: true };
+          const text = await readTextFile(`${this.askDir}/req/${a.id}.json`).catch(() => null);
           this.readingAsks.delete(a.id);
+          if (text === null) continue;
+          let req = null;
+          try { req = JSON.parse(text); } catch {}
+          const w = req ? words(req) : { kind: "permission", title: UNREAD_APPROVAL, detail: "", unread: true };
           if ((shared("inbox.asks") ?? []).some((b) => b.id === a.id)) this.shownAsks.set(a.id, { id: a.id, terminal: a.terminal, req, words: w, ref: x.ref, title: x.title, at: Date.now() });
         }
         cx.notify();
@@ -2462,25 +2469,35 @@ export default class Chat extends View {
     startFeature(space,`Feature objective from the chosen message:\n${row.text??""}\n\nSupporting context up to that message:\n${context}`,{session:agent.sessionOf(this.kind,this.path),message:row.of??row.id});
   }
 
+  clipboardText(row) {
+    const message=this.conv?.items?.find(x=>x.id===(row?.blk??row?.id));
+    return message?.text??row?.text??row?.code??row?.bar?.text??'';
+  }
+
   clipboardMenu(kind,e,cx,text='') {
     cx.stop_propagation(); this.pressMoved=kind!=='input';
-    const at={x:e.position.x,y:e.position.y};
-    const open=(selected)=>openOverlay({mod:'workspace-clipboard',kind:'popup',width:220,height:kind==='input'?140:172,at,
-      props:{key:this.pickKey()??this.areaKey(),kind,text,selected,value:this.box.value(),range:this.box.selected_range()}});
-    if(kind==='input'){open(null);return;}
-    // The popup takes focus and a menu press clears native TextView selection.
-    // Capture it through the native copy handler before either happens; restore a prior text clipboard.
-    const before=cx.read_from_clipboard();
-    if(typeof before!=='string'){open(null);return;} // Preserve images and other formats the SDK cannot restore.
-    try { window.dispatch_action('shell_root::Copy'); }
-    catch { open(null); return; } // Keep the menu usable if native selection copy is unavailable.
-    cx.timer.after(30,cx=>{const selected=cx.read_from_clipboard();if(typeof before==='string')cx.write_to_clipboard(before);open(selected??'');});
+    const range=this.box.selected_range();
+    const request=`${Date.now()}-${Math.random()}`;
+    // Text and selection stay in this view, never in persisted shared state.
+    this.clipboardPending={request,kind,text,value:this.box.value(),range};
+    setShared('workspace.clipboard.request',null);
+    openOverlay({mod:'workspace-clipboard',kind:'popup',frame:'none',width:230,height:kind==='input'?140:76,
+      at:{x:e.position.x,y:e.position.y},props:{target:this.pickKey()??this.areaKey(),request,kind,
+        canCopy:Boolean(range&&range.start!==range.end),canMessage:Boolean(text),
+        copyKey:appWindow()?.platform==='macos'?'Cmd+C':'Ctrl+C'}});
+  }
+
+  takeClipboardRequest(req,cx) {
+    const pending=this.clipboardPending;
+    if(!pending||req?.request!==pending.request||req.target!==(this.pickKey()??this.areaKey())||Date.now()-req.at>5000)return;
+    this.clipboardPending=null;
+    this.clipboardAction({...pending,action:req.action},cx);
+    cx.notify();
   }
 
   clipboardAction(req,cx) {
     if(req.kind!=='input') {
       if(req.action==='message')cx.write_to_clipboard(req.text);
-      else if(req.action==='copy'&&typeof req.selected==='string')cx.write_to_clipboard(req.selected);
       return;
     }
     if(req.value!==this.box.value()){toast({title:'Text changed',body:'Open the clipboard menu again.'});return;}
@@ -4616,7 +4633,7 @@ export default class Chat extends View {
     const link=shared('workspace.chat-link');
     if(link?.key===(this.pickKey()??this.areaKey())&&link.nonce!==this.chatLinkNonce&&Date.now()-link.at<5000){this.chatLinkNonce=link.nonce;cx.timer.after(0,cx=>this.openChatLink(link.href,cx));}
     const clip=shared("workspace.clipboard.request");
-    if(clip?.key===(this.pickKey()??this.areaKey())&&clip.nonce!==this.clipboardNonce&&Date.now()-clip.at<5000){this.clipboardNonce=clip.nonce;cx.timer.after(30,cx=>this.clipboardAction(clip,cx));}
+    if(clip?.target===(this.pickKey()??this.areaKey())&&clip.nonce!==this.clipboardNonce&&Date.now()-clip.at<5000){this.clipboardNonce=clip.nonce;cx.timer.after(30,cx=>this.takeClipboardRequest(clip,cx));}
     // The pane getting focus (opened, clicked, gone to) puts the keyboard in the message box.
     const mine = this.myPane();
     const paneFocused = Boolean(mine && focused()?.pane === mine);
@@ -4875,7 +4892,7 @@ export default class Chat extends View {
           });
         })
           .track_scroll(this.scroll).size_full()
-          .on_item_secondary_click((key,e,cx)=>{const row=rows.find(r=>r.id===key);this.clipboardMenu("reply",e,cx,row?.text??row?.code??"");})
+          .on_item_secondary_click((key,e,cx)=>{const row=rows.find(r=>r.id===key);this.clipboardMenu("reply",e,cx,this.clipboardText(row));})
           .on_item_click((key, cx) => this.clickRow(key, rows, cx, sizes)))
         .child(Scrollbar.vertical("chat-rows").absolute().inset_0())
         .child(this.measurer(rows, keys, t))

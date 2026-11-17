@@ -1,5 +1,6 @@
 import {afterEach,expect,test} from 'bun:test';
 import {readFileSync} from 'node:fs';
+import {element} from './fake-gpui';
 const source=readFileSync(new URL('../mods/chat/main.js',import.meta.url),'utf8');
 function method(name:string){const a=source.indexOf(`  ${name}(`);return source.slice(a,source.indexOf('\n  }',a)+4);}
 const originalWindow=(globalThis as any).window;
@@ -17,8 +18,8 @@ test('a stale clipboard menu does not delete a changed draft',()=>{
 test('Paste inserts clipboard text into the captured selection, retaining newlines and one undoable replacement',()=>{
  const v=view('hello world');v.clipboardAction({kind:'input',action:'paste',value:'hello world',range:{start:6,end:11}},{read_from_clipboard:()=> 'two\nlines'});expect(v.box.value()).toBe('hello two\nlines');
 });
-test('reply Copy uses the captured selection after the popup has taken focus',()=>{
- const v=view('unsent draft');let copied='';v.clipboardAction({kind:'reply',action:'copy',selected:'selected reply text'},{write_to_clipboard:(s:string)=>{copied=s}});expect(copied).toBe('selected reply text');expect(v.box.value()).toBe('unsent draft');
+test('Copy message copies the reply rather than the composer draft',()=>{
+ const v=view('unsent draft');let copied='';v.clipboardAction({kind:'reply',action:'message',text:'complete reply'},{write_to_clipboard:(s:string)=>{copied=s}});expect(copied).toBe('complete reply');expect(v.box.value()).toBe('unsent draft');
 });
 
 const Delivery=new Function('slash',`return class { ${method('deliver')} }`)({});
@@ -43,30 +44,55 @@ test('Skills in the slash menu opens the picker directly without sending a slash
 test('choosing a /$ suggestion inserts a normal $skill reference',()=>{
  const v:any=new Picking();let value='/$pers';v.box={value:()=>value,set_value:(s:string)=>{value=s},focus(){}};v.pick({name:'persistent-context',skill:true},{notify(){}});expect(value).toBe('$persistent-context ');
 });
-// Bind the actual herdr window import as the native module does. An extracted
-// method with only a global-window mock previously hid this name collision.
-const imported=source.match(/import \{([^\n]+)\} from "herdr";/)?.[1].split(',').map(x=>x.trim()).find(x=>/^window(?:\s+as\s+\w+)?$/.test(x));
-if(!imported)throw Error('The chat must bind Herdr window state explicitly');
-const stateBinding=imported.split(/\s+as\s+/)[1]??'window';
-const MenuClass=new Function('openOverlay',stateBinding,`return class { ${method('clipboardMenu')} }`);
-const MenuHost=(open:any)=>MenuClass(open,()=>({active:true,platform:'linux'}));
-test('right-click captures reply selection before the popup clears native selection and restores the previous text clipboard',()=>{
- let clipboard='previous clipboard',popup:any;
- (globalThis as any).window={dispatch_action:(action:string)=>{expect(action).toBe('shell_root::Copy');clipboard='only the selected words'}};
- const Host=MenuHost((args:any)=>{popup=args;});const v:any=new Host();v.pickKey=()=> 'pane';v.box={value:()=> 'draft',selected_range:()=>({start:0,end:0})};
- v.clipboardMenu('reply',{position:{x:10,y:20}},{stop_propagation(){},read_from_clipboard:()=>clipboard,write_to_clipboard:(s:string)=>{clipboard=s},timer:{after:(_n:number,fn:any)=>fn({read_from_clipboard:()=>clipboard,write_to_clipboard:(s:string)=>{clipboard=s}})}},'the full reply');
- expect(popup.props.selected).toBe('only the selected words');expect(popup.props.text).toBe('the full reply');expect(clipboard).toBe('previous clipboard');
+// The native SDK dispatches ShellAction, not Rust's shell_root::Copy. Opening
+// a menu must never pretend that the existing clipboard is a reply selection.
+const menuSource=readFileSync(new URL('../mods/workspace-clipboard/main.js',import.meta.url),'utf8');
+const choose=menuSource.match(/ choose\(action\)\{[^\n]+\}/)![0];
+const MenuClass=new Function('props','setShared','closeOverlay',`return class { ${choose} }`);
+const Pending=new Function('openOverlay','appWindow','setShared',`return class { ${method('clipboardMenu')} ${method('takeClipboardRequest')} }`);
+function menuHost(range={start:0,end:0}){
+ let popup:any,request:any,closed:any;const Host=Pending((p:any)=>{popup=p},()=>({platform:'linux'}),(_k:string,v:any)=>{request=v});
+ const v:any=new Host();v.pickKey=()=> 'pane';v.box={value:()=> 'unsent draft',selected_range:()=>range};
+ return {v,get popup(){return popup},get request(){return request},get closed(){return closed},choose(action:string){const Menu=MenuClass(()=>popup.props,(_k:string,r:any)=>{request=r},(id:string)=>{closed=id});new Menu().choose(action)}};
+}
+test('opening a reply menu never dispatches a fake native copy or reads/replaces clipboard data',()=>{
+ let dispatched=0;(globalThis as any).window={dispatch_action:()=>{dispatched++}};
+ const h=menuHost();h.v.clipboardMenu('reply',{position:{x:10,y:20}},{stop_propagation(){}},'reply');
+ expect(dispatched).toBe(0);expect(h.popup.height).toBe(76);expect(h.popup.props.canMessage).toBe(true);expect(h.popup.props.copyKey).toBe('Ctrl+C');
+});
+test('the popup and persisted action signal contain no reply, draft, clipboard or selection text',()=>{
+ const h=menuHost({start:0,end:6});h.v.clipboardMenu('input',{position:{x:1,y:2}},{stop_propagation(){}},'private reply');
+ expect(h.popup.props.canCopy).toBe(true);h.choose('copy');
+ for(const data of [h.popup.props,h.request]){expect(JSON.stringify(data)).not.toContain('unsent draft');expect(JSON.stringify(data)).not.toContain('private reply');expect(data.range).toBeUndefined();expect(data.value).toBeUndefined();expect(data.selected).toBeUndefined();}
+});
+test('menu Copy message reaches its original chat once, using only its local snapshot',()=>{
+ const h=menuHost();h.v.clipboardMenu('reply',{position:{x:1,y:2}},{stop_propagation(){}},'exact reply');h.choose('message');
+ const actions:any[]=[];h.v.clipboardAction=(r:any)=>actions.push(r);let notified=0;
+ h.v.takeClipboardRequest(h.request,{notify(){notified++}});h.v.takeClipboardRequest(h.request,{notify(){notified++}});
+ expect(actions).toHaveLength(1);expect(actions[0]).toMatchObject({kind:'reply',action:'message',text:'exact reply'});expect(notified).toBe(1);
+});
+test('a stale menu or another chat cannot apply an action to the current draft',()=>{
+ const h=menuHost();h.v.clipboardMenu('input',{position:{x:1,y:2}},{stop_propagation(){}});h.choose('cut');const old=h.request;
+ h.v.clipboardMenu('input',{position:{x:1,y:2}},{stop_propagation(){}});let applied=0;h.v.clipboardAction=()=>applied++;
+ h.v.takeClipboardRequest(old,{notify(){}});h.choose('cut');h.v.takeClipboardRequest({...h.request,target:'other-pane'},{notify(){}});expect(applied).toBe(0);
+});
+test('a Paste chosen from the menu replaces the original composer selection',()=>{
+ const h=menuHost({start:0,end:6}),input=view('unsent draft');h.v.clipboardAction=input.clipboardAction.bind(input);
+ h.v.clipboardMenu('input',{position:{x:1,y:2}},{stop_propagation(){}});h.choose('paste');
+ h.v.takeClipboardRequest(h.request,{notify(){},read_from_clipboard:()=> 'new'});expect(input.box.value()).toBe('new draft');
 });
 
-test('opening a reply menu leaves non-text clipboard data untouched',()=>{
- let copied=false,popup:any;(globalThis as any).window={dispatch_action:()=>{copied=true}};
- const Host=MenuHost((args:any)=>{popup=args});const v:any=new Host();v.pickKey=()=> 'pane';v.box={value:()=>'',selected_range:()=>({start:0,end:0})};
- v.clipboardMenu('reply',{position:{x:1,y:2}},{stop_propagation(){},read_from_clipboard:()=>undefined},'reply');expect(copied).toBe(false);expect(popup.props.selected).toBe(null);
+test('reply menus offer Copy message and an honest keyboard hint; composer menus retain all edit actions',()=>{
+ const a=menuSource.indexOf(' render(){'),render=menuSource.slice(a,menuSource.indexOf('\n close()',a));let p:any={kind:'reply',canMessage:true,copyKey:'Ctrl+C'},rows:any[]=[];
+ const C=new Function('props','v_flex','theme','closeOverlay','menuRow',`return class { ${render} }`)(()=>p,()=>element('v_flex'),()=>({}),()=>{},(id:string,label:string,options:any)=>{rows.push({id,label,...options});return element('row')});
+ const v:any=new C();v.render();expect(rows.map(r=>r.label)).toEqual(['Copy message','Copy selected text']);expect(rows[0].disabled).toBe(false);expect(rows[1]).toMatchObject({disabled:true,hint:'Ctrl+C'});expect(rows[1].onClick).toBeUndefined();
+ rows=[];p={kind:'input',canCopy:true};v.render();expect(rows.map(r=>r.label)).toEqual(['Cut','Copy','Paste','Select all']);expect(rows.every(r=>!r.disabled&&typeof r.onClick==='function')).toBe(true);
 });
 
-test('native copy-dispatch failures still open the reply menu without changing the clipboard',()=>{
- let popup:any;let writes=0;(globalThis as any).window={dispatch_action:()=>{throw Error('copy unavailable')}};
- const Host=MenuHost((args:any)=>{popup=args});const v:any=new Host();v.pickKey=()=> 'pane';v.box={value:()=>'',selected_range:()=>({start:0,end:0})};
- v.clipboardMenu('reply',{position:{x:2,y:3}},{stop_propagation(){},read_from_clipboard:()=> 'previous text',write_to_clipboard:()=>writes++},'full reply');
- expect(popup.props.selected).toBe(null);expect(popup.props.text).toBe('full reply');expect(writes).toBe(0);
+const ReplyText=new Function(`return class { ${method('clipboardText')} }`)();
+test('Copy message resolves the complete reply when right-clicking a rendered chunk or code block',()=>{
+ const v:any=new ReplyText();v.conv={items:[{id:'reply',text:'Full reply\n```js\nconst x=1;\n```\nEnding'}]};
+ expect(v.clipboardText({id:'reply:1',blk:'reply',text:'one rendered chunk'})).toBe(v.conv.items[0].text);
+ expect(v.clipboardText({id:'reply:c1',blk:'reply',code:'const x=1;'})).toBe(v.conv.items[0].text);
+ expect(v.clipboardText({id:'pending',text:'pending text'})).toBe('pending text');expect(v.clipboardText(undefined)).toBe('');
 });

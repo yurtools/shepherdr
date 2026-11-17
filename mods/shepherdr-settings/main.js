@@ -1,3 +1,5 @@
+import {initFolderEditor,resetFolderEditor,projectFolderEditor} from './project-folder-editor.js';
+import {projectFolder} from './project-folder.js';
 import {initSpaceInstructions,resetSpaceInstructions,flushSpaceInstructions,spaceInstructionButton,spaceInstructionEditor} from './space-instructions.js';
 import { keepKeys, dropKeys } from "./keyholder.js";
 import { approvalsInit, approvalsSection, approvalsFlush } from "./approval-section.js";
@@ -12,7 +14,8 @@ import { approvalsInit, approvalsSection, approvalsFlush } from "./approval-sect
 // row some spaces set their own of says so in one dim line that lists them. Pages that are one for
 // every space (Machines, Window, Web) say so. Machine-only settings are rows under Machines; values
 // a machine set for everything before (the old machine scope) still apply and show there, with Reset.
-// Writes ~/.config/shepherdr/settings.json at once, no Save step (coordinator.js documents the shape;
+// Most settings save at once; Project folder uses an explicit Save folder action.
+// Writes ~/.config/shepherdr/settings.json (coordinator.js documents the shape;
 // herdr-task reads it too). Other machines get their share pushed (pushRemotes) for their
 // herdr-task. Agents use the chat's own model button (settings.js and agent.js from lib/).
 // The window draws its own frame (frame: "none"), most of Herdr's height, at most 900.
@@ -91,6 +94,7 @@ export default class ShepherdrSettings extends View {
     this.data = null; // the agents on offer (settings.js loadChoices)
     this.roles = {}; // role -> { sel, data, saved }: the model buttons' state for this scope
     this.folders = {}; // space id -> its task folder (repo root)
+    initFolderEditor(this,cx);
     this.handle = cx.focus_handle();
     this.handle.focus();
     this.approvalKeyHolder=`dialog:shepherdr-settings:${p.overlay??"settings"}`;keepKeys(this.approvalKeyHolder);cx.timer.every(1500,()=>keepKeys(this.approvalKeyHolder));
@@ -296,6 +300,7 @@ export default class ShepherdrSettings extends View {
     const saving = Promise.all([this.flushNotes(), flushSpaceInstructions(this), autopilotFlush(this), approvalsFlush(this)]);
     this.promptScope=null;this.promptOpen=null;
     this.scope = id;
+    resetFolderEditor(this,cx);
     this.listOpen = null;
     this.levelOpen = false;
     if (!this.shows(this.section)) this.section = "agents";
@@ -313,8 +318,9 @@ export default class ShepherdrSettings extends View {
   async folderOf(id) {
     const s = spaceById(id);
     if (!s || this.folders[id]) return;
-    const r = await exec("git", ["-C", s.folder || home(), "rev-parse", "--show-toplevel"], { on: s.machine ?? null }).catch(() => null);
-    this.folders[id] = r?.code === 0 ? r.stdout.trim() : s.folder;
+    const folder=await projectFolder(s);
+    const r = await exec("git", ["-C", folder || home(), "rev-parse", "--show-toplevel"], { on: s.machine ?? null }).catch(() => null);
+    this.folders[id] = r?.code === 0 ? r.stdout.trim() : folder;
   }
 
   // The CLI a worker runs here, and the other one (an unset Reviewer and Backup use it).
@@ -393,7 +399,10 @@ export default class ShepherdrSettings extends View {
 
   // Escape, a click beside the window, and Herdr's own close: a note typed a moment ago is
   // still saved.
-  close() {
+  async close() {
+    // Keep the settings view alive until an explicit folder save has published
+    // its roots and refreshed task metadata.
+    if(this.folderWrites?.size)await Promise.allSettled([...this.folderWrites]);
     dropKeys(this.approvalKeyHolder);
     const saving = Promise.all([this.flushNotes(), flushSpaceInstructions(this), autopilotFlush(this), approvalsFlush(this)]);
     this.sec?.value.set_value("");
@@ -694,7 +703,7 @@ export default class ShepherdrSettings extends View {
         this.handle.focus();
         cx.notify();
       })));
-    const body = this.section === "agents" ? this.agents(t, cx)
+    const sectionBody = this.section === "agents" ? this.agents(t, cx)
       : this.section === "tasks" ? this.tasks(t)
       : this.section === "secrets" ? secretsSection(this, t)
       : this.section === "window" ? layoutSection(this, t)
@@ -702,6 +711,7 @@ export default class ShepherdrSettings extends View {
       : this.section === "notify" ? this.notify(t)
       : this.section === "autopilot" ? autopilotSection(this, t, cx)
       : machinesSection(this, t, cx);
+    const body=v_flex().w_full().child(projectFolderEditor(this,t)).child(sectionBody);
     const card = h_flex().id("shepherdr-settings").track_focus(this.handle).w_full().h_full().max_h(900).min_h(0).items_start()
       .rounded(12).border_1().border_color(t.border).bg(t.popover).shadow_lg().overflow_hidden()
       // A click inside stays inside: only one beside the window closes it.

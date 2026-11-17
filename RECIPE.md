@@ -1,7 +1,8 @@
 # Yurherdr
 
 An IDE-style workspace for coding agents in Herdr App: conversations and terminals in the middle,
-project files in separate panes, and named Feature Assistants coordinating their own workers.
+project files in separate panes, and independent Feature Assistants that turn each feature into
+a plan, delegated worker tasks and review, while keeping the overall project conversation separate.
 Yurherdr started as a fork of Elias Stravik's [Shepherdr](https://github.com/eliasstravik/shepherdr)
 3.1.35 and grew into yurtools' personal development environment. It keeps that foundation's
 orchestration, artifacts and optional web service, with explicit upstream credit and compatible
@@ -41,11 +42,14 @@ The daily workflow, in order of importance:
 
 1. **Work with agents.** Switch the same process between Chat and Terminal. Collapse thinking/tool
    activity. Show an Assistant and workers beside each other without copying or restarting them.
-2. **Develop features independently.** Keep the space Assistant for discussion. Start named Feature
-   Assistants from + or a response action; they coordinate their own workers using shared Worker /
-   Reviewer settings. Working is amber, Needs you is attention-colored, idle/paused is subdued,
-   and explicit completion is a completed state. A waiting Assistant with an active worker still
-   shows Working with the worker count.
+2. **Give each feature its own lead.** Keep the space Assistant for project-wide discussion. Start a
+   Feature Assistant from **+ → Start feature…**, or turn a reply into a feature with its flag action.
+   For example, “CSV export” can coordinate API and UI workers while “Accessible filters” has its
+   own conversation and tasks. Each Feature Assistant keeps its objective, account, conversation
+   and owned tasks; worker results and delegated approval reviews return to that feature. Open
+   features side by side, close their views and return later without losing the work. Configure
+   the Feature Assistant separately while sharing Worker and Reviewer settings with the space
+   Assistant. The Features list shows combined activity, including workers still running.
 3. **Choose the intended account.** Configure named Codex profiles in launchers and per-space roles.
    Preserve their homes/logins through launch, resume, fork and restart. Bind model/thinking/
    permissions and skill discovery to that account; do not copy credentials.
@@ -54,9 +58,16 @@ The daily workflow, in order of importance:
    source links target the intended chat/document pane without auto-sending a message. Inspect changes
    across repositories, worktrees and submodules; select one repository to commit, retaining its own
    message draft. Discovery and previews are bounded; the web panel remains single-repository.
-5. **Handle approvals deliberately.** Offer once-only decisions, bounded saved rules and configured
-   review modes. History shows decision sources and creates future rules from saved context,
-   without rerunning old actions. Native Codex handoff is not falsely shown as a known allow/deny.
+5. **Reduce repeated permission prompts while keeping control.** In Agents settings, choose a
+   default for the space and overrides for Assistants, Features, Workers and Reviewers: **Ask me**,
+   **Approved rules**, **Assistant review** or **Codex Auto-review**. Allow an action once, remember
+   it for the task, or save an exact/“Starting with…” rule with a scope and expiry—for example,
+   allow `git status` in this project without granting every Git operation. Rules stay bound to
+   the account and working folder and can be revoked. With Assistant review, a feature's workers
+   ask their owning Feature Assistant to evaluate the request. History shows who decided and why,
+   and can create a rule for future requests. Agent **Permissions** still set its access/sandbox;
+   giving the Assistant Full Access does not silently grant that access to its workers.
+   See [approval modes and limits](docs/approvals.md).
 6. **Resume work.** Sessions follows its space; a click resumes or focuses the exact conversation.
    Open… provides preview and Beside actions. Role-specific space instructions append to global
    prompts for fresh starts; existing/resumed contexts are retained.
@@ -64,9 +75,8 @@ The daily workflow, in order of importance:
    Web-chat pages use their own website account, not Codex's skills or credits. Keep a normal-browser
    fallback because automated/headless verification can fail.
 
-Read the main Codex rollout, not whichever guardian/reviewer log has the first file descriptor.
-Fold oversized incoming context messages and render expanded content in bounded rows. Batch hidden
-measurements and link-view preparation so long conversations stay within the native render budget.
+Long conversations keep thinking and tool activity collapsible. Chat and document panes can be
+resized without replacing the running agent or discarding its conversation.
 
 ## Built from
 

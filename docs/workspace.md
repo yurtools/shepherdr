@@ -33,9 +33,21 @@ another agent. **Sessions** below Spaces remains the saved local Codex history; 
 
 ## Features
 
-A space keeps its main Assistant for discussion and coordination. Each named
-feature has an independent Feature Assistant that can start and supervise workers.
-Both use the shared Worker, Reviewer, review, worktree and task settings.
+The space Assistant is the ongoing conversation about the whole project. A
+Feature Assistant leads one named change: it keeps a separate objective and
+conversation, breaks the work into tasks, starts and supervises workers, receives
+their results and coordinates review. You can keep several features open side by
+side without mixing their conversations or task ownership.
+
+For example, **CSV export** can coordinate an API worker and a UI worker while
+**Accessible filters** develops independently. Return to either feature to see its
+own discussion, tasks and worker updates. Both reuse the space's Worker, Reviewer,
+review, worktree and task settings, while the Feature Assistant's own agent,
+account, model and prompt can be configured separately.
+
+Feature conversations do not automatically create separate integration worktrees.
+Use the worker/task worktree settings to isolate code changes when features run
+in parallel; the feature's recorded project folder remains its starting context.
 
 - **+ → Start feature…** opens a compact form with a **Feature name** field.
   Press Enter or **Create feature** to open its conversation. Its agent starts

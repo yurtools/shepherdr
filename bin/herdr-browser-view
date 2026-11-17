@@ -4,7 +4,7 @@
 //   herdr-browser-view --task <slug#id> [--worker <terminal>]
 //
 // Frames: Chrome's own screencast (CDP Page.startScreencast, PNG, scaled by Chrome to the
-// terminal's pixel size), drawn with the Kitty graphics protocol as one image replaced in place
+// terminal's pixel size), drawn with the Kitty graphics protocol with the previous frame retained
 // (Herdr's terminals decode PNG only; agent-browser's stream is JPEG). Chrome sends a frame only
 // when the page changes, and the next one only after this one is drawn, at most FPS a second.
 // Everything else goes through agent-browser's stream for the session (127.0.0.1 only): the
@@ -133,26 +133,34 @@ function layoutPicture(force) {
     S.imgCells = { col, row: 0, cols, rows };
     S.rect = { x: col * S.cellW, y: 0, w: cols * S.cellW, h: rows * S.cellH };
   }
-  if (force || JSON.stringify(S.imgCells) !== prev) {
+  if (JSON.stringify(S.imgCells) !== prev) {
     w("\x1b_Ga=d,d=A,q=2\x1b\\\x1b[2J");
     S.drawn = false;
-    cdp.restartCast();
   }
+  // Page metadata changes only the picture's fit. Restart capture only for a
+  // terminal resize; restarting from screencastFrame causes resize/clear loops.
+  if (force) cdp.restartCast();
 }
 
-// The PNG (base64) as image 1, placement 1, over the picture's cells: replaced in place each frame.
+// Keep the preceding frame visible while the next PNG is uploaded/decoded.
+// Retransmitting one image ID removes its placements. New IDs avoid that blank
+// interval; keeping only the latest two displayed images bounds terminal memory.
+let frameImage = 0;
 function drawFrame(b64, done) {
   const c = S.imgCells;
   if (!c) return done();
-  let s = `\x1b7\x1b[${c.row + 1};${c.col + 1}H`;
+  const image = ++frameImage;
+  let s = `\x1b[?2026h\x1b7\x1b[${c.row + 1};${c.col + 1}H`;
   const CH = 4096;
   for (let i = 0; i < b64.length; i += CH) {
     const chunk = b64.slice(i, i + CH), more = i + CH < b64.length ? 1 : 0;
     s += i === 0
-      ? `\x1b_Ga=T,f=100,t=d,i=1,p=1,q=2,C=1,z=-1,c=${c.cols},r=${c.rows},m=${more};${chunk}\x1b\\`
+      ? `\x1b_Ga=t,f=100,t=d,i=${image},q=2,m=${more};${chunk}\x1b\\`
       : `\x1b_Gm=${more};${chunk}\x1b\\`;
   }
-  s += "\x1b8";
+  s += `\x1b_Ga=p,i=${image},p=1,q=2,C=1,z=-1,c=${c.cols},r=${c.rows}\x1b\\`;
+  if (image > 2) s += `\x1b_Ga=d,d=I,i=${image - 2},q=2\x1b\\`;
+  s += "\x1b8\x1b[?2026l";
   S.drawn = true;
   S.frames++;
   if (out.write(s)) done(); else out.once("drain", done);
@@ -209,8 +217,9 @@ function button(row, x, label, fn, boxed) {
 }
 
 function bar() {
-  if (S.editAddress) { const row=S.rows-1,text=S.editAddress.text; w(`\x1b[${row+1};1H\x1b[2K${ESC(7)} URL: ${text.slice(-Math.max(10,S.cols-7))} ${ESC(0)}`); return; }
   const row = S.rows - 1, W = S.cols;
+  S.buttons = S.buttons.filter(b=>b.row!==row);
+  if (S.editAddress) { const text=S.editAddress.text; w(`\x1b[${row+1};1H\x1b[2K${ESC(7)} URL: ${text.slice(-Math.max(10,S.cols-7))} ${ESC(0)}`); return; }
   w(`\x1b[${row + 1};1H\x1b[2K`);
   const live = S.state === "live";
   const left = live ? (S.driving ? [ESC("1;33"), "● You're driving"] : [ESC(32), "● Live"]) : [ESC(2), "○ Off"];
@@ -219,15 +228,19 @@ function bar() {
   if (live) btns.push(["‹ Back", () => cdp.back()], ["Forward ›", () => cdp.forward()], ["↻ Reload", () => cdp.reload()]);
   if (pageId) btns.push(["URL", () => editAddress()]);
   btns.push(["⧉ Window", () => openBrowser(true)]);
+  if (pageId) btns.push(["System browser", () => openSystemBrowser()]);
+  // A narrow pane must never emit a negative cursor column or stale hit boxes.
+  const width = () => btns.reduce((n, [l]) => n + l.length + 2, 0);
+  while (width() > W - 1 && btns.length) btns.shift();
   const keys = live ? "Alt+← back · Ctrl+R reload" : "";
   const bw = btns.reduce((n, [l]) => n + l.length + 2, 0);
-  const lw = left[1].length + 3;
+  const lw = W - bw > left[1].length + 4 ? left[1].length + 3 : 0;
   let room = W - lw - bw - 1;
   const showKeys = keys && room - keys.length - 3 > 16;
   if (showKeys) room -= keys.length + 3;
   const url = (S.url || "").replace(/^https?:\/\//, "");
   const u = url.length > room ? url.slice(0, Math.max(0, room - 1)) + "…" : url;
-  w(` ${left[0]}${left[1]}${ESC(0)}  ${ESC(2)}${u}${ESC(0)}`);
+  if (lw) w(` ${left[0]}${left[1]}${ESC(0)}  ${ESC(2)}${u}${ESC(0)}`);
   let x = W - bw - (showKeys ? keys.length + 3 : 0);
   if (showKeys) { w(`\x1b[${row + 1};${x + 1}H${ESC(2)}${keys}${ESC(0)}`); x += keys.length + 3; }
   for (const [l, fn] of btns) { button(row, x, l, fn, false); x += l.length + 2; }
@@ -307,6 +320,7 @@ function send(msg) {
 
 const cdp = {
   ws: null, id: 0, pend: new Map(), session: null, sessionTarget: null, pending: null, drawing: false, lastDraw: 0, timer: null,
+  castJob: null, castWanted: null, castKey: null,
   open(url) {
     this.close();
     const ws = new WebSocket(url);
@@ -317,6 +331,7 @@ const cdp = {
         let target=targets.find(t=>t.targetId===pageRecord.target&&t.type==='page');
         if(!target) { const made=await this.call('Target.createTarget',{url:S.url||'about:blank'},null);target={targetId:made.result?.targetId}; }
         S.target=target?.targetId; if(!S.target){setState('error','The page could not be opened.');return;}
+        pageRecord.target=S.target;
         savePage({target:S.target});
         await this.call('Target.setDiscoverTargets',{discover:true},null);
       }
@@ -345,7 +360,7 @@ const cdp = {
       else if (j.method === "Target.detachedFromTarget" && j.params?.sessionId === this.session) { this.session = null; this.sessionTarget = null; }
     };
   },
-  close() { const ws = this.ws; this.ws = null; this.session = null; this.sessionTarget = null; for(const resolve of this.pend.values())resolve({});this.pend.clear(); try { ws?.close(); } catch {} },
+  close() { const ws = this.ws; this.ws = null; this.session = null; this.sessionTarget = null; this.castWanted=null;this.castKey=null; for(const resolve of this.pend.values())resolve({});this.pend.clear(); try { ws?.close(); } catch {} },
   call(method, params = {}, session = this.session) {
     return new Promise((resolve) => {
       if (!this.ws || this.ws.readyState !== 1) return resolve({});
@@ -368,13 +383,28 @@ const cdp = {
     if(pageId) { await this.call("Page.enable"); await this.call("Page.setInterceptFileChooserDialog",{enabled:true}); }
     this.restartCast();
   },
-  async restartCast() {
+  restartCast() {
     const s = this.session;
-    if (!s || !S.cellW) return;
+    if (!s || !S.cellW || !S.cellH) return Promise.resolve();
     const areaW = S.cols * S.cellW, areaH = Math.max(1, S.rows - 1) * S.cellH;
-    if(pageId)await this.call("Emulation.setDeviceMetricsOverride",{width:Math.max(320,Math.round(areaW)),height:Math.max(240,Math.round(areaH)),deviceScaleFactor:1,mobile:false},s);
-    await this.call("Page.stopScreencast", {}, s);
-    await this.call("Page.startScreencast", { format: "png", maxWidth: Math.round(areaW), maxHeight: Math.round(areaH), everyNthFrame: 1 }, s);
+    const width=Math.max(1,Math.round(areaW)),height=Math.max(1,Math.round(areaH));
+    this.castWanted={s,width,height,key:`${s}:${width}:${height}`};
+    if(this.castJob)return this.castJob;
+    if(this.castKey===this.castWanted.key)return Promise.resolve();
+    this.castJob=(async()=>{
+      while(this.castWanted&&this.castWanted.key!==this.castKey){
+        const next=this.castWanted;
+        if(next.s!==this.session)break;
+        if(pageId)await this.call("Emulation.setDeviceMetricsOverride",{width:Math.max(320,next.width),height:Math.max(240,next.height),deviceScaleFactor:1,mobile:false},next.s);
+        if(next.s!==this.session)break;
+        await this.call("Page.stopScreencast", {}, next.s);
+        if(next.s!==this.session)break;
+        await this.call("Page.startScreencast", { format: "png", maxWidth:next.width,maxHeight:next.height,everyNthFrame:1 }, next.s);
+        if(next.s!==this.session)break;
+        this.castKey=next.key;
+      }
+    })().finally(()=>{this.castJob=null;if(this.castWanted?.s===this.session&&this.castWanted.key!==this.castKey)this.restartCast();});
+    return this.castJob;
   },
   // The newest frame waits here; one older and not drawn yet is dropped (acked unseen). Drawn at
   // most FPS a second, each once the one before is out; Chrome sends more only as they're acked.
@@ -405,6 +435,18 @@ const cdp = {
   forward() { this.call("Runtime.evaluate", { expression: "history.forward()" }); },
   reload() { this.call("Page.reload", {}); },
 };
+
+let openingSystemBrowser=false;
+async function openSystemBrowser() {
+  // This deliberately uses the person's normal browser and its own login. The
+  // Window action above still uses agent-browser and cannot promise CAPTCHA support.
+  if(openingSystemBrowser||!/^https?:\/\//i.test(S.url))return;
+  openingSystemBrowser=true;
+  try {
+    const r=await run(process.platform==='darwin'?'open':'xdg-open',[S.url]);
+    if(r.code)await run('zenity',['--error','--text=Could not open your system browser. Copy the URL into your normal browser.']);
+  } finally {openingSystemBrowser=false;}
+}
 
 async function openBrowser(headed) {
   if (S.state === "opening") return;

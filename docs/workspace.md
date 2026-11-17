@@ -61,8 +61,14 @@ Codex logs; named feature records also retain Claude sessions captured by a live
 Use **+ → New browser tab…** for an editable URL, or choose a configured web-chat
 shortcut such as ChatGPT. Each opens in its own workspace tab. The browser viewer
 provides Back, Forward, Reload, a **URL** button and **Ctrl+L / F6** to edit the address.
-The **Window** action opens the same browser profile in a full browser window when
-sign-in or another site feature needs it. Clipboard text uses the desktop clipboard;
+The **Window** action opens the same automated browser profile in a full browser
+window. **System browser** opens the current URL in your normal desktop browser,
+using that browser's login; it does not share the workspace's isolated profile.
+Use System browser if a site repeatedly asks for human verification. The embedded
+viewer uses automated Chrome, which some sites' verification checks do not support;
+opening its Window is not guaranteed to resolve that limitation. Verification must
+be completed by you, and is not automatically solved by Shepherdr.
+Clipboard text uses the desktop clipboard;
 file selection in the viewer uses Zenity on Linux when installed (otherwise use Window).
 
 Tabs retain their current URL and browser target in `data/workspace-browsers.json`.

@@ -107,9 +107,9 @@ Right-click the Chat input for **Cut / Copy / Paste / Select all**. Operations k
 the captured selection and do not edit a draft that changed while the menu was open.
 Reply menus offer selected-text Copy and Copy message. Selected text is captured
 before the popup takes focus. The native SDK exposes it only through Copy: a prior
-text clipboard is restored until you choose an action, but opening this menu with
-a non-text clipboard can replace it with the selection. Keyboard Copy avoids this
-menu snapshot. Terminal menus offer
+text clipboard is restored until you choose an action. With an image, another
+non-text format or an empty clipboard, selection Copy in this menu is disabled
+to preserve that clipboard; use **Ctrl+C** directly. **Copy message** remains available. Terminal menus offer
 Copy, Paste and Select all; Cut is disabled because terminal output is read-only.
 When right-click belongs to a terminal program, **Shift+right-click** opens Herdr's menu.
 

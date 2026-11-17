@@ -10,7 +10,7 @@ export default class ClipboardMenu extends View {
   return v_flex().id('clipboard-menu').track_focus(this.handle).w_full().p(6).bg(theme().popover)
    .on_key_down(e=>{if(e.key==='escape')closeOverlay(p.overlay);})
    .child(menuRow('clipboard-cut','Cut',{disabled:!input||!selected,onClick:()=>this.choose('cut')}))
-   .child(menuRow('clipboard-copy','Copy',{disabled:input?!selected:!p.selected,onClick:()=>this.choose('copy')}))
+   .child(menuRow('clipboard-copy',!input&&p.selected===null?'Copy selection: use Ctrl+C':'Copy',{disabled:input?!selected:!p.selected,onClick:()=>this.choose('copy')}))
    .child(menuRow('clipboard-paste','Paste',{disabled:!input,onClick:()=>this.choose('paste')}))
    .child(menuRow('clipboard-select-all','Select all',{disabled:!input,onClick:()=>this.choose('select-all')}))
    .when(!input&&Boolean(p.text),el=>el.child(menuRow('clipboard-copy-message','Copy message',{onClick:()=>this.choose('message')})));

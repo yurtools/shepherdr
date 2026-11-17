@@ -51,3 +51,9 @@ test('right-click captures reply selection before the popup clears native select
  v.clipboardMenu('reply',{position:{x:10,y:20}},{stop_propagation(){},read_from_clipboard:()=>clipboard,write_to_clipboard:(s:string)=>{clipboard=s},timer:{after:(_n:number,fn:any)=>fn({read_from_clipboard:()=>clipboard,write_to_clipboard:(s:string)=>{clipboard=s}})}},'the full reply');
  expect(popup.props.selected).toBe('only the selected words');expect(popup.props.text).toBe('the full reply');expect(clipboard).toBe('previous clipboard');
 });
+
+test('opening a reply menu leaves non-text clipboard data untouched',()=>{
+ let copied=false,popup:any;(globalThis as any).window={dispatch_action:()=>{copied=true}};
+ const Host=MenuHost((args:any)=>{popup=args});const v:any=new Host();v.pickKey=()=> 'pane';v.box={value:()=>'',selected_range:()=>({start:0,end:0})};
+ v.clipboardMenu('reply',{position:{x:1,y:2}},{stop_propagation(){},read_from_clipboard:()=>undefined},'reply');expect(copied).toBe(false);expect(popup.props.selected).toBe(null);
+});

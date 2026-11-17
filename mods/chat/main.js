@@ -2446,6 +2446,7 @@ export default class Chat extends View {
     // The popup takes focus and a menu press clears native TextView selection.
     // Capture it through the native copy handler before either happens; restore a prior text clipboard.
     const before=cx.read_from_clipboard();
+    if(typeof before!=='string'){open(null);return;} // Preserve images and other formats the SDK cannot restore.
     window.dispatch_action('shell_root::Copy');
     cx.timer.after(30,cx=>{const selected=cx.read_from_clipboard();if(typeof before==='string')cx.write_to_clipboard(before);open(selected??'');});
   }

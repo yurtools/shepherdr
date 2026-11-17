@@ -1,3 +1,4 @@
+import { sourceOffset } from './core/chat-links.js';
 import { fileActions, relativeFile } from "./file-reference.js";
 import { highlighted } from "./highlight.js";
 import { HIGHLIGHT_LANGUAGES } from "./core/syntax.js";
@@ -11,7 +12,7 @@ function hash(value) { let h = 2166136261; for (let i = 0; i < value.length; i++
 export default class Document extends View {
   init(_props, cx) {
     this.docs = new Map(); this.pane = localStorage.getItem("document-pane"); this.requestAt = shared("workspace.document.open")?.at;
-    if (props()?.file) this.open(props().file, props().on ?? null, cx);
+    if (props()?.file) this.open(props().file, props().on ?? null, cx, props());
     cx.timer.every(2500, cx => this.check(cx));
     cx.spawn(async cx => {
       for (;;) {
@@ -34,10 +35,11 @@ export default class Document extends View {
     if (doc.text !== doc.saved) { await fs.mkdir(`${appHome()}/data/document-drafts`, { recursive: true }); await fs.writeFile(path, JSON.stringify({ path: doc.path, on: doc.on, text: doc.text, saved: doc.saved })); }
     else { try { await fs.unlink(path); } catch {} }
   }
-  open(path, on, cx) {
+  open(path, on, cx, location = null) {
     const key = `${on ?? ''}:${path}`; this.active = key;
-    if (this.docs.has(key)) { cx.notify(); return; }
+    if (this.docs.has(key)) { const doc=this.docs.get(key);if(location?.line){doc.location=location;this.jump(doc);}cx.notify(); return; }
     const doc = { path, on, kind: documentKind(path), saved: null, text: null, error: null, conflict: false, preview: /\.(md|markdown|csv|tsv|docx|xlsx|xlsm|xltx|xls|doc|xlsb)$/i.test(path) };
+    if(location?.line)doc.location={line:location.line,column:location.column};
     this.docs.set(key, doc);
     cx.spawn(async cx => {
       try {
@@ -73,12 +75,19 @@ export default class Document extends View {
     doc.editor?.release(); const t = theme();
     doc.editor = EditorState.new({ value: doc.text, language: language(doc.path), readonly: Boolean(doc.on), font_family: settings().font_family, font_size: 12.5,
       syntax: { keyword: t.ansi5, string: t.ansi2, comment: t.dim, function: t.ansi4, type: t.ansi3, number: t.ansi1, constant: t.ansi6 } });
+    this.jump(doc);
     doc.editor.on('change', (_e, cx) => {
       doc.text = doc.editor.value();
       const revision = doc.revision = (doc.revision ?? 0) + 1;
       cx.timer.after(400, cx => { if (doc.closed || doc.closing || revision !== doc.revision) return; cx.spawn(async cx => { try { await this.draft(doc); } catch (e) { doc.notice = `Draft could not be saved: ${e}`; } cx.notify(); }); });
       cx.notify();
     });
+  }
+  jump(doc) {
+    if(!doc.location?.line||!doc.editor)return;
+    const at=sourceOffset(doc.text,doc.location.line,doc.location.column);
+    doc.highlight=false;doc.preview=false;
+    doc.editor.set_selected_range({start:at,end:at});doc.editor.focus();delete doc.location;
   }
   check(cx) {
     const doc = this.docs.get(this.active);
@@ -194,7 +203,7 @@ export default class Document extends View {
     if (!this.pane && !props()?.slot) { const docs = panes().filter(p => p.mod === 'workspace-document'); if (docs.length === 1) this.pane = docs[0].pane; }
     if (this.pane) localStorage.setItem("document-pane", this.pane);
     const request = shared('workspace.document.open');
-    if (this.pane && request?.pane === this.pane && request.at !== this.requestAt) { this.requestAt = request.at; cx.timer.after(0, cx => this.open(request.file, request.on ?? null, cx)); }
+    if (this.pane && request?.pane === this.pane && request.at !== this.requestAt) { this.requestAt = request.at; cx.timer.after(0, cx => this.open(request.file, request.on ?? null, cx, request)); }
     const t = theme(), doc = this.docs.get(this.active);
     return v_flex().id('document').size_full().min_h(0).bg(t.background).text_color(t.foreground)
       .child(h_flex().h(32).flex_none().overflow_x_scrollbar().gap(3).px(5).items_center().children([...this.docs].map(([key, d]) => this.fileTab(key, d, t))))

@@ -81,3 +81,5 @@ approval.js: chat chat-models coordinator newspace shepherdr-settings workspace-
 features.js: tabs-tasks chat workspace-sessions workspace-launchers new-menu-tasks
 workspace-browser.js: tabs-tasks
 workspace-store.js: tabs-tasks chat workspace-sessions workspace-launchers new-menu-tasks menu-tasks
+
+core/chat-links.js: chat workspace-document

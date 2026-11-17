@@ -1,3 +1,5 @@
+import LinkedMarkdown from './linked-markdown.js';
+import { chatLink, hasChatLink } from './core/chat-links.js';
 import { startFeature, workspaceCall } from "./features.js";
 import { approvalArgv } from "./approval.js";
 import { measuredHeight, viewportScroll, hoverMessage, measureOrder, pendingMarkdownHeight } from "./core/chat-layout.js";
@@ -620,6 +622,7 @@ export default class Chat extends View {
   // on the web's cards: its terminal shows its own prompt meanwhile. A call or a recording ends with it.
   async close(cx) {
     if (this.host) return this.host.close(cx);
+    for(const kept of this.linkMarkdown?.values()??[])kept.view.release();
     this.box.release();
     this.findBox.release();
     this.scroll.release();
@@ -2428,6 +2431,26 @@ export default class Chat extends View {
     run("tab.new", args);
   }
 
+  openChatLink(href, cx) {
+    const origin=panes().find(p=>p.pane===this.myPane()),tab=origin?.tab??focused()?.tab;
+    const space=spaces().find(s=>s.tabs.some(t=>t.id===tab));
+    const folder=this.t?.foreground?.cwd??this.t?.cwd??props()?.folder??space?.folder??'';
+    const target=chatLink(href,folder);
+    if(target.kind==='web'){cx.open_url(target.url);return;}
+    if(target.kind!=='file'){toast({title:'Link could not be opened',body:'Use a website URL or a local project-file path.'});return;}
+    const doc=panes().find(p=>p.tab===tab&&p.mod==='workspace-document');
+    const file={file:target.file,on:this.machine??null,line:target.line,column:target.column};
+    if(doc){setShared('workspace.document.open',{...file,pane:doc.pane,at:Date.now()});run('pane.focus',{pane:doc.pane});return;}
+    const slot=`doc-link-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const args=origin?{pane:origin.pane,direction:'right',mod:'workspace-document',props:{...file,slot}}
+      :{space:space?.id,name:target.file.split('/').pop(),mod:'workspace-document',props:{...file,slot}};
+    cx.spawn(async cx=>{try{
+      const r=await exec('herdr-app',['do',origin?'pane.split':'tab.new',JSON.stringify(args)]);
+      const out=JSON.parse(r.stdout||'{}');if(r.code||!out.pane)throw new Error(out.error||r.stderr||'Document pane did not open.');
+      setShared('workspace.documents',{...(shared('workspace.documents')??{}),[slot]:out.pane});
+    }catch(e){toast({title:'File could not be opened',body:String(e?.message??e),level:'error'});}cx.notify();});
+  }
+
   featureFrom(row, cx) {
     const tab=panes().find(p=>p.pane===this.myPane())?.tab;
     const space=spaces().find(s=>s.tabs.some(t=>t.id===tab));
@@ -3370,7 +3393,7 @@ export default class Chat extends View {
   // the row's own hover, so it is always the message under the pointer (the list redraws as
   // the pointer moves, so the hover follows it), and its room is always kept, so nothing moves.
   row(x, t, pre = "") {
-    const keep = this.keepIcons === x.bar?.of;
+    const keep = this.keepIcons === x.bar?.of || this.hoverBand === x.bar?.of;
     // The band row: its pills always; the rest while the pointer is on it.
     const box = x.bar?.box ?? { top: 0, h: ACT_ROW };
     if (x.kind === "band") return div().relative().w_full().h(x.h)
@@ -3381,7 +3404,7 @@ export default class Chat extends View {
     // The message's last row: the same actions drawn just below it, in the band row's place,
     // while the pointer is on the message (its row isn't clipped: see the list).
     return div().relative().w_full().child(el)
-      .child(div().absolute().inset_0().opacity(keep ? 1 : 0).hover((s) => s.opacity(1)).child(this.bar(x.bar, t, -box.top - box.h, true)));
+      .child(this.bar(x.bar, t, -box.top - box.h, true).opacity(keep ? 1 : 0).hover((s) => s.opacity(1)));
   }
 
   // A band's parts at barLayout()'s places: the hover ones (time, icons, the smiley) or the
@@ -3405,7 +3428,32 @@ export default class Chat extends View {
           : p.pill ? pill(p.pill) : icon(p.what))));
   }
 
+  prepareLinkedMarkdown(rows,t,cx) {
+    const want=new Map();this.collectMarkdown=want;
+    try{for(const row of rows)if(hasChatLink(row.text))this.rowBare(row,t,`v${this.measureGen}-${this.rowRevisions?.get(row.id)?.revision??0}-`);}
+    finally{this.collectMarkdown=null;}
+    const current=this.linkMarkdown??new Map();
+    const changed=want.size!==current.size||[...want].some(([id,p])=>current.get(id)?.text!==p.text||current.get(id)?.key!==p.key);
+    if(!changed||this.linkMarkdownPending)return;
+    this.linkMarkdownPending=true;
+    cx.timer.after(0,cx=>{
+      this.linkMarkdownPending=false;
+      for(const [id,p] of current)if(!want.has(id)){p.view.release();current.delete(id);}
+      for(const [id,p] of want){
+        const old=current.get(id);
+        if(old){if(old.text!==p.text||old.key!==p.key){old.view.set_props(p);current.set(id,{...p,view:old.view});}}
+        else current.set(id,{...p,view:cx.new(LinkedMarkdown,p)});
+      }
+      this.linkMarkdown=current;cx.notify();
+    });
+  }
+
   rowBare(x, t, pre = "") {
+    const markdown=(id,text)=>{
+      if(this.collectMarkdown)this.collectMarkdown.set(id,{id,text,key:this.pickKey()??this.areaKey()});
+      const kept=this.linkMarkdown?.get(id);
+      return kept&&kept.text===text?div().flex_none().child(kept.view):TextView.markdown(id,text).scrollable(false).selectable(true).flex_none();
+    };
     // A readable column, centered when the pane is wide.
     // At a block's edge a row drops its outer room there: spaced() puts the gap between blocks.
     const col = (el, px = 18, py = 6) => h_flex().w_full().justify_center()
@@ -3418,12 +3466,12 @@ export default class Chat extends View {
       // accent's own text color on the full accent was too faint on light accents).
       div().max_w(most).flex_none().px(12).py(8).rounded(12).bg(t.accent + "33").border_1().border_color(t.accent + "4d")
         .text_color(t.foreground).when(faded, (el) => el.opacity(0.55))
-        .child(TextView.markdown(`${pre}chat-md-${x.id}`, this.findMark(typed(this.mentionsIn(text))) || " ").scrollable(false).selectable(true).flex_none()));
+        .child(markdown(`${pre}chat-md-${x.id}`, this.findMark(typed(this.mentionsIn(text))) || " ").flex_none()));
     const theirs = (text) => h_flex().w_full().justify_start().child(
       div().max_w(most).flex_none().px(12).py(8).rounded(12).bg(t.raised).text_color(t.foreground)
         // Folded: only the lines that show (shownLines()), as their own view
-        .child(x.clip ? this.clipped(t.raised, x.clip, TextView.markdown(`${pre}chat-md-fold-${x.id}`, this.findMark(this.mentionsIn(shownLines(text, x.clip, most - 24))) || " ").scrollable(false).selectable(true).flex_none())
-          : TextView.markdown(`${pre}chat-md-${x.id}`, this.findMark(this.mentionsIn(text)) || " ").scrollable(false).selectable(true).flex_none()));
+        .child(x.clip ? this.clipped(t.raised, x.clip, markdown(`${pre}chat-md-fold-${x.id}`, this.findMark(this.mentionsIn(shownLines(text, x.clip, most - 24))) || " ").flex_none())
+          : markdown(`${pre}chat-md-${x.id}`, this.findMark(this.mentionsIn(text)) || " ").flex_none()));
     const fileLine = (label) => h_flex().gap(5).items_center().text_size(12).text_color(t.dim)
       .child(svg("mods/chat/paperclip.svg").size(12).flex_none()).child(div().truncate().child(label));
     switch (x.kind) {
@@ -3479,7 +3527,7 @@ export default class Chat extends View {
               .child(div().flex_1().min_w(0).truncate().child(open ? "" : String(x.text ?? "").split("\n").find((l) => l.trim()) ?? ""))
               .when(x.at > 1e12, (el) => el.child(div().flex_none().text_color(t.dim).child(clock(x.at)))))
             .when(open, (el) => el.child(h_flex().w_full().pl(26).pt(6).pb(2).child(div().max_w(most).px(12).py(8).rounded(12).bg(t.raised)
-              .text_size(13).text_color(t.foreground).child(TextView.markdown(`${pre}chat-brief-${x.id}`, x.text || " ").scrollable(false).selectable(true))))), 12, 0);
+              .text_size(13).text_color(t.foreground).child(markdown(`${pre}chat-brief-${x.id}`, x.text || " "))))), 12, 0);
         }
         return col(v_flex().w_full().px(6).py(QUIET_PY).rounded(7).cursor_pointer().hover((s) => s.bg(t.hover))
           .child(h_flex().gap(6).items_center().text_size(12).text_color(t.dim)
@@ -3487,7 +3535,7 @@ export default class Chat extends View {
             .child(div().flex_none().text_color(t.muted).child(x.label))
             .when(!open && !x.bare, (el) => el.child(div().flex_1().min_w(0).truncate().child(String(x.text ?? "").split("\n").find((l) => l.trim()) ?? ""))))
           .when(open, (el) => el.child(div().pl(18).pt(6).text_size(12.5).text_color(t.muted)
-            .child(TextView.markdown(`${pre}chat-brief-${x.id}`, literal(x.text) || " ").scrollable(false).selectable(true)))), 12, 0);
+            .child(markdown(`${pre}chat-brief-${x.id}`, literal(x.text) || " ")))), 12, 0);
       }
       case "video":
         // A video the agent showed: the window can't play one, so a line that opens it in the system's player (clickRow)
@@ -3596,7 +3644,7 @@ export default class Chat extends View {
         return pad(v_flex().w_full().gap(4).px(12).py(10).rounded(10).border_1().border_color(t.border)
           .child(div().text_size(12).font_medium().text_color(x.closed ? t.dim : t.blocked)
             .child(x.closed === "answered" ? WORDS.askedAnswered : x.closed ? WORDS.askedClosed : WORDS.asked))
-          .child(div().text_color(x.closed ? t.muted : t.foreground).child(TextView.markdown(`${pre}chat-md-${x.id}`, x.text).scrollable(false).selectable(true))));
+          .child(div().text_color(x.closed ? t.muted : t.foreground).child(markdown(`${pre}chat-md-${x.id}`, x.text))));
       case "error":
         return pad(div().w_full().text_size(12.5).text_color(t.blocked).child(x.text));
       case "tools": {
@@ -4548,6 +4596,8 @@ export default class Chat extends View {
       this.featureResumeNonce=resume.nonce;
       cx.timer.after(0,cx=>{if(this.phase==='starting'||this.status()==='working')return;this.featureRecord=resume.record;this.addr=null;this.phase='fresh';this.startAgent(null,cx);});
     }
+    const link=shared('workspace.chat-link');
+    if(link?.key===(this.pickKey()??this.areaKey())&&link.nonce!==this.chatLinkNonce&&Date.now()-link.at<5000){this.chatLinkNonce=link.nonce;cx.timer.after(0,cx=>this.openChatLink(link.href,cx));}
     const clip=shared("workspace.clipboard.request");
     if(clip?.key===(this.pickKey()??this.areaKey())&&clip.nonce!==this.clipboardNonce&&Date.now()-clip.at<5000){this.clipboardNonce=clip.nonce;cx.timer.after(30,cx=>this.clipboardAction(clip,cx));}
     // The pane getting focus (opened, clicked, gone to) puts the keyboard in the message box.
@@ -4760,6 +4810,7 @@ export default class Chat extends View {
     this.follow_bottom(rows);
     // Following the newest, the list sits at its end: the scroll position is exactly that.
     if (this.pinned && this.listH) this.scrollTop = Math.max(0, sizes.reduce((a, b) => a + b, 0) - (this.listH - 8));
+    this.prepareLinkedMarkdown(rows,t,cx);
     const body = rows.length === 0
       ? this.notice(t, "No messages", "Write to the agent below.")
       : v_flex().relative().flex_1().min_h(0).pt(8)

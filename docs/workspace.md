@@ -113,6 +113,15 @@ to preserve that clipboard; use **Ctrl+C** directly. **Copy message** remains av
 Copy, Paste and Select all; Cut is disabled because terminal output is read-only.
 When right-click belongs to a terminal program, **Shift+right-click** opens Herdr's menu.
 
+## Links in Chat
+
+Click a project-file link in an Assistant, Feature or agent reply to open it in the
+same tab’s document pane, keeping the chat and Files tree available. An existing
+document pane in that tab is reused. Relative paths resolve against the agent’s
+working folder; absolute paths and local `file://` links are supported. A source
+location such as `Foo.java:269`, `Foo.java:269:4` or `Foo.java#L269` opens the editor
+at that line (and column, when given). Web links open in the system browser.
+
 ## Named Codex accounts
 
 Account definitions live on each machine in

@@ -3,7 +3,9 @@
 These pages preserve the inherited Shepherdr desktop/web comparison. They are
 reference and acceptance notes, not a claim that every Yurherdr extension is
 available on the web. Native Yurherdr has additional Feature Assistants, Sessions,
-account controls, document panes, browser pages and approval-history actions.
+account controls, document panes, multi-repository Changes, browser pages and
+approval-history actions. The native Changes panel groups repositories under the
+space folder; web Changes retains its single-repository behavior.
 Use [the workspace guide](workspace.md) for implemented behavior and limitations.
 
 The inherited comparison targets the shared contents, labels, menus and states.

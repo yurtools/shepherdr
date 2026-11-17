@@ -29,6 +29,13 @@ shepherdr doctor
 A web-only install (`./install.sh --web`) updates the same way: `shepherdr update` reads what was installed and
 updates web only. `shepherdr doctor` says how this install updates. The web app is rebuilt when it's out of date.
 
+For the multi-repository Changes upgrade, an edited `layouts/shepherdr.json` may be
+kept with the incoming layout beside it as `.new`. Compare the files and either
+adopt the incoming layout or change only the existing `changes` block's
+`content.mod` from `changes` to `workspace-changes`. Keep the block ID `changes`
+so the toolbar and saved panel selection continue to work. Do not replace the
+shipped Herdr `mods/changes` folder. See [Changes](workspace.md#changes-across-repositories).
+
 Only files Shepherdr put there and you haven't changed are replaced; yours stay, with the new copy beside them as
 `.new`. A mod file you changed that Shepherdr changed too is the exception: your copy could stop the new mod from
 loading, so Shepherdr's goes in and yours goes to the backup folder (the update says where). Each mod is swapped in one step, so Herdr reloads it once. Agents keep running in herdr-core. Until

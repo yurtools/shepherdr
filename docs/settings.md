@@ -37,7 +37,9 @@ than on each keystroke.
 Saving keeps Herdr's space folder and Files' project-root override aligned. It
 does not move files, switch Git branches, restart agents or relocate existing
 Features. New space Assistants and new Features use the selected folder. Editing
-remote-space folders is currently unavailable.
+remote-space folders is currently unavailable. The native Changes panel follows
+the saved folder on its next refresh; it does not follow a focused worker into
+that worker's worktree. See [multiple repositories](workspace.md#changes-across-repositories).
 
 ## Where you set them
 

@@ -138,7 +138,10 @@ State: ✓ matches, ◇ web-only form (why), ✗ still differs (why).
 ### Files and Changes
 
 No longer a task's tabs (SHEP-143). The web's FilesView and DiffView (K) show only in the space's Files and Changes
-side panels (web/plugins/coordinators SpacePanel), the window's are Herdr's own `files` and `changes` panels.
+side panels (web/plugins/coordinators SpacePanel). The native window uses Yurherdr's
+`workspace-files` and `workspace-changes` mods: a persistent file tree and grouped
+changes across repositories. Web Changes remains single-repository; this row does
+not imply parity for repository discovery, selection or separate commit drafts.
 
 ### Pull request
 

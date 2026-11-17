@@ -10,7 +10,7 @@ import { startInbox, count as inboxCount, countsByTab, readyCount, readyByTab, s
 import { serveRemote } from "./secrets.js";
 import { watchService } from "./service.js";
 import { startBridge } from "./bridge.js";
-import { countBadge, H, TEXT, RADIUS, toast, plainError } from "./ui.js";
+import { countBadge, H, TEXT, RADIUS, toast, plainError, openSettings } from "./ui.js";
 import { on as addonOn } from "./addons.js";
 import { watchViews } from "./usage.js";
 // A tab's name (what runs in it while Herdr named it): core/menus.js, as the web app's tab bar names it.
@@ -72,6 +72,7 @@ export default class Tabs extends View {
         const tab = spaces().find(s => s.active)?.tabs.find(t => t.active);
         if (c === "sessions") openHistory();
         if (c === "feature") startFeature();
+        if (c === "space-settings") {const space=spaces().find(s=>s.active);if(space)openSettings({space:space.id,section:"agents"});}
         if (c === "close" && tab) closeTab(tab.id);
         // F2 / Shift+F2 (keys.json): our Rename dialogs for the shown tab and space.
         if (c === "rename-tab" && tab) renameTab(tab);

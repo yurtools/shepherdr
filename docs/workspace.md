@@ -114,6 +114,25 @@ to preserve that clipboard; use **Ctrl+C** directly. **Copy message** remains av
 Copy, Paste and Select all; Cut is disabled because terminal output is read-only.
 When right-click belongs to a terminal program, **Shift+right-click** opens Herdr's menu.
 
+## Space-specific instructions
+
+In **Shepherdr settings → Agents**, choose a space in **Applies to**, then use
+**Space instructions** beside Assistant, Feature Assistant, Workers or Reviewer.
+The multiline field saves automatically, including when changing scope or closing
+Settings. **Clear** removes only that space’s addition for that role.
+
+The effective prompt is always **the current global role prompt + the space’s
+additional instructions**. Global prompt files keep being edited under
+**Everywhere → Edit instructions**; adding space instructions does not modify
+those files or another space. Global changes are picked up on the next fresh start.
+Existing conversations and resumed sessions retain their current context.
+
+Assistant/Feature starts, fresh Assistant restarts and new task workers receive
+these additions. Task handoffs receive the worker addition too. Code-review workers
+read the current global reviewer prompt first, followed by a task-specific file
+containing the space addition; another space’s reviewer prompt is never substituted
+into the global template.
+
 ## Links in Chat
 
 Click a project-file link in an Assistant, Feature or agent reply to open it in the

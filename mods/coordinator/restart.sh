@@ -73,6 +73,12 @@ handoff="You are taking over this tab from $was ($old), which was restarted."
 [ -n "$log" ] && handoff+=" Its session log is $log: read the recent part to pick up where it left off."
 handoff+=" Its last screen is saved in $screen."
 
+if [ "$role" = coordinator ] && [ -z "${HERDR_RESTART_RESUME:-}" ]; then
+  instruction_space=${space:-$(get '.labels["herdr.coordinator.space"]')}
+  extra=$(herdr-task instructions --role coordinator --space "$instruction_space" --extra-only) || exit 1
+  [ -z "$extra" ] || handoff="$extra"$'\n\n'"$handoff"
+fi
+
 if [ "$role" = coordinator ]; then
   workers=$( { hc ls --json | jq -r --arg c "$old" '.terminals[] | select(.parent == $c) | .address'
     hc ls --json --label "herdr.coordinator=$tab" | jq -r --arg c "$old" '.terminals[] | select(.address != $c) | .address'; } | sort -u)

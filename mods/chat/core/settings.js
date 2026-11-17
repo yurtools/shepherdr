@@ -75,9 +75,9 @@ export const INSTRUCTIONS = {
   title: "Instructions", done: "Done", saved: "Saved.", notSaved: (why) => `Not saved: ${why}`,
   notes: {
     feature: "Every Feature Assistant uses this. Worker and Reviewer settings are shared with the space Assistant. Changes apply on a new feature start.",
-    coordinator: "Every Assistant uses this. Repo-specific rules go in the repo's AGENTS.md or CLAUDE.md. Changes apply when an Assistant restarts.",
-    worker: "Every worker gets this first. Repo-specific rules go in the repo's AGENTS.md or CLAUDE.md. Changes apply to the next task that starts.",
-    reviewer: "Every reviewer gets this first. Repo-specific rules go in the repo's AGENTS.md or CLAUDE.md. Changes apply to the next review.",
+    coordinator: "Every Assistant uses this. Space additions are set in Agents after choosing a space. Changes apply when an Assistant restarts.",
+    worker: "Every worker gets this first. Space additions are set in Agents after choosing a space. Changes apply to the next task that starts.",
+    reviewer: "Every reviewer gets this first. Space additions are set in Agents after choosing a space. Changes apply to the next review.",
     heartbeat: "Autopilot's heartbeat, plain text: an Assistant on Autopilot gets it on every wake. Changes apply from the next wake.",
   },
 };

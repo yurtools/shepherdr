@@ -18,6 +18,7 @@ import time
 from .base import ASK_HOME, ENTRY, Fail, git, hc_json, now, run, WORKTREES
 from .settings import agent_key, agent_index, ASSISTANT_TEMPLATES, trust_roots, bare, BRANCH_PATTERN, branch_pattern_problem, keep_review, notes, notes_part, review_limits, settings_block, settings_for
 from .templates import instructions
+from .space_instructions import worker_instructions
 from .agents import detail, LINE_MAX, live_agents, SUMMARY_MAX
 from .github import finish, remote_of
 from .browsers import browser_line, browser_path
@@ -593,12 +594,12 @@ def brief(s, task, parent=None, space=None, argv=None):
         start += f"\n(The main folder is {s.loc['folder']}.)"
     body = "Your task, " + s.ref(task) + ":\n" + ((task.get("prompt") or "").strip() or task["title"])
     finish = notes_part("Before you say ready", notes(s, task, "finish", space))
-    return "\n\n".join(x for x in [instructions("worker"), start, body, where_line(task), finish, closing_line(s, task, parent, argv),
+    return "\n\n".join(x for x in [worker_instructions(s,task,space,load=instructions), start, body, where_line(task), finish, closing_line(s, task, parent, argv),
                                     settings_block(s, task, space, argv, live=True)] if x)
 
 
 def handoff(s, task, prev, parent=None, argv=None):
-    lines = [f"You are taking over task {s.ref(task)} \"{task['title']}\" from another agent.", instructions("worker")]
+    lines = [f"You are taking over task {s.ref(task)} \"{task['title']}\" from another agent.", worker_instructions(s,task,load=instructions)]
     lines.append(where_line(task))
     lines.append("The task:\n" + ((task.get("prompt") or "").strip() or task["title"]))
     if prev and prev.get("log"):

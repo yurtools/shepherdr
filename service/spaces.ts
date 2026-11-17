@@ -1,3 +1,4 @@
+import {appendInstructions} from '../core/instructions.js';
 // New spaces from the web, and spaces without a Herdr window. With the window (Shepherdr's layout installed), a space
 // is the window's: it makes it (herdr-app do space.new), names it as New space does, and gives it its Assistant (new
 // spaces get one). A web-only install has no window: its spaces are the service's own list (the shared document's
@@ -70,13 +71,13 @@ export async function newSpaceInfo(hub: Hub, machine: string | null, at: string 
  *  isn't installed there (then the template's own, as the window). Neither installed: refused in plain words, never a
  *  start that ends at once ("exec: claude: not found") and leaves the chat on Starting.
  *  words: the template's own words (its first message), when read. Unreadable: the template itself. */
-export async function execTemplate(hub: Hub, name: string, machine: string | null, pick: any = null): Promise<{ name: string; words: string; done: () => void }> {
+export async function execTemplate(hub: Hub, name: string, machine: string | null, pick: any = null, extra = ""): Promise<{ name: string; words: string; done: () => void }> {
   const plain = { name, words: "", done: () => {} };
   const DIR = 'dir="$HOME/.config/herdr-core/templates"; ';
   const src = (await exec(hub, ["sh", "-c", DIR + 'cat "$dir/$1.md"', "x", name], machine).catch(() => null))?.stdout ?? "";
   const head = /^---\n([\s\S]*?)\n---\n?/.exec(src);
   const own = /^command:[ \t]*(.+)$/m.exec(head?.[1] ?? "")?.[1]?.trim();
-  if (!head || !own) return plain;
+  if (!head || !own) {if(extra)throw new Error("The global Assistant template has no launch command.");return plain;}
   const has = async (prog: string) => (await exec(hub, ["sh", "-c", `${AGENT_PATH} command -v "$1" >/dev/null 2>&1`, "x", prog], machine).catch(() => null))?.code === 0;
   let cmd = own;
   if (pick?.agent === "claude" || pick?.agent === "codex") {
@@ -92,11 +93,12 @@ export async function execTemplate(hub: Hub, name: string, machine: string | nul
       throw new Error(`${(NAMES as Record<string, string>)[pick.agent] ?? pick.agent} isn't installed on ${machine ?? "this computer"}. Install it, or pick another agent for the Assistant in Settings › Agents.`);
     }
   }
+  const body=appendInstructions(src.slice(head[0].length),extra);
   const one = `herdr-${name}-${Date.now().toString(36)}`;
-  const file = `---\nname: ${one}\ndescription: A one-off ${name} start that execs its command (Shepherdr's service), removed after use.\ncommand: ${cleanCommand(cmd)}\n---\n${src.slice(head[0].length)}`;
+  const file = `---\nname: ${one}\ndescription: A one-off ${name} start that execs its command (Shepherdr's service), removed after use.\ncommand: ${cleanCommand(cmd)}\n---\n${body}`;
   const w = await exec(hub, ["sh", "-c", DIR + 'printf "%s" "$2" > "$dir/$1.md"', "x", one, file], machine).catch(() => null);
-  if (w?.code !== 0) return plain;
-  return { name: one, words: src.slice(head[0].length).trim(), done: () => void exec(hub, ["sh", "-c", DIR + 'rm -f "$dir/$1.md"', "x", one], machine).catch(() => null) };
+  if (w?.code !== 0) {if(extra)throw new Error("The space instructions could not be applied to the Assistant template.");return plain;}
+  return { name: one, words: body.trim(), done: () => void exec(hub, ["sh", "-c", DIR + 'rm -f "$dir/$1.md"', "x", one], machine).catch(() => null) };
 }
 
 /** One word of a command line for sh, quoted only when it needs it (as mods/chat's). */
@@ -111,7 +113,7 @@ export const placeId = (space: string, machine: string | null) => (!machine || s
  *  createSpace): a missing folder is made, makeRepo makes a folder outside git a repo (main, an empty first commit), it
  *  is named as Herdr names it ("Home" at home, else its repo's or folder's name; unnamed: left to follow its folder, as
  *  a worktree's), and `icon` is kept as the sidebar's Rename keeps it. */
-export async function newSpace(hub: Hub, opts: { machine: string | null; path: string; name?: string; unnamed?: boolean; makeRepo?: boolean; icon?: string | null; pick?: ((space: string) => any) | null; store: { value(k: string): any; set(k: string, v: unknown): Promise<unknown> } }) {
+export async function newSpace(hub: Hub, opts: { machine: string | null; path: string; name?: string; unnamed?: boolean; makeRepo?: boolean; icon?: string | null; pick?: ((space: string) => any) | null; instructions?:((space:string)=>string)|null; store: { value(k: string): any; set(k: string, v: unknown): Promise<unknown> } }) {
   const { machine } = opts;
   if (!opts.path || opts.path.includes("\0")) throw new Error("Pick a folder.");
   const home = (await homeOf(hub, machine)) ?? "";
@@ -149,7 +151,7 @@ export async function newSpace(hub: Hub, opts: { machine: string | null; path: s
   await iconOf(machine ? `${machine}/${id}` : id);
   // Settings › Window › Assistant in new spaces off: it opens without one
   if (opts.store.value("coordinator.auto") === false) return machine ? `${machine}/${id}` : id;
-  const t = await execTemplate(hub, "assistant", machine, opts.pick?.(machine ? `${machine}/${id}` : id) ?? null);
+  const t = await execTemplate(hub, "assistant", machine, opts.pick?.(machine ? `${machine}/${id}` : id) ?? null, opts.instructions?.(machine ? `${machine}/${id}` : id)??"");
   await run(["hc", "run", "--bg", "--keep", "--no-parent", ...(machine ? ["--on", machine] : []), "--cwd", abs,
     "--label", "herdr.role=coordinator", "--label", `herdr.coordinator.space=${id}`, "--label", `herdr.space=${id}`, t.name]);
   t.done();

@@ -9,6 +9,7 @@ import subprocess
 import sys
 import time
 
+from .space_instructions import cmd_instructions
 from . import link
 from .base import bundle, Fail, guard, run, STORE, sync_held, VERSION
 from .agents import LINE_MAX, SUMMARY_MAX
@@ -174,6 +175,11 @@ def main():
         c.add_argument("--json", action="store_true")
         c.set_defaults(fn=fn)
         return c
+
+    c=cmd('instructions',cmd_instructions,'Read global role instructions with a space’s additions',id=False)
+    c.add_argument('--role',choices=['assistant','coordinator','feature','worker','reviewer'],required=True)
+    c.add_argument('--space')
+    c.add_argument('--extra-only',action='store_true')
 
     def notes_opts(c):
         c.add_argument("--start-notes", help="this task's own \"When a task starts\" notes, replacing the folder's (\"\": the folder's)")

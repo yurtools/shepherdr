@@ -1,3 +1,4 @@
+import {initSpaceInstructions,resetSpaceInstructions,flushSpaceInstructions,spaceInstructionButton,spaceInstructionEditor} from './space-instructions.js';
 import { keepKeys, dropKeys } from "./keyholder.js";
 import { approvalsInit, approvalsSection, approvalsFlush } from "./approval-section.js";
 // Settings: Shepherdr's settings window (the sidebar foot's Shepherdr; lib/ui.js openSettings). How
@@ -109,6 +110,7 @@ export default class ShepherdrSettings extends View {
     cx.spawn(async (cx) => { this.addons = await manifest(); cx.notify(); });
     // The two notes' text boxes: saved a moment after typing stops, on leaving the box, and on
     // close; "Saved" shows dim for a moment after.
+    initSpaceInstructions(this,cx);
     this.notes = {};
     for (const n of NOTES) {
       // No built-in placeholder: it draws in the text's color. noteRow() draws the example, dim.
@@ -126,7 +128,7 @@ export default class ShepherdrSettings extends View {
       await this.load();
       try { this.data = await models.loadChoices(null); } catch { this.data = null; }
       this.resetRoles();
-      this.resetNotes();
+      this.resetNotes(); resetSpaceInstructions(this);
       if (this.scope) await this.folderOf(this.scope);
       cx.notify();
       await this.pushRemotes();
@@ -291,14 +293,15 @@ export default class ShepherdrSettings extends View {
 
   // Into a space's own settings (null: Everywhere's). A page the space doesn't have goes to Agents.
   pickScope(id, cx) {
-    const saving = Promise.all([this.flushNotes(), autopilotFlush(this), approvalsFlush(this)]);
+    const saving = Promise.all([this.flushNotes(), flushSpaceInstructions(this), autopilotFlush(this), approvalsFlush(this)]);
+    this.promptScope=null;this.promptOpen=null;
     this.scope = id;
     this.listOpen = null;
     this.levelOpen = false;
     if (!this.shows(this.section)) this.section = "agents";
     this.secFor();
     this.handle.focus();
-    cx.spawn(async (cx) => { await saving; if (id) await this.folderOf(id); await this.load(); this.resetRoles(); this.resetNotes(); cx.notify(); });
+    cx.spawn(async (cx) => { await saving; if (id) await this.folderOf(id); await this.load(); this.resetRoles(); this.resetNotes(); resetSpaceInstructions(this); cx.notify(); });
   }
 
   // Secrets' Add is for the space whose settings these are, else Everywhere.
@@ -392,7 +395,7 @@ export default class ShepherdrSettings extends View {
   // still saved.
   close() {
     dropKeys(this.approvalKeyHolder);
-    const saving = Promise.all([this.flushNotes(), autopilotFlush(this), approvalsFlush(this)]);
+    const saving = Promise.all([this.flushNotes(), flushSpaceInstructions(this), autopilotFlush(this), approvalsFlush(this)]);
     this.sec?.value.set_value("");
     closeOverlay(props().overlay);
     return saving;
@@ -502,13 +505,14 @@ export default class ShepherdrSettings extends View {
   roleRow(t, r, cx) {
     const c = this.roles[r.id];
     const label = r.id === "reviewer" && c?.unset ? otherCliWords(this.otherCli()) : undefined;
-    const control = h_flex().gap(8).items_center()
+    const control = h_flex().gap(8).items_center().flex_wrap()
       .child(c?.sel ? models.modelButton(t, c, { label }, cx) : div().text_size(TEXT.label).text_color(t.dim).child(LOADING_AGENTS))
       .when(!this.scope && r.id === "reviewer" && c && !c.unset,
         (el) => el.child(button("reviewer-other", USE_OTHER_CLI, { kind: "plain", onClick: (_e, cx) => this.reset("reviewer", null, cx) })))
       .when(!this.scope, (el) => el.child(button(`edit-${r.id}`, EDIT_INSTRUCTIONS,
         { onClick: () => this.edit({ id: r.id, title: r.told, file: `${TEMPLATES()}/${r.file}` }) })));
-    return this.row(t, r.title, r.about, control, this.scoped(r.id, null));
+    return v_flex().w_full().child(this.row(t, r.title, r.about, control.when(Boolean(this.scope),el=>el.child(spaceInstructionButton(this,r,t))), this.scoped(r.id, null)))
+      .when(Boolean(this.scope)&&this.promptOpen===r.id,el=>el.child(spaceInstructionEditor(this,r,t)));
   }
 
   // Reactions, for every agent (herdr-task's reactions.py): Assistants, task workers,

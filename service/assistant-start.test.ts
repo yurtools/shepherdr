@@ -52,3 +52,8 @@ test("the chosen agent missing there: the template's own; neither there: a plain
   await expect(execTemplate(b.hub, "assistant", null, { agent: "codex", perm: "full" })).rejects.toThrow("Codex isn't installed on this computer");
   expect(b.made()).toEqual([]);
 });
+
+test('a web-started Assistant receives global instructions followed by the space addition without changing the global template',async()=>{
+ const {hub,made}=machine(['claude']);const t=await execTemplate(hub,'assistant',null,null,'Space-only instruction with literal $(printf ignored)');
+ const file=made()[0];expect(t.words).toContain('You are the Assistant.\n\n## Space-specific instructions\n\nSpace-only instruction');expect(file).toContain('literal $(printf ignored)');expect(file.indexOf('You are the Assistant.')).toBeLessThan(file.indexOf('Space-only instruction'));
+});

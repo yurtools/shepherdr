@@ -1,3 +1,4 @@
+import {spaceInstructions} from '../core/instructions.js';
 // Shepherdr settings for the web app: ~/.config/shepherdr/settings.json as the window's settings show it (core/settings.js: the
 // same words and choices), as 2.1's settings sections, and a change from the web written back to the same file,
 // keeping everything else in it. The window's settings read the file when they open; herdr-task reads it each time.
@@ -120,6 +121,8 @@ export class Settings {
 
   /** The agent a role runs in a space (null: Everywhere's), as the window's chat starts it (lib/coordinator.js
    *  shepherdrFor): { agent, model, effort, fast, perm }, or null when none is set (the template's own command). */
+  instructions(scope:string|null,role:string):string {return spaceInstructions(this.file,scope,role);}
+
   role(scope: string | null, role: string): any {
     const v = this.pick(scope, role, null).value;
     return v && typeof v === "object" && v.agent ? v : null;

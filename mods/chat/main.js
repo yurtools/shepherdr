@@ -1,3 +1,5 @@
+import {appendInstructions,spaceInstructions} from './core/instructions.js';
+import {readShepherdr} from './coordinator.js';
 import LinkedMarkdown from './linked-markdown.js';
 import { chatLink, hasChatLink } from './core/chat-links.js';
 import { startFeature, workspaceCall } from "./features.js";
@@ -1795,7 +1797,7 @@ export default class Chat extends View {
         const q = (a) => (/^[\w@%+=:,./-]+$/.test(a) ? a : `'${String(a).replace(/'/g, "'\\''")}'`);
         const src = (await exec("sh", ["-c", TEMPLATE + 'cat "$dir/$1.md"', "x", template], on).catch(() => null))?.stdout ?? "";
         const head = /^---\n([\s\S]*?)\n---\n?/.exec(src);
-        const body = head ? src.slice(head[0].length) : src;
+        const body = appendInstructions(head ? src.slice(head[0].length) : src,spaceInstructions(await readShepherdr(),space?.id,this.role));
         const own = /^command:[ \t]*(.+)$/m.exec(head?.[1] ?? "")?.[1]?.trim();
         let selected = st;
         try {

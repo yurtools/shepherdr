@@ -83,3 +83,6 @@ workspace-browser.js: tabs-tasks
 workspace-store.js: tabs-tasks chat workspace-sessions workspace-launchers new-menu-tasks menu-tasks
 
 core/chat-links.js: chat workspace-document
+
+core/instructions.js: chat shepherdr-settings
+space-instructions.js: shepherdr-settings

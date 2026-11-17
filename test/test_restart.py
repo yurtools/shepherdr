@@ -42,6 +42,9 @@ class RemoteRestart(unittest.TestCase):
         with open(hc, "w") as f:
             f.write(FAKE_HC)
         os.chmod(hc, 0o755)
+        helper=os.path.join(d,"bin","herdr-task")
+        with open(helper,"w") as f:f.write('#!/bin/sh\nprintf "%s\\n" "$*" > "$FAKE_DIR/instruction-args"\nprintf "%s" "${FAKE_EXTRA:-}"\n')
+        os.chmod(helper,0o755)
         e = {"PATH": f"{d}/bin:/usr/bin:/bin", "HOME": d, "FAKE_DIR": d, "FAKE_STATE": state, **(env or {})}
         r = subprocess.run(["bash", SCRIPT, "vmb/t2", json.dumps(["claude", "--model", "sonnet"])], env=e,
                            capture_output=True, text=True, timeout=30)
@@ -79,8 +82,8 @@ class RemoteRestart(unittest.TestCase):
 LOCAL_HC = r"""#!/usr/bin/env bash
 printf '%s\n' "$*" >>"$FAKE_DIR/calls"
 case $1 in
-  get) echo '{"address":"t2","cwd":"/tmp","labels":{"herdr.chat":"vmb/p7","herdr.role":"coordinator"}}' ;;
-  run) printf '%s\n' "$@" >"$FAKE_DIR/run-args"; echo '{"address":"t9"}' ;;
+  get) echo '{"address":"t2","cwd":"/tmp","labels":{"herdr.chat":"vmb/p7","herdr.role":"coordinator","herdr.coordinator.space":"sp1"}}' ;;
+  run) printf '%s\n' "$@" >"$FAKE_DIR/run-args"; for arg in "$@"; do f="$HOME/.config/herdr-core/templates/$arg.md"; [ ! -f "$f" ] || cp "$f" "$FAKE_DIR/template-used"; done; echo '{"address":"t9"}' ;;
   ls) echo '{"terminals":[]}' ;;
 esac
 """
@@ -97,6 +100,9 @@ class ChatLabel(unittest.TestCase):
         with open(hc, "w") as f:
             f.write(LOCAL_HC)
         os.chmod(hc, 0o755)
+        helper=os.path.join(d,"bin","herdr-task")
+        with open(helper,"w") as f:f.write('#!/bin/sh\nprintf "%s\\n" "$*" > "$FAKE_DIR/instruction-args"\nprintf "%s" "${FAKE_EXTRA:-}"\n')
+        os.chmod(helper,0o755)
         e = {"PATH": f"{d}/bin:/usr/bin:/bin", "HOME": d, "HERDR_APP_HOME": d, "FAKE_DIR": d, "HERDR_RESTART_RESUME": "1", **env}
         r = subprocess.run(["bash", SCRIPT, "t2", json.dumps(["claude", "--resume", "s1"])], env=e,
                            capture_output=True, text=True, timeout=30)
@@ -127,6 +133,9 @@ class NoTab(unittest.TestCase):
         with open(hc, "w") as f:
             f.write(LOCAL_HC.replace(LOCAL_HC.split("\n")[3], f"  get) echo '{rec}' ;;"))
         os.chmod(hc, 0o755)
+        helper=os.path.join(d,"bin","herdr-task")
+        with open(helper,"w") as f:f.write('#!/bin/sh\nprintf "%s\\n" "$*" > "$FAKE_DIR/instruction-args"\nprintf "%s" "${FAKE_EXTRA:-}"\n')
+        os.chmod(helper,0o755)
         e = {"PATH": f"{d}/bin:/usr/bin:/bin", "HOME": d, "HERDR_APP_HOME": d, "FAKE_DIR": d, "HERDR_RESTART_RESUME": "1", **(env or {})}
         r = subprocess.run(["bash", SCRIPT, "t2", json.dumps(list(argv))], env=e, capture_output=True, text=True, timeout=30)
         p = os.path.join(d, "run-args")
@@ -154,6 +163,9 @@ class NoTab(unittest.TestCase):
         with open(hc, "w") as f:
             f.write(FAKE_HC.replace("    echo t9 ;;", '    [ -n "$FAKE_WHY" ] && { echo "$FAKE_WHY" >&2; exit 1; }\n    echo t9 ;;'))
         os.chmod(hc, 0o755)
+        helper=os.path.join(d,"bin","herdr-task")
+        with open(helper,"w") as f:f.write('#!/bin/sh\nprintf "%s\\n" "$*" > "$FAKE_DIR/instruction-args"\nprintf "%s" "${FAKE_EXTRA:-}"\n')
+        os.chmod(helper,0o755)
         e = {"PATH": f"{d}/bin:/usr/bin:/bin", "HOME": d, "FAKE_DIR": d, "FAKE_STATE": "connected",
              "FAKE_WHY": "t2 has no space, tab or chat to restart into."}
         r = subprocess.run(["bash", SCRIPT, "vmb/t2", "[]"], env=e, capture_output=True, text=True, timeout=30)
@@ -171,6 +183,11 @@ class Bash32(unittest.TestCase):
         with open(hc, "w") as f:
             f.write(LOCAL_HC)
         os.chmod(hc, 0o755)
+        helper=os.path.join(d,"bin","herdr-task")
+        with open(helper,"w") as f:f.write('#!/bin/sh\nprintf "%s\\n" "$*" > "$FAKE_DIR/instruction-args"\nprintf "%s" "${FAKE_EXTRA:-}"\n')
+        os.chmod(helper,0o755)
+        templates=os.path.join(d,".config","herdr-core","templates");os.makedirs(templates,exist_ok=True)
+        with open(os.path.join(templates,"assistant.md"),"w") as f:f.write("---\ncommand: claude\n---\nGlobal instructions\n")
         # BASH_ENV runs before the script: it takes bash 4's builtins away, as on bash 3.2.
         old = os.path.join(d, "bash32")
         with open(old, "w") as f:
@@ -180,12 +197,19 @@ class Bash32(unittest.TestCase):
                            capture_output=True, text=True, timeout=30)
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(r.stdout.strip(), "t9")
+        r.fixture_dir=d
         return r, read(os.path.join(d, "run-args")).split("\n")
 
     def test_resume(self):
         r, args = self.restart({"HERDR_RESTART_RESUME": "1"})
         self.assertNotIn("command not found", r.stderr)
         self.assertEqual(args[args.index("herdr-clean") + 1:][:3], ["claude", "--model", "a b"])
+
+    def test_handoff_appends_space_instructions_after_global_prompt(self):
+        r,args=self.restart({"FAKE_EXTRA":"Space instructions marker"})
+        text=read(os.path.join(r.fixture_dir,"template-used"))
+        self.assertLess(text.index("Global instructions"),text.index("Space instructions marker"))
+        self.assertIn("--space sp1",read(os.path.join(r.fixture_dir,"instruction-args")))
 
     def test_handoff(self):
         r, args = self.restart({})

@@ -32,6 +32,23 @@ RECIPE.md, preview.png   the herdr.dev listing (repo topic herdr-layout)
   live terminal or artifact ids in the layout. `test/test_repo.py` checks.
 - Version: `VERSION` in `bin/shepherdr`, the top of `CHANGELOG.md`, `RECIPE.md` and the README say the same.
 
+## Native multi-repository Changes
+
+`mods/workspace-changes/main.js` owns the panel; `repositories.py` provides bounded
+discovery, status, diff and selected-repository commit operations. It uses the
+shared `project-folder.js` helper to resolve saved space roots. The layout keeps
+the block ID `changes` and maps its content to `workspace-changes`; do not edit
+Herdr's shipped Changes mod. Remote spaces execute the same Python source through
+Herdr's `exec` API on their machine.
+
+`test/test_workspace_changes.py` exercises real throwaway repositories, worktrees,
+submodules, literal paths, discovery limits and nested-repository staging.
+`service/workspace-changes.test.ts` covers routing, persisted selection/drafts,
+late replies, commits, ordering and native virtual-list interaction. Virtual row
+renderers must register no handlers: attach `on_item_click` to the list itself.
+Verify loaded rows in the real window as well as running the native check; the
+check does not exercise deferred row rendering.
+
 ## Where data lives (SHEP-141)
 
 - Shepherdr's data is in its own folders ([Install](install.md), Where your data lives). Never write a `~/.herdr/...`

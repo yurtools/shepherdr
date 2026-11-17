@@ -7,8 +7,8 @@ marked below off and on again, at once and on every machine (Everywhere's `off` 
 
 | Add-on | Switch | What it is | Off means |
 |---|---|---|---|
-| Core | always on | The layout: sidebar (spaces-chat), tab bar (tabs-tasks), pane header (pane-chat), sidebar foot, status bar, toasts, menus and dialogs, Yurherdr settings | — |
-| Tasks | always on in 3.1.35 | The Tasks panel, a task's view (files, changes, pull request), the Accept card, `herdr-task`, worker.md and reviewer.md | — |
+| Core | always on | The layout: sidebar (spaces-chat), tab bar (tabs-tasks), pane header (pane-chat), sidebar foot, status bar, toasts, menus and dialogs, Yurherdr settings, workspace Files/Documents/Changes | — |
+| Tasks | always on in 3.1.35 | The Tasks panel, worker views (Chat / Terminal, pull request and optional artifacts/browser), the Accept card, `herdr-task`, worker.md and reviewer.md | — |
 | Assistants | always on in 3.1.35 | An Assistant per space (coordinator, assistant.md), task news. Needs Tasks | — |
 | Chat | always on in 3.1.35 | Agents as a chat, model choice, opened images | — |
 | Questions and permissions | always on in 3.1.35 | Question and permission cards from Claude Code and Codex hooks. Needs Chat | — |
@@ -40,7 +40,7 @@ Settings says which.
 
 Chat, Feature Assistants, Sessions, the persistent Files tree and separate document
 panes are part of this development build. Markdown/CSV previews, source highlighting,
-DOCX/Excel content views, file references, clipboard menus and approval controls
+DOCX/Excel content views, multi-repository Changes, file references, clipboard menus and approval controls
 are described in [the workspace guide](workspace.md). They are not separate TUI
 plugins and do not need the removed Agent Chat or standalone Markdown panels.
 Blueprint is a separate optional mod; Yurherdr does not bundle or remove it.

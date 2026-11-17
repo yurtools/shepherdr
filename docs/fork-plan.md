@@ -13,7 +13,7 @@ is Yurherdr; the repository remains `yurtools/shepherdr` and the runtime's
 | 1 | Agent workspace | Same-session Chat / Terminal; collapsible activity; wide chat; extra views beside existing agents | Extra views share the underlying process and account |
 | 2 | Features and coordination | Named Feature Assistants alongside the space Assistant; own task ownership; shared Worker / Reviewer settings; sidebar activity includes workers | Native local-space feature workflow |
 | 3 | Accounts and agent controls | Named Codex profiles retained through launch/resume/fork/restart; model/thinking/permissions; Feature role override; skills picker and `/status` | Authentication remains in each CLI's account home |
-| 4 | Project files and documents | Persistent space-rooted tree; separate text editing and preview panes; Markdown/CSV modes; lexical highlighting; DOCX/Excel content; file references and links; multi-repository native Changes | Bounded read-only Office previews, cached formulas, no full layout reproduction |
+| 4 | Project files and documents | Persistent space-rooted tree; separate text editing and preview panes; Markdown/CSV modes; lexical highlighting; DOCX/Excel content; file references and links; multi-repository native Changes | Bounded Office content and repository discovery; multi-repository Changes is native-only |
 | 5 | Approvals | Role defaults, bounded exact/prefix rules, Assistant review, native Codex handoff, source-labeled history and future rules from history | Codex owns its final native decision; old contextless history is not guessed |
 | 6 | Sessions and project instructions | Space-scoped history below Spaces; click to resume/focus; preview/Open dialog; role-specific additions to current global prompts | General remote/non-Codex history indexing remains limited |
 | 7 | Browser pages and launchers | Persistent native browser pages, editable URLs, configured chat shortcuts, profile isolation, Manage launchers and system-browser fallback | Headless site verification can fail; pages do not inherit Codex skills or login |
@@ -73,7 +73,10 @@ the host's render budget.
    discussion, tasks owned by the intended feature, and worker activity visible.
 4. Switch between spaces with different roots. Keep Files as a tree; open/edit
    documents separately. Check Markdown/CSV, source colors, Office content limits,
-   individual file close, drafts and external edits.
+   individual file close, drafts and external edits. For Changes, use sibling repos
+   containing identical file paths, worktrees and submodules. Verify discovery stays
+   anchored to the space, late replies preserve the selected file, drafts stay per
+   repository, and a commit leaves other repositories untouched.
 5. Resume/focus sessions from the sidebar with the original account. Keep the
    read-only history preview independent of agent launch.
 6. Append space instructions independently for every role. Keep global prompts

@@ -16,6 +16,9 @@ The feature groups below are ordered by importance to the user's workflow.
   save that keeps the native space and Files root aligned.
   Changes groups multiple repositories beneath that folder, with per-repository
   selection, branch labels, diff previews and separate commit-message drafts.
+  Worktrees and submodules have their own groups; changed repositories appear
+  first, and parent staging excludes untracked nested repositories. Web Changes
+  retains its existing single-repository behavior.
 - Approvals: role defaults, bounded rules, delegated reviews, decision-source history
   and future rules created from history without replaying old actions.
 - Sessions and instructions: resume/focus from the sidebar, named feature ownership,

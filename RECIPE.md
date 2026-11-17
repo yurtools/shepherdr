@@ -27,8 +27,10 @@ chosen theme rather than hard-coding a replacement. Read `layouts/shepherdr.json
   separate pane with its own tabs, source/editor/preview controls, path actions and close buttons.
   Markdown renders as Markdown, CSV as a table, source in lexical colors. Office views show
   bounded read-only DOCX content and Excel OOXML sheets.
-- **Right panel:** Agents, Changes, Tasks or Artifacts. Tasks opens a worker in place with a header,
-  Chat / Terminal and available artifact, pull-request and browser views. Reports and previews stay
+- **Right panel:** Agents, Changes, Tasks or Artifacts. Changes groups repositories under the space folder,
+  showing changed repositories first, branches and per-file diffs; commits target one selected repository.
+  Tasks opens a worker in place with a header, Chat / Terminal and available artifact, pull-request
+  and browser views. Reports and previews stay
   close to the agent work rather than replacing the file tree.
 - **Status and overlays:** machine/status strip, notifications and dialogs. Anchor dropdowns to the
   control pressed. Context menus offer normal clipboard actions where supported by the host.
@@ -49,7 +51,9 @@ The daily workflow, in order of importance:
    permissions and skill discovery to that account; do not copy credentials.
 4. **Inspect project files.** Root Files in the selected space. Keep its tree while documents open
    elsewhere. Edit source or switch Markdown/CSV preview modes. File paths, @ references and
-   source links target the intended chat/document pane without auto-sending a message.
+   source links target the intended chat/document pane without auto-sending a message. Inspect changes
+   across repositories, worktrees and submodules; select one repository to commit, retaining its own
+   message draft. Discovery and previews are bounded; the web panel remains single-repository.
 5. **Handle approvals deliberately.** Offer once-only decisions, bounded saved rules and configured
    review modes. History shows decision sources and creates future rules from saved context,
    without rerunning old actions. Native Codex handoff is not falsely shown as a known allow/deny.
@@ -71,8 +75,8 @@ measurements and link-view preparation so long conversations stay within the nat
   Sidebar contains Spaces and the workspace Sessions/Features mod. Main panes use `pane-chat` headers.
 - **Native mods:** the authoritative inventory is `lib/addons.json`. Workspace extensions include
   `chat`, `workspace-sessions`, `workspace-agents`, `workspace-files`, `workspace-document`,
-  `workspace-launchers`, file reference/search/actions, approvals and clipboard support. Shared
-  modules come from `lib/` and `core/`, regenerated with `bin/sync-shared`.
+  `workspace-changes`, `workspace-launchers`, file reference/search/actions, approvals and clipboard
+  support. Shared modules come from `lib/` and `core/`, regenerated with `bin/sync-shared`.
 - **Helpers:** `herdr-task`, `herdr-artifact`, `herdr-secret`, `herdr-browser` and the `shepherdr`
   installer. Role instructions are Assistant, Feature Assistant, Worker and Reviewer templates.
 - **Optional web service:** Bun service plus built React web app, served on the person's tailnet.
@@ -103,6 +107,7 @@ DOCX/Excel previews do not promise full Office layout or formula recalculation.
 - Same-session Chat / Terminal, account controls and Beside work without replacing the agent.
 - Independent features own the intended workers and show their current activity.
 - Files stays a tree while documents open, edit, preview and close separately.
+- Changes discovers sibling repositories, preserves file/repository identity and commits only the selected repo.
 - Session resume retains the original account; space instructions append without editing globals.
 - Approval history names its decision source and creates only future bounded rules.
 - The worker's main conversation renders, including long messages, without picking an internal review log.

@@ -10,13 +10,13 @@ is Yurherdr; the repository remains `yurtools/shepherdr` and the runtime's
 
 | Priority | Area | Implemented behavior | Remaining boundary |
 | --- | --- | --- | --- |
-| 1 | Agent workspace | Same-session Chat / Terminal; collapsible activity; wide chat; extra views beside existing agents | Extra views share the underlying process and account |
-| 2 | Features and coordination | Named Feature Assistants alongside the space Assistant; own task ownership; shared Worker / Reviewer settings; sidebar activity includes workers | Native local-space feature workflow |
-| 3 | Accounts and agent controls | Named Codex profiles retained through launch/resume/fork/restart; model/thinking/permissions; Feature role override; skills picker and `/status` | Authentication remains in each CLI's account home |
+| 1 | Agent workspace | Same-session Chat / Terminal; collapsible activity; wide chat; extra views beside existing agents | Codex/Claude Code Chat and space roles; other CLI launchers are Terminal only |
+| 2 | Features and coordination | Named Feature Assistants alongside the space Assistant; own task ownership; shared Worker / Reviewer settings; sidebar activity includes workers | Local spaces; integration checkout is not created automatically; worker/task worktree settings control code isolation |
+| 3 | Accounts and agent controls | Named Codex profiles retained through launch/resume/fork/restart; model/thinking/permissions; Feature role override; skills picker and `/status` | Named profiles are Codex-only; authentication remains in each CLI's account home |
 | 4 | Project files and documents | Persistent space-rooted tree; separate text editing and preview panes; Markdown/CSV modes; lexical highlighting; DOCX/Excel content; file references and links; multi-repository native Changes | Bounded Office content and repository discovery; multi-repository Changes is native-only |
 | 5 | Approvals | Role defaults, bounded exact/prefix rules, Assistant review, native Codex handoff, source-labeled history and future rules from history | Codex owns its final native decision; old contextless history is not guessed |
 | 6 | Sessions and project instructions | Space-scoped history below Spaces; click to resume/focus; preview/Open dialog; role-specific additions to current global prompts | General remote/non-Codex history indexing remains limited |
-| 7 | Browser pages and launchers | Persistent native browser pages, editable URLs, configured chat shortcuts, profile isolation, Manage launchers and system-browser fallback | Headless site verification can fail; pages do not inherit Codex skills or login |
+| 7 | Browser pages and launchers | Persistent native browser pages, editable URLs, configured chat shortcuts, profile isolation, Manage launchers and system-browser fallback | Launchers do not add role adapters; website verification can fail; pages do not inherit Codex skills or login |
 | 8 | Inherited services | Tasks, artifacts, optional Autopilot, voice, other machines and tailnet web access | New native workspace extensions do not imply complete web parity |
 
 These are implementation descriptions, not a new cross-platform certification.

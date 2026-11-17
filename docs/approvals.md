@@ -2,9 +2,17 @@
 
 Approval handling is configured in **Yurherdr settings → Agents → Approvals** or
 **Space settings → Agents → Approvals**. The dialog is wider to fit the controls.
-Choose a default and optional Assistant, Workers and Reviewer overrides. Space
+Choose a default and optional Assistant, Features, Workers and Reviewer overrides. Space
 settings override the global layer; roles set to Default inherit its mode.
 The default is **Ask me**, so installing this build does not enable automatic grants.
+
+For example, keep unfamiliar actions on **Ask me**, remember read-only `git status`
+requests with a project-scoped rule, and delegate other worker requests to the
+owning Feature Assistant. The reviewer decides allow, deny or ask; it does not
+execute the requested operation in its own process. If the reviewer is unavailable
+or uncertain, the original request remains for you. Rules, review and history
+reduce repeated decisions without making the Assistant's access level a blanket
+permission grant to every worker.
 
 ## Modes
 
@@ -12,7 +20,7 @@ The default is **Ask me**, so installing this build does not enable automatic gr
 | --- | --- |
 | Ask me | Permission cards wait for Allow once or Deny. Saved command rules are paused, except for a task/session where you explicitly remembered a grant. |
 | Approved rules | Matching unexpired rules answer the request; unmatched requests still ask you. |
-| Assistant review | Matching rules apply first; other execution requests go to the space's running Assistant using the review policy. |
+| Assistant review | Matching rules apply first; other execution requests go to the owning Feature Assistant, or the space Assistant for work outside a feature, using the review policy. |
 | Codex Auto-review | Matching rules apply first; remaining requests continue through Codex's native Auto-review when that agent was launched with it. Other agents, or an existing Codex not restarted with it, keep manual approval. |
 
 Execution **Permissions** in the composer determine sandbox/access options.

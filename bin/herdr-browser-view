@@ -25,7 +25,13 @@ const HEARTBEAT_STALE_MS = 15000;
 
 const args = process.argv.slice(2);
 const opt = (k) => { const i = args.indexOf(k); return i >= 0 ? args[i + 1] : null; };
-const task = opt("--task");
+const pageId = opt("--page");
+const APP = process.env.HERDR_APP_HOME || path.join(process.env.HOME, '.config', 'herdr-app');
+const STATE_HELPER = path.join(APP, 'mods/workspace-launchers/bin/workspace-state');
+const pageRecord = pageId ? (() => { try { return JSON.parse(fs.readFileSync(path.join(APP,'data/workspace-browsers.json'),'utf8'))[pageId]; } catch { return null; } })() : null;
+if(pageId && !pageRecord) { process.stderr.write('Browser tab is no longer available.\n'); process.exit(2); }
+const profileKey = pageRecord ? require('crypto').createHash('sha256').update(pageRecord.profile.startsWith('shared:') ? pageRecord.profile : `${pageRecord.space}:${pageRecord.profile}`).digest('hex').slice(0,24) : null;
+const task = pageId ? `web-${profileKey}` : opt("--task");
 const worker = opt("--worker");
 if (!task) { process.stderr.write("herdr-browser-view --task <slug#id> [--worker <terminal>]\n"); process.exit(2); }
 const name = task.replace(/[^A-Za-z0-9_-]/g, "-").replace(/-+/g, "-").replace(/^-/, "").replace(/-$/, "");
@@ -43,7 +49,7 @@ const ROOT = (() => {
   try { layout = fs.readFileSync(`${data}/LAYOUT`, "utf8"); } catch {}
   return layout.trim().startsWith("2") && !fs.existsSync(path.join(HOME, ".herdr", ".layout-rollback")) ? `${state}/browser` : path.join(HOME, ".herdr", "browser");
 })();
-const BIN = path.join(HOME, ".config", "herdr-app", "bin", "herdr-browser");
+const BIN = path.join(APP, "bin", "herdr-browser");
 const file = (ext) => path.join(ROOT, name + ext);
 
 // ---- small helpers ----
@@ -55,7 +61,8 @@ function run(cmd, argv, input) {
     if (input != null) { p.stdin.end(input); }
   });
 }
-const ab = (...a) => run(BIN, ["--own", "--task", task, ...a]);
+const ab = (...a) => run(BIN, ["--own", ...(pageId ? ["--workspace", profileKey] : ["--task", task]), ...a]);
+const savePage = (update) => pageId ? run("python3", [STATE_HELPER, "browser-update", JSON.stringify({ id: pageId, ...update })]) : Promise.resolve();
 const json = (s) => { try { return JSON.parse(s); } catch { return null; } };
 const touch = (f) => { const t = new Date(); fs.utimes(f, t, t, (e) => { if (e) fs.writeFile(f, "", () => {}); }); };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -70,7 +77,7 @@ const S = {
   cols: out.columns || 80, rows: out.rows || 24,
   cellW: 0, cellH: 0,  // px, from CSI 16 t
   pixelMouse: false,   // SGR-pixels (1016) is on
-  url: "", title: "",
+  url: pageRecord?.url || "", title: "", editAddress: null,
   target: null,        // the active tab's targetId (from the stream)
   page: null,          // { w, h } CSS px of the frame's viewport
   rect: null,          // where the picture is, in terminal px { x, y, w, h }
@@ -161,7 +168,7 @@ function paint() {
     w("\x1b_Ga=d,d=A,q=2\x1b\\\x1b[2J");
     S.drawn = false;
     const lines = {
-      checking: ["Looking for this task's browser…"],
+      checking: [pageId ? "Opening saved page…" : "Looking for this task's browser…"],
       opening: ["Opening the browser…"],
       closed: ["This task's browser isn't open.", "Its agent opens it when it checks a page; it closes after a while unused."],
       // the whole message, wrapped (its last words are the command that fixes it)
@@ -202,13 +209,15 @@ function button(row, x, label, fn, boxed) {
 }
 
 function bar() {
+  if (S.editAddress) { const row=S.rows-1,text=S.editAddress.text; w(`\x1b[${row+1};1H\x1b[2K${ESC(7)} URL: ${text.slice(-Math.max(10,S.cols-7))} ${ESC(0)}`); return; }
   const row = S.rows - 1, W = S.cols;
   w(`\x1b[${row + 1};1H\x1b[2K`);
   const live = S.state === "live";
   const left = live ? (S.driving ? [ESC("1;33"), "● You're driving"] : [ESC(32), "● Live"]) : [ESC(2), "○ Off"];
   const btns = [];
   if (live && S.driving) btns.push(["Hand back", () => stopDriving("button")]);
-  if (live) btns.push(["‹ Back", () => cdp.back()], ["↻ Reload", () => cdp.reload()]);
+  if (live) btns.push(["‹ Back", () => cdp.back()], ["Forward ›", () => cdp.forward()], ["↻ Reload", () => cdp.reload()]);
+  if (pageId) btns.push(["URL", () => editAddress()]);
   btns.push(["⧉ Window", () => openBrowser(true)]);
   const keys = live ? "Alt+← back · Ctrl+R reload" : "";
   const bw = btns.reduce((n, [l]) => n + l.length + 2, 0);
@@ -237,6 +246,7 @@ let streamWs = null;
 async function check() {
   for (;;) {
     if (S.state !== "live" && S.state !== "opening") {
+      if(pageId){ await connect(); await sleep(3000); continue; }
       const l = await ab("session", "list", "--json");
       const sessions = json(l.stdout)?.data?.sessions;
       if (l.code !== 0 || !Array.isArray(sessions)) setState("error", (l.stderr || l.stdout).trim() || "agent-browser didn't answer.");
@@ -248,6 +258,17 @@ async function check() {
 }
 
 async function connect() {
+  if(pageId) {
+    // One Chrome profile per space/profile, with a CDP target pinned to each Herdr page.
+    let endpoint=(await ab('get','cdp-url')).stdout.trim();
+    if(!/^ws:\/\/127\.0\.0\.1:/.test(endpoint)) {
+      const opened=await ab('open','about:blank');
+      if(opened.code) { setState('error',opened.stderr||opened.stdout); return; }
+      endpoint=(await ab('get','cdp-url')).stdout.trim();
+    }
+    if(!/^ws:\/\/127\.0\.0\.1:/.test(endpoint)){setState('error','The browser did not provide a local connection.');return;}
+    setState('opening'); cdp.open(endpoint); return;
+  }
   let st = json((await ab("stream", "status", "--json")).stdout)?.data;
   if (st && !st.enabled) { await ab("stream", "enable"); st = json((await ab("stream", "status", "--json")).stdout)?.data; }
   const port = Number(st?.port);
@@ -278,6 +299,7 @@ async function connect() {
 }
 
 function send(msg) {
+  if(pageId) { const { type, eventType, ...params }=msg; if(type==='input_mouse') cdp.call('Input.dispatchMouseEvent',{type:eventType,...params}); else if(type==='input_keyboard') cdp.call('Input.dispatchKeyEvent',{type:eventType,...params}); return; }
   if (streamWs && streamWs.readyState === 1) streamWs.send(JSON.stringify(msg));
 }
 
@@ -289,23 +311,47 @@ const cdp = {
     this.close();
     const ws = new WebSocket(url);
     this.ws = ws;
-    ws.onopen = () => this.follow();
-    ws.onclose = () => { if (this.ws === ws) { this.ws = null; this.session = null; } };
-    ws.onerror = () => {};
+    ws.onopen = async () => {
+      if(pageId) {
+        const targets=(await this.call('Target.getTargets',{},null)).result?.targetInfos??[];
+        let target=targets.find(t=>t.targetId===pageRecord.target&&t.type==='page');
+        if(!target) { const made=await this.call('Target.createTarget',{url:S.url||'about:blank'},null);target={targetId:made.result?.targetId}; }
+        S.target=target?.targetId; if(!S.target){setState('error','The page could not be opened.');return;}
+        savePage({target:S.target});
+        await this.call('Target.setDiscoverTargets',{discover:true},null);
+      }
+      await this.follow(); if(pageId)setState('live');
+    };
+    ws.onclose = () => { if (this.ws === ws) { this.ws = null; this.session = null; if(pageId)setState("checking"); } };
+    ws.onerror = () => { if(pageId)setState("error","The browser connection failed. Use Open browser to retry."); };
     ws.onmessage = (e) => {
       const j = json(typeof e.data === "string" ? e.data : "");
       if (!j) return;
       if (j.id) { const f = this.pend.get(j.id); this.pend.delete(j.id); f?.(j); return; }
+      if(pageId && j.sessionId===this.session && ['Page.frameNavigated','Page.navigatedWithinDocument'].includes(j.method)) {
+        const frame=j.params?.frame;
+        const url=frame&&!frame.parentId?frame.url:!frame?j.params?.url:null;
+        if(url&&/^https?:/.test(url)){S.url=url;savePage({url});bar();}
+      }
+      if(pageId&&j.method==='Target.targetCreated'&&j.params?.targetInfo?.openerId===S.target) {
+        this.popupParent=S.target;S.target=j.params.targetInfo.targetId;this.follow();
+      }
+      if(pageId&&j.method==='Target.targetDestroyed'&&j.params?.targetId===S.target&&this.popupParent){S.target=this.popupParent;this.popupParent=null;this.follow();}
+      if(pageId&&j.method==='Page.fileChooserOpened'&&j.sessionId===this.session){
+        const targetSession=this.session,params=j.params;
+        run('zenity',['--file-selection','--title=Choose files for this page',...(params.mode==='selectMultiple'?['--multiple','--separator=\n']:[])]).then(r=>{if(!r.code&&this.session===targetSession)this.call('DOM.setFileInputFiles',{backendNodeId:params.backendNodeId,files:r.stdout.trim().split('\n').filter(Boolean)},targetSession);});
+      }
       if (j.method === "Page.screencastFrame" && j.sessionId === this.session) this.frame(j.params);
       else if (j.method === "Target.detachedFromTarget" && j.params?.sessionId === this.session) { this.session = null; this.sessionTarget = null; }
     };
   },
-  close() { const ws = this.ws; this.ws = null; this.session = null; this.sessionTarget = null; this.pend.clear(); try { ws?.close(); } catch {} },
+  close() { const ws = this.ws; this.ws = null; this.session = null; this.sessionTarget = null; for(const resolve of this.pend.values())resolve({});this.pend.clear(); try { ws?.close(); } catch {} },
   call(method, params = {}, session = this.session) {
     return new Promise((resolve) => {
       if (!this.ws || this.ws.readyState !== 1) return resolve({});
       const id = ++this.id;
-      this.pend.set(id, resolve);
+      const timer=setTimeout(()=>{if(this.pend.delete(id))resolve({error:{message:'Browser command timed out'}});},15000);
+      this.pend.set(id, value=>{clearTimeout(timer);resolve(value);});
       this.ws.send(JSON.stringify({ id, method, params, ...(session ? { sessionId: session } : {}) }));
     });
   },
@@ -319,12 +365,14 @@ const cdp = {
     const a = await this.call("Target.attachToTarget", { targetId: S.target, flatten: true }, null);
     if (this.sessionTarget !== S.target) return;
     this.session = a.result?.sessionId ?? null;
+    if(pageId) { await this.call("Page.enable"); await this.call("Page.setInterceptFileChooserDialog",{enabled:true}); }
     this.restartCast();
   },
   async restartCast() {
     const s = this.session;
     if (!s || !S.cellW) return;
     const areaW = S.cols * S.cellW, areaH = Math.max(1, S.rows - 1) * S.cellH;
+    if(pageId)await this.call("Emulation.setDeviceMetricsOverride",{width:Math.max(320,Math.round(areaW)),height:Math.max(240,Math.round(areaH)),deviceScaleFactor:1,mobile:false},s);
     await this.call("Page.stopScreencast", {}, s);
     await this.call("Page.startScreencast", { format: "png", maxWidth: Math.round(areaW), maxHeight: Math.round(areaH), everyNthFrame: 1 }, s);
   },
@@ -489,6 +537,9 @@ function key(k, m = 1) {
   // The viewer's own: Back, Forward, Reload.
   if (alt && k === "ArrowLeft") return cdp.back();
   if (alt && k === "ArrowRight") return cdp.forward();
+  if (pageId && ((ctrl && !alt && (k==='l'||k==='L')) || k==='F6')) return editAddress();
+  if (S.editAddress) return addressKey(k,ctrl,alt,meta);
+  if(pageId&&(ctrl||meta)&&!alt&&["c","C","x","X"].includes(k))return copyPage(k.toLowerCase()==="x");
   if ((ctrl && !alt && (k === "r" || k === "R")) || k === "F5") return cdp.reload();
   // Ctrl+V: the desktop's clipboard (the browser's own is a different one).
   if (ctrl && !alt && !shift && (k === "v" || k === "V")) return pasteClipboard();
@@ -506,13 +557,37 @@ function key(k, m = 1) {
   send({ type: "input_keyboard", eventType: "keyUp", ...up, modifiers: mods });
 }
 
+function editAddress(){ S.editAddress={text:S.url||'',selected:true};bar(); }
+function addressKey(k,ctrl,alt,meta) {
+ const e=S.editAddress;
+ if(k==='Escape'){S.editAddress=null;bar();return;}
+ if(ctrl&&(k==='v'||k==='V'))return pasteClipboard();
+ if(ctrl&&(k==='a'||k==='A')){e.selected=true;bar();return;}
+ if(k==='Enter'){
+  let url=e.text.trim();if(!/^[a-zA-Z][\w+.-]*:/.test(url))url=(/^(localhost|127\.)/.test(url)?'http://':'https://')+url;
+  try{const parsed=new URL(url);if(!['http:','https:'].includes(parsed.protocol)||!parsed.hostname||parsed.username||parsed.password)throw Error();}catch{e.text='Enter an http or https URL';e.selected=true;bar();return;}
+  S.editAddress=null;S.url=url;savePage({url});cdp.call('Page.navigate',{url});bar();return;
+ }
+ if(k==='Backspace'||k==='Delete'){e.text=e.selected?'':e.text.slice(0,-1);e.selected=false;}
+ else if(!ctrl&&!alt&&!meta&&k.length===1){e.text=e.selected?k:e.text+k;e.selected=false;}
+ bar();
+}
 function insertText(text) {
   if (!text) return;
   startDriving();
-  ab("keyboard", "inserttext", text);
+  if(S.editAddress){S.editAddress.text=S.editAddress.selected?text:S.editAddress.text+text;S.editAddress.selected=false;bar();return;}
+  if(pageId)cdp.call("Input.insertText",{text});else ab("keyboard", "inserttext", text);
+}
+async function copyPage(cut) {
+ const r=await cdp.call('Runtime.evaluate',{expression:`(()=>{const e=document.activeElement;return (e&&typeof e.selectionStart==='number'&&typeof e.value==='string')?e.value.slice(e.selectionStart,e.selectionEnd):String(window.getSelection()||'');})()`,returnByValue:true});
+ const text=r.result?.result?.value;if(typeof text!=='string'||!text)return;
+ let copied=await run(process.platform==='darwin'?'pbcopy':'wl-copy',[],text);
+ if(copied.code&&process.platform!=='darwin')copied=await run('xclip',['-selection','clipboard'],text);
+ if(cut&&!copied.code){send({type:'input_keyboard',eventType:'keyDown',key:'x',code:'KeyX',windowsVirtualKeyCode:88,modifiers:2});send({type:'input_keyboard',eventType:'keyUp',key:'x',code:'KeyX',windowsVirtualKeyCode:88,modifiers:2});}
 }
 async function pasteClipboard() {
-  const r = await run("wl-paste", ["-n", "-t", "text"]);
+  let r = await run(process.platform==='darwin'?'pbpaste':'wl-paste', process.platform==='darwin'?[]:["-n", "-t", "text"]);
+  if(r.code&&process.platform!=='darwin')r=await run('xclip',['-o','-selection','clipboard']);
   if (r.code === 0 && r.stdout) insertText(r.stdout);
 }
 
@@ -591,7 +666,7 @@ function csi(params, fin) {
 
 setInterval(() => {
   // The panel refreshes <name>.view while it shows this; stale, the viewer isn't wanted.
-  fs.stat(file(".view"), (e, st) => { if (e || Date.now() - st.mtimeMs > HEARTBEAT_STALE_MS) quit(0); });
+  if(!pageId) fs.stat(file(".view"), (e, st) => { if (e || Date.now() - st.mtimeMs > HEARTBEAT_STALE_MS) quit(0); });
   if (S.driving) {
     if (Date.now() - S.lastInput > IDLE_DRIVE_MS) stopDriving("idle");
     else touch(file(".you"));

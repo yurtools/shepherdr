@@ -15,7 +15,7 @@ export function approvalsSection(view,t,cx){
  return v_flex().gap(4)
   .child(div().pt(18).pb(6).text_size(15).font_semibold().child('Approvals'))
   .child(view.row(t,'Default approval mode','Separate from execution Permissions. Ask me pauses saved rules; choosing Allow for this task activates its grants only.',choices('mode'),view.scoped('approvals','mode')))
-  .children([['coordinator','Assistant'],['worker','Workers'],['reviewer','Reviewer']].map(([field,label])=>view.row(t,`${label} approvals`,'Inherit the default or choose how this role’s permission requests are resolved.',choices(field,true),view.scoped('approvals',field))))
+  .children([['coordinator','Assistant'],['feature','Features'],['worker','Workers'],['reviewer','Reviewer']].map(([field,label])=>view.row(t,`${label} approvals`,'Inherit the default or choose how this role’s permission requests are resolved.',choices(field,true),view.scoped('approvals',field))))
   .child(view.row(t,'Review policy','What the Assistant is allowed to approve. Unknown or unclear actions should reach you.',null,view.scoped('approvals','policy'),Textarea.new(view.approvalBox).w_full()))
   .child(h_flex().gap(8).py(10)
     .child(button('approval-rules','Manage rules…',{onClick:()=>approvalDialog('rules',null,view.scope)}))

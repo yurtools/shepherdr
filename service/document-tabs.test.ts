@@ -4,8 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fakeHerdr } from "./fake-herdr";
 import { fakeGpuiBase, fakeGpuiKit, built, dispatch } from "./fake-gpui";
-let root:string, disk:()=>Promise<string|null>;
-mock.module("herdr",()=>fakeHerdr({appHome:()=>root,theme:()=>new Proxy({},{get:()=>"#111111"}),settings:()=>({}),readTextFile:()=>disk()}));
+let root:string, disk:()=>Promise<string|null>, modelPanes:any[], viewProps:any, state:Map<string,any>, actions:any[];
+mock.module("herdr",()=>fakeHerdr({appHome:()=>root,theme:()=>new Proxy({},{get:()=>"#111111"}),settings:()=>({}),readTextFile:()=>disk(),panes:()=>modelPanes,props:()=>viewProps,shared:(k:string)=>state.get(k),setShared:(k:string,v:any)=>state.set(k,v),run:(name:string,args:any)=>actions.push([name,args])}));
 mock.module("gpui-kit",()=>fakeGpuiKit());mock.module("gpui-base",()=>fakeGpuiBase());
 const { default: Document }=await import("../mods/workspace-document/main.js");
 let view:any, pending:Promise<any>[], released:string[], cx:any;
@@ -15,6 +15,7 @@ function add(name:string,text="saved",saved="saved") {
  view.docs.set(key(name),doc);return doc;
 }
 beforeEach(async()=>{
+ modelPanes=[];viewProps={};state=new Map();actions=[];(globalThis as any).localStorage={getItem:()=>null,setItem(){},removeItem(){}};
  root=await mkdtemp(join(tmpdir(),"shepherdr-document-tabs-"));disk=async()=>"saved";released=[];pending=[];built.length=0;
  view=Object.create(Document.prototype);view.docs=new Map();
  cx={notify(){},stop_propagation(){},timer:{after(){}},spawn(fn:any){const p=Promise.resolve(fn(cx));pending.push(p);return p;}};
@@ -54,4 +55,15 @@ test("closing during Save waits and a repeat close does not duplicate draft writ
  const doc=add("a.ts");view.active=key("a.ts");doc.saving=true;await view.closeFile(view.active,cx);expect(view.docs.has(view.active)).toBe(true);expect(doc.notice).toContain("saving");
  doc.saving=false;let writes=0,complete:()=>void=()=>{};view.draft=()=>{writes++;return new Promise<void>(resolve=>{complete=resolve})};
  const close=view.closeFile(view.active,cx);await view.closeFile(view.active,cx);expect(writes).toBe(1);complete();await close;expect(released).toEqual(["a.ts"]);
+});
+
+test("closing the last document closes only the pane identified by its own slot",async()=>{
+ modelPanes=[{pane:'wrong',mod:'workspace-document'},{pane:'own',mod:'workspace-document'}];viewProps={slot:'own-slot'};state.set('workspace.documents',{'own-slot':'own','other-slot':'wrong'});
+ view.pane='wrong';add('draft.md','unsaved');view.active=key('draft.md');await view.closeFile(view.active,cx);
+ expect(actions).toEqual([['pane.close',{pane:'own'}]]);expect(state.get('workspace.documents')).toEqual({'other-slot':'wrong'});
+});
+test("a failed final draft and a concurrently opened file both keep the pane",async()=>{
+ modelPanes=[{pane:'own',mod:'workspace-document'}];add('draft.md','unsaved');view.active=key('draft.md');view.draft=async()=>{throw Error('disk full')};
+ await view.closeFile(view.active,cx);expect(actions).toEqual([]);
+ let complete:()=>void=()=>{};view.draft=()=>new Promise<void>(r=>{complete=r});const closing=view.closeFile(view.active,cx);add('new.ts');complete();await closing;expect(actions).toEqual([]);expect(view.docs.size).toBe(1);
 });

@@ -37,6 +37,7 @@ function items(p, git, known) {
       // Once they go to the program, Shift+right-click still opens this menu.
       const toProgram = term?.labels?.["herdr.right-click"] === "program";
       return [
+        ...(tg.terminal ? [["Cut", "clipboard.disabled", {}], ["Copy", "terminal.copy", { terminal: tg.terminal }], ["Paste", "terminal.paste", { terminal: tg.terminal }], ["Select all", "terminal.select_all", { terminal: tg.terminal }]] : []),
         ["Split right", "pane.split", { direction: "right", pane: tg.pane }],
         ["Split down", "pane.split", { direction: "down", pane: tg.pane }],
         ["Zoom", "pane.zoom", { pane: tg.pane }],
@@ -144,7 +145,7 @@ export default class Menu extends View {
 
   choose(i, cx) {
     const it = items(props(), this.git, this.known)[i];
-    if (!it) return;
+    if (!it || it[1] === "clipboard.disabled") return;
     closeOverlay(props()?.overlay);
     if (it[1].startsWith("coordinator.") || it[1] === "tab.close") this.agentAction(it[1], it[2]);
     // Our dialogs (the app's one footer), not Herdr's prompt and confirm.
@@ -209,7 +210,7 @@ export default class Menu extends View {
           v_flex()
             .when(i > 0 && (it[1].endsWith(".close") || it[0] === "Keybinds" || (it[1] === "app.theme" && list[i - 1][1] !== "app.theme")), el => el.child(div().mx(8).my(4).h(1).bg(t.border)))
             // lib/ui.js's 32 menu row; the keyboard's row is selected too.
-            .child(menuRow(`mi-${i}`, it[0], { icon: menuIcon(it[1]), hint: shortcut(it[1], it[2]), onClick: (_e, cx) => this.choose(i, cx) })
+            .child(menuRow(`mi-${i}`, it[0], { disabled: it[1] === "clipboard.disabled", icon: menuIcon(it[1]), hint: shortcut(it[1], it[2]), onClick: (_e, cx) => this.choose(i, cx) })
               .on_mouse_down("left", (e) => { this.rowAt = rectOf(e); })
               .when(i === this.at, (el) => el.bg(t.selected))),
         ),

@@ -91,4 +91,28 @@ class ApprovalPolicy(unittest.TestCase):
   A.write(self.path,{**self.req,'tool_input':{'command':'tool --token secret-value'}})
   with self.assertRaisesRegex(ValueError,'credentials'):A.grant(self.path)
   A.audit(self.req,A.request_context(self.path)[1],'allow','By user','user');self.assertTrue(A.read(A.store()/'history.json'))
+class ApprovalEnhancements(unittest.TestCase):
+ setUp=ApprovalPolicy.setUp
+ def test_compound_exact_action_is_scoped_to_task_and_payload(self):
+  req={**self.req,'tool_input':{'command':'git status && echo done'}};A.write(self.path,req)
+  rule=A.grant(self.path);self.assertEqual(rule['match'],'request');ctx=A.request_context(self.path)[1]
+  self.assertTrue(A.matches(rule,{**req,'session_id':'new-request-id'},ctx))
+  self.assertFalse(A.matches(rule,{**req,'tool_input':{'command':'git status && git push'}},ctx))
+  self.assertFalse(A.matches(rule,req,{**ctx,'task':'other'}))
+  with self.assertRaisesRegex(ValueError,'plain command'):A.grant(self.path,scope='space')
+ def test_quoted_shell_punctuation_is_literal_but_expansion_and_compounds_are_not(self):
+  self.assertEqual(A.plain_command("echo 'a;b'"),['echo','a;b'])
+  self.assertEqual(A.plain_command('echo "a|b"'),['echo','a|b'])
+  for command in ['echo a;b','echo "$(id)"','echo `id`','git status > out']:
+   self.assertIsNone(A.plain_command(command))
+ def test_non_shell_action_can_be_remembered_exactly_for_one_task(self):
+  req={**self.req,'tool_name':'apply_patch','tool_input':{'patch':'*** Add File: a\n+hello'}};A.write(self.path,req)
+  rule=A.grant(self.path);self.assertEqual(rule['match'],'request');self.assertEqual(A.evaluate(self.path)['action'],'allow')
+class FeatureNaming(unittest.TestCase):
+ def test_only_the_feature_owner_can_name_its_own_record(self):
+  helper=str(A.app_home()/'mods/workspace-launchers/bin/workspace-state')
+  req={'tool_input':{'command':['python3',helper,'feature-name',json.dumps({'id':'one','name':'Browser tabs'})]}}
+  self.assertTrue(A.own_feature_name(req,{'role':'feature','feature':'one'}))
+  self.assertFalse(A.own_feature_name(req,{'role':'worker','feature':'one'}))
+  self.assertFalse(A.own_feature_name(req,{'role':'feature','feature':'two'}))
 if __name__=='__main__':unittest.main()

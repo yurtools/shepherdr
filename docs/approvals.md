@@ -96,3 +96,18 @@ reuse its decision. The helper records its rationale and answers only that waiti
 permission hook; it does not execute the requested command or broaden the agent's
 sandbox. If review is unavailable, uncertain or cannot finish, use the original
 permission card to decide.
+
+## Exact actions and feature ownership
+
+Allow for this task remembers a simple command as before. For a script, compound
+command or non-shell execution request it can instead remember a hash of the exact
+tool and complete input payload, scoped to the original task/session, account and
+folder. A different payload is a new request. This does not grant arbitrary scripts.
+Create rule remains disabled when no single plain command can be extracted; prefix
+rules never broaden to shell scripts. Quoted literal punctuation in a plain command
+is accepted, while shell chaining, redirection and expansion remain excluded.
+
+Ask Assistant reviews the complete request independently of whether it can become
+a command-prefix rule. Workers belonging to a named feature route that review to
+its Feature Assistant. An expired or unavailable reviewer leaves the decision with
+the person; approval never executes the requested operation as the reviewer.

@@ -77,6 +77,7 @@ export function sweep() {
   for (const k of terminals()) {
     // As this window names the pane: a label written by another window (or machine) matches too (#761).
     const chat = chatPane(k);
+    if (k.labels?.["herdr.feature"]) { missing.delete(k.address); continue; }
     if (!chat || k.state !== "live") { kept.delete(k.address); continue; }
     const machine = k.address.includes("/") ? k.address.split("/")[0] : "";
     if (!ready.has(machine) || have.has(chat) || own.has(k.address)) {
@@ -87,7 +88,7 @@ export function sweep() {
     }
     if (!missing.has(k.address)) { missing.set(k.address, true); continue; }
     missing.delete(k.address);
-    run("terminal.kill", { terminal: k.address });
+    if (!k.labels?.["herdr.feature"]) run("terminal.kill", { terminal: k.address });
     if (!machine) exec("sh", ["-c", 'rm -f "$1/open/$2" "$1/req/$2".*.json "$1/ans/$2".*.json', "x", `${appHome()}/data/chat-asks`, k.address]);
   }
 }

@@ -1,0 +1,98 @@
+#!/usr/bin/env python3
+"""Machine-local workspace catalog and feature records. No authentication is read or copied."""
+import fcntl, json, os, re, shlex, sys, tempfile, time, uuid
+from pathlib import Path
+from urllib.parse import urlsplit
+ROOT=Path(os.environ.get('HERDR_APP_HOME',str(Path.home()/'.config/herdr-app')))
+def load(path, default):
+ try:return json.loads(path.read_text())
+ except FileNotFoundError:return default
+
+def atomic(path,value):
+ path.parent.mkdir(parents=True,exist_ok=True)
+ fd,tmp=tempfile.mkstemp(dir=path.parent)
+ try:
+  with os.fdopen(fd,'w') as f:json.dump(value,f,ensure_ascii=False);f.write('\n');f.flush();os.fsync(f.fileno())
+  os.replace(tmp,path)
+ finally:
+  if os.path.exists(tmp):os.unlink(tmp)
+def url(value):
+ v=str(value or '').strip()
+ if not re.match(r'^[a-zA-Z][\w+.-]*:',v):v='https://'+v
+ p=urlsplit(v)
+ if p.scheme not in ('https','http') or not p.hostname or p.username or p.password:raise ValueError('Use an http or https address without embedded credentials.')
+ return v
+
+def main(command,p):
+ data=ROOT/'data';data.mkdir(parents=True,exist_ok=True)
+ with (data/'workspace-state.lock').open('a') as lock:
+  fcntl.flock(lock,fcntl.LOCK_EX)
+  catpath=data/'workspace-launchers.json';cat=load(catpath,{'chats':[{'id':'chatgpt','name':'ChatGPT','url':'https://chatgpt.com/','profile':'default'}],'hidden_agents':[]})
+  path=data/'workspace-features.json';features=load(path,{})
+  if command=='catalog':
+   programs=load(ROOT/'programs.json',{}).get('programs',{})
+   import shutil
+   return {**cat,'agents':[{'key':k,**v,'installed':bool(v.get('run') and shutil.which(v['run'][0]))} for k,v in programs.items() if v.get('run')]}
+  if command=='save-chat':
+   name=str(p.get('name','')).strip()[:80]
+   if not name:raise ValueError('Enter a name.')
+   row={'id':p.get('id') or uuid.uuid4().hex,'name':name,'url':url(p.get('url')),'profile':str(p.get('profile') or 'default')[:80]}
+   cat['chats']=[x for x in cat.get('chats',[]) if x['id']!=row['id']]+[row];atomic(catpath,cat);return row
+  if command=='remove-chat':
+   cat['chats']=[x for x in cat.get('chats',[]) if x['id']!=p.get('id')];atomic(catpath,cat);return cat
+  if command=='save-agent':
+   key=str(p.get('id') or '').strip()
+   if not re.fullmatch(r'[a-zA-Z0-9_-]{1,80}',key):raise ValueError('Use letters, numbers, dashes or underscores for the agent ID.')
+   argv=p.get('run') if isinstance(p.get('run'),list) else shlex.split(str(p.get('command') or ''))
+   if not argv or not all(isinstance(a,str) and a and '\0' not in a for a in argv):raise ValueError('Enter a valid launch command.')
+   programs=load(ROOT/'programs.json',{});programs.setdefault('programs',{})[key]={**programs.get('programs',{}).get(key,{}),'name':str(p.get('name') or key)[:80],'icon':str(p.get('icon') or 'icons/codex.svg'),'run':argv}
+   atomic(ROOT/'programs.json',programs)
+   hidden=set(cat.get('hidden_agents',[]))
+   if p.get('enabled'):hidden.discard(key)
+   if p.get('disabled'):hidden.add(key)
+   cat['hidden_agents']=sorted(hidden);atomic(catpath,cat);return {'ok':True}
+  if command in ('hide-agent','remove-agent'):
+   key=p['id'];hidden=set(cat.get('hidden_agents',[]))
+   if p.get('enabled'):hidden.discard(key)
+   else:hidden.add(key)
+   cat['hidden_agents']=sorted(hidden);atomic(catpath,cat)
+   if command=='remove-agent':
+    programs=load(ROOT/'programs.json',{});programs.get('programs',{}).pop(key,None);atomic(ROOT/'programs.json',programs)
+   return {'ok':True}
+  if command in ('browsers','browser-get','browser-update','browser-create'):
+   bp=data/'workspace-browsers.json';pages=load(bp,{})
+   if command=='browsers':return {'browsers':list(pages.values())}
+   if command=='browser-create':
+    if not p.get('space'):raise ValueError('Choose a space.')
+    ident=uuid.uuid4().hex;row={'id':ident,'space':p['space'],'url':url(p.get('url')),'name':str(p.get('name') or 'Browser')[:80],'profile':str(p.get('profile') or 'default')[:80],'open':True};pages[ident]=row
+   else:
+    row=pages.get(p.get('id'))
+    if not row:raise ValueError('Browser tab no longer exists.')
+    if command=='browser-update':
+     for k in ('url','name','target','tab','terminal','open'):
+      if k in p:row[k]=url(p[k]) if k=='url' else p[k]
+   if command!='browser-get':atomic(bp,pages)
+   return row
+  if command=='features':return {'features':list(features.values())}
+  if command=='feature-create':
+   name=str(p.get('name') or 'New feature').strip()[:80]
+   if not p.get('space'):raise ValueError('Choose a space first.')
+   ident=uuid.uuid4().hex
+   row={k:v for k,v in p.items() if k in ('space','folder','settings','context','source','autoName')}
+   row.update(id=ident,name=name,created=int(time.time()*1000),status='active');features[ident]=row;atomic(path,features);return row
+  if command in ('feature-get','feature-update','feature-name'):
+   row=features.get(p.get('id'))
+   if not row:raise ValueError('This feature is no longer available.')
+   if command=='feature-name' and not row.get('autoName'):return row
+   if command!='feature-get':
+    if p.get('name'):row['autoName']=False
+    allowed=('name',) if command=='feature-name' else ('name','status','tab','pane','session','home','argv','terminal','model','effort','sandbox','approval','kind')
+    for k in allowed:
+     if k in p:row[k]=str(p[k]).strip()[:80] if k=='name' else p[k]
+    if not row['name']:raise ValueError('Enter a name.')
+    atomic(path,features)
+   return row
+  raise ValueError('Unknown workspace operation.')
+if __name__=='__main__':
+ try:print(json.dumps(main(sys.argv[1],json.loads(sys.argv[2]) if len(sys.argv)>2 else {}),ensure_ascii=False))
+ except Exception as e:print(json.dumps({'error':str(e)}));sys.exit(1)

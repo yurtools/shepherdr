@@ -205,7 +205,7 @@ export default class Pane extends View {
     if (companionFor(chat)) { closeCompanion(chat); return; }
     this.ending = false;
     const terminal = agentOf(chat);
-    if (terminal) run("terminal.kill", { terminal });
+    if (terminal && !terminals().find(k=>k.address===terminal)?.labels?.["herdr.feature"]) run("terminal.kill", { terminal });
     run("pane.close", { pane: chat });
   }
 
@@ -248,16 +248,19 @@ export default class Pane extends View {
     const prog = extra?.label ?? (self.mod === "workspace-document" ? "Document" : ((p.program?.agent || p.program?.shell) && p.program.name) || p.title || p.program?.name || "Shell");
     // An Assistant reads as its space ("tor-gameboy"), never its role or what it runs (SHEP-36: the composer's model
     // menu says which agent): the space's name, then its folder, quieter.
-    const isAssistant = Boolean(lazy) || terminals().find((x) => x.address === (agent ?? self.terminal))?.labels?.["herdr.role"] === "coordinator";
+    const labels = terminals().find((x) => x.address === (agent ?? self.terminal))?.labels ?? {};
+    const featureId = lazy?.feature ?? labels['herdr.feature'];
+    const featureName = featureId && (shared('workspace.features') ?? []).find(x => x.id === featureId)?.name;
+    const isAssistant = !featureId && (Boolean(lazy) || terminals().find((x) => x.address === (agent ?? self.terminal))?.labels?.["herdr.role"] === "coordinator");
     const space = isAssistant ? spaces().find((s) => s.tabs?.some((x) => x.id === self.tab)) : null;
-    const name = art ?? (isAssistant ? spaceName(space, { home: home() }) : chatMode && p === self ? "Chat" : prog);
-    const pic = art !== null ? svg("mods/artifacts/artifacts.svg").size(14).flex_none().text_color(t.dim) : icon(p.program, 14, t.dim);
+    const name = art ?? featureName ?? (isAssistant ? spaceName(space, { home: home() }) : chatMode && p === self ? "Chat" : prog);
+    const pic = featureId ? svg("mods/coordinator/network.svg").size(14).flex_none().text_color(t.dim) : art !== null ? svg("mods/artifacts/artifacts.svg").size(14).flex_none().text_color(t.dim) : icon(p.program, 14, t.dim);
     const st = p.status;
     const pane = self.pane;
     const canSwitch = extra ? Boolean(agent) : chatMode ? Boolean(entry) || Boolean(lazy) : chatty(self);
     // An Assistant (chat or terminal): its Autopilot switch on the right, before the hover buttons (none while the
     // Autopilot add-on is off).
-    const apFor = addonOn("autopilot") ? apSpace(agent ?? (chatMode ? null : self.terminal), lazy || null) : null;
+    const apFor = !featureId && addonOn("autopilot") ? apSpace(agent ?? (chatMode ? null : self.terminal), lazy || null) : null;
     apWatch(this, apFor, cx);
     return h_flex()
       .id(`pane-head-${pane}`)
@@ -308,7 +311,7 @@ export default class Pane extends View {
         .child(this.button(t, `ph-d-${pane}`, "split-down", "pane.split", { direction: "down", pane }))
         .child(this.button(t, `ph-z-${pane}`, self.zoomed ? "unzoom" : "zoom", "pane.zoom", { pane }))
         .when(!entry && !extra, el => el.child(this.button(t, `ph-x-${pane}`, "close", "pane.close", { pane })))
-        .when(Boolean(entry) && !extra, el => el.child(this.button(t, `ph-x-${pane}`, "close", null, null, () => { this.ending = true; }))))
+        .when(Boolean(entry) && !extra, el => el.child(this.button(t, `ph-x-${pane}`, "close", null, null, () => { if(terminals().find(k=>k.address===entry?.terminal||k.address===entry?.address)?.labels?.["herdr.feature"])this.closeChat(pane);else this.ending = true; }))))
       .when(canSwitch, (el) => el.child(this.switcher(t, `ph-mode-${pane}`, chatMode,
         (cx) => extra ? this.extraMode(extra, "chat", cx) : this.toChat(self, cx),
         // No agent yet: the chat starts it (no first message) and then shows its terminal.

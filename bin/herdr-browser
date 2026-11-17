@@ -287,9 +287,11 @@ case "${1-}" in
 esac
 
 task=${HERDR_BROWSER_TASK-}
+workspace=
 own=
 while :; do
   case "${1-}" in
+    --workspace) workspace=${2-}; task="web-$workspace"; own=1; shift 2 || exit 2 ;;
     --task) task=${2-}; shift 2 || exit 2 ;;
     --own) own=1; shift ;;
     --name) show=1; shift ;;
@@ -371,7 +373,7 @@ if [ -z "$own" ]; then
   fi
   touch "$root/$name.used" 2>/dev/null
 fi
-[ -f "$root/$name.task" ] || printf '%s\n' "$task" > "$root/$name.task"
+[ -n "$workspace" ] || [ -f "$root/$name.task" ] || printf '%s\n' "$task" > "$root/$name.task"
 # A browser opened before names were cut (a name of 33-64 characters still fit agent-browser's socket path) holds the
 # profile: closed once, quietly, so the new session can open it (sign-ins are in the profile and stay).
 if [ "$session" != "herdr-$name" ] && [ ! -f "$root/$name.session" ]; then

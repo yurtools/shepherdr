@@ -19,7 +19,7 @@ test('remembered execution grants are absent for plans/questions and bind the re
  const host={terminal:()=> 'requester'};
  expect(rememberedControls({id:'id',words:{kind:'plan'}},host)).toEqual([]);
  expect(rememberedControls({id:'id',words:{kind:'questions'}},host)).toEqual([]);
- const controls=rememberedControls({id:'id',words:{kind:'permission'}},host);
+ const controls=rememberedControls({id:'id',words:{kind:'permission'},req:{tool_input:{command:'git status'}}},host);
  expect(controls.map((x:any)=>x.label)).toEqual(['Allow for this task','Create rule…','Ask Assistant']);
  const remote=rememberedControls({id:'id',machine:'remote',words:{kind:'permission'}},host);expect(remote.every((x:any)=>x.disabled)).toBe(true);
 });

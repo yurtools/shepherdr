@@ -1,3 +1,4 @@
+import { watchBrowserTabs } from "./workspace-browser.js";
 import { View, div, svg, image } from "gpui-kit";
 import { h_flex } from "gpui-base";
 import { panes, run, openOverlay, theme, window, shared, setShared, layout, settings, nextCommand, readTextFile, appHome, home } from "herdr";
@@ -16,6 +17,7 @@ import { tabName } from "./core/menus.js";
 import { inRender } from "./live.js";
 import { dirsReady } from "./dirs.js";
 import { watchCompanions } from "./companions.js";
+import { watchFeatures } from "./features.js";
 import { watchSessionHistory, openHistory } from "./session-history.js";
 
 function find(node, id) {
@@ -29,6 +31,8 @@ function find(node, id) {
 
 export default class Tabs extends View {
   init(_props, cx) {
+    watchBrowserTabs(cx, e => toast({ title: "Browser did not open", body: plainError(e), level: "error" }));
+    watchFeatures(cx, e => toast({ title: "Feature did not open", body: plainError(e), level: "error" }));
     watchSessionHistory(cx, e => toast({ title: "Session did not open", body: plainError(e), level: "error" }));
     watchCompanions(cx, e => toast({ title: "View didn't switch", body: plainError(e), level: "error" }));
     // Agents parked behind a chat whose tab or space closed end, as their pane would have (the

@@ -809,6 +809,11 @@ def launch(s, task, argv, space, message=None, parent=None, resume=None, role=No
         cmd = cmd + [message]
     labels = ["--label", f"herdr.task={key}", "--label", f"herdr.task.space={bare(space)}",
               "--label", f"herdr.agent={agent_key(argv)}"]
+    parent_meta = hc_json("get", parent) if parent else None
+    feature = ((parent_meta or {}).get("labels") or {}).get("herdr.feature") or task.get("feature")
+    if feature:
+        task["feature"] = feature
+        labels += ["--label", f"herdr.feature={feature}", "--label", f"herdr.owner={parent or ''}"]
     ctab = coordinator_tab(parent)
     if approval_mode:
         labels += ["--label", f"herdr.approval.mode={approval_mode}"]
@@ -843,7 +848,7 @@ def launch(s, task, argv, space, message=None, parent=None, resume=None, role=No
 
 
 def is_coordinator(k):
-    return (k.get("labels") or {}).get("herdr.role") == "coordinator" or k.get("template") in ASSISTANT_TEMPLATES
+    return (k.get("labels") or {}).get("herdr.role") in ("coordinator", "feature") or k.get("template") in ASSISTANT_TEMPLATES
 
 
 def coordinator_tab(addr):
@@ -876,9 +881,19 @@ def coordinator_in(space):
     return None
 
 
-def parent_for(parent, space):
+def parent_for(parent, space, feature=None):
     """A task agent's parent: `parent` while it's live, else the space's coordinator."""
-    return live_parent(parent) or coordinator_in(space)
+    if live_parent(parent): return parent
+    labels = caller_labels()
+    feature = feature or labels.get('herdr.feature')
+    if feature:
+        if labels.get('herdr.feature') == feature and os.environ.get('HC_TERMINAL_ID'):
+            return live_parent(os.environ['HC_TERMINAL_ID'])
+        for k in (hc_json('ls', '--label', 'herdr.feature=' + feature) or {}).get('terminals', []):
+            meta=hc_json('get', k['address']) or {}
+            if meta.get('state') == 'live' and (meta.get('labels') or {}).get('herdr.role') == 'feature': return k['address']
+        return None  # Never silently transfer feature work to the space Assistant.
+    return coordinator_in(space)
 
 
 def agent_name(s, task, suffix=None):

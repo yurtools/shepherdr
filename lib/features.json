@@ -217,7 +217,9 @@
           "menu-tasks",
           "new-menu-tasks",
           "confirm-chat",
-          "prompt-chat"
+          "prompt-chat",
+          "workspace-launchers",
+          "workspace-clipboard"
         ]
       },
       "web": {

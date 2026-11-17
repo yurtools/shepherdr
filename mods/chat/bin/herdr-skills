@@ -1,0 +1,49 @@
+#!/usr/bin/env python3
+"""List local Codex skills without executing skills or reading authentication."""
+import json, os, re, sys
+from pathlib import Path
+cwd=Path(sys.argv[1] or os.getcwd()).resolve();home=Path(sys.argv[2] or os.environ.get('CODEX_HOME',str(Path.home()/'.codex')))
+roots=[Path.home()/'.agents/skills',home/'skills',Path('/etc/codex/skills')]
+p=cwd
+while True:
+ roots.append(p/'.agents/skills')
+ if (p/'.git').exists() or p.parent==p:break
+ p=p.parent
+try:cfg=(home/'config.toml').read_text()
+except OSError:cfg=''
+# Enabled, locally cached plugin skills are namespaced as the CLI exposes them.
+plugin_roots=[]
+for match in re.finditer(r'(?m)^\[plugins\.[\"\x27]([^\"\x27]+)[\"\x27]\]\s*\n([^\[]*)',cfg):
+ if not re.search(r'enabled\s*=\s*true',match[2]):continue
+ plugin,sep,market=match[1].partition('@')
+ if not sep or not re.fullmatch(r'[\w.-]+',plugin) or not re.fullmatch(r'[\w.-]+',market):continue
+ for cache in [home/'plugins/cache'/market/plugin,home/'plugins/cache'/(market+'-remote')/plugin]:
+  versions=sorted(cache.glob('*/skills')) if cache.is_dir() else []
+  if versions:plugin_roots.append((versions[-1],plugin))
+disabled=set()
+for block in re.split(r'(?m)^\[\[skills.config\]\]',cfg)[1:]:
+ block=re.split(r'(?m)^\[',block)[0]
+ if re.search(r'enabled\s*=\s*false',block):
+  for k in ('name','path'):
+   m=re.search(r'(?m)^'+k+r'\s*=\s*[\"\x27]([^\"\x27]+)',block)
+   if m:disabled.add(m[1])
+rows=[];seen=set()
+for root,namespace in [(r,None) for r in roots]+plugin_roots:
+ if not root.is_dir():continue
+ files=list(root.glob('*/SKILL.md'))+list(root.glob('.system/*/SKILL.md'))
+ for path in files[:1000]:
+  try:
+   resolved=str(path.resolve())
+   if resolved in seen:continue
+   seen.add(resolved);text=path.read_text()[:24000]
+   front=text.split('---',2)[1] if text.startswith('---') else ''
+   name=re.search(r'(?m)^name:\s*[\"\x27]?([^\n\"\x27]+)',front)
+   name=(name.group(1).strip() if name else path.parent.name)
+   if name in disabled or str(path) in disabled or resolved in disabled:continue
+   if not re.fullmatch(r'[\w:.-]+',name):continue
+   desc=re.search(r'(?m)^description:\s*([^\n]+)(?:\n((?:[ \t]+[^\n]*\n?)*))?',front)
+   about=(' '.join((desc.group(2) or '').split()) if desc and desc.group(1).strip() in ('>','>-','|','|-') else desc.group(1).strip(' \"\x27') if desc else 'Your skill')
+   if namespace:name=f'{namespace}:{name}'
+   rows.append({'name':name,'about':about[:160],'path':str(path)})
+  except (OSError,ValueError):pass
+print(json.dumps(rows))

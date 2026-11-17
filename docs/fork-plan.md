@@ -63,18 +63,26 @@ Implemented on `main`:
 - **Beside…** opens an extra view of the space Assistant or a running agent,
   retaining its account and original tab. Extra views switch independently between
   Chat and Terminal; closing one leaves the original agent running.
-- **Sessions** sits below **Spaces** in the sidebar, with a draggable divider.
-  It follows the selected space and its configured project folder.
+- **Features / Sessions** sits below **Spaces**, with a draggable divider.
+  Both follow the selected space; Sessions uses its configured project folder.
 - Searchable **Closed / All** lists show saved local Codex conversations from the
-  primary home and named profiles. Selecting a row opens a read-only preview;
-  **Resume** or **Beside** reopens the exact conversation with its original account.
+  primary home and named profiles. Clicking a row resumes or focuses its conversation;
+  **Open…** opens the read-only preview dialog with Resume/Beside actions.
+  Refresh uses an icon.
 - History checks for a running session before reopening it, focusing its existing
   view or adding another view instead of launching a duplicate agent.
 
 - **Agents** opens a right-hand panel with Open/Beside actions for existing
   Assistant and worker sessions, without changing Sessions below Spaces.
 
-Indexing other CLIs or remote session logs remains outside the current implementation.
+General history indexing for other CLIs or remote logs remains outside the current
+implementation. Named Feature records also retain Claude sessions captured by a live view.
+
+The current development branch adds independent Feature Assistants with stable IDs,
+shared Worker/Reviewer settings, per-feature task ownership and the space
+Assistant's Codex account. It also adds persistent per-space browser pages, web-chat
+shortcuts and **+ → Manage…** for agent/shortcut configuration. These are native
+local-space features; see [the workspace guide](workspace.md) for controls and limits.
 
 ## Scoped approval handling
 

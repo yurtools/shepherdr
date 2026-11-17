@@ -325,7 +325,8 @@ export default class ShepherdrSettings extends View {
   resetRoles() {
     const eff = shepherdrFor(this.cfg, this.scope);
     for (const r of ROLES) {
-      let sel = eff[r.id] ?? null;
+      let sel = eff[r.id] ?? (r.id === "feature" ? eff.coordinator : null);
+      if(r.id==='feature') { const base=eff.coordinator??this.data?.defaults; if(base){sel={...base,...sel,agent:base.agent};if(base.profile)sel.profile=base.profile;else delete sel.profile;} }
       const unset = !sel;
       if (!sel && r.id === "reviewer" && this.data?.menus?.[this.otherCli()]) {
         const o = this.otherCli();
@@ -341,6 +342,7 @@ export default class ShepherdrSettings extends View {
     for (const r of ROLES) {
       const c = this.roles[r.id];
       if (!c?.sel) continue;
+      if(r.id==='feature'){const base=shepherdrFor(this.cfg,this.scope).coordinator??this.data?.defaults;if(base){c.sel.agent=base.agent;if(base.profile)c.sel.profile=base.profile;else delete c.sel.profile;}}
       const now = JSON.stringify(c.sel);
       if (now === c.saved) continue;
       c.saved = now;
@@ -503,7 +505,7 @@ export default class ShepherdrSettings extends View {
     const c = this.roles[r.id];
     const label = r.id === "reviewer" && c?.unset ? otherCliWords(this.otherCli()) : undefined;
     const control = h_flex().gap(8).items_center()
-      .child(c?.sel ? models.modelButton(t, c, { label }, cx) : div().text_size(TEXT.label).text_color(t.dim).child(LOADING_AGENTS))
+      .child(c?.sel ? models.modelButton(t, c, { label, lockAgent: r.id === "feature" }, cx) : div().text_size(TEXT.label).text_color(t.dim).child(LOADING_AGENTS))
       .when(!this.scope && r.id === "reviewer" && c && !c.unset,
         (el) => el.child(button("reviewer-other", USE_OTHER_CLI, { kind: "plain", onClick: (_e, cx) => this.reset("reviewer", null, cx) })))
       .when(!this.scope, (el) => el.child(button(`edit-${r.id}`, EDIT_INSTRUCTIONS,

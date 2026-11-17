@@ -5115,7 +5115,7 @@ class TaskFlow(unittest.TestCase):
         self.patch(self.commands, "refresh_sessions", lambda *a: None)
         self.patch(self.commands, "stop_note", lambda *a, **k: None)
         self.patch(self.commands, "unarchive", lambda *a: None)
-        self.patch(self.commands, "parent_for", lambda parent, space: parent)
+        self.patch(self.commands, "parent_for", lambda parent, space, feature=None: parent)
         self.patch(self.commands, "run", lambda argv, **k: events.append(("run", argv)))
 
         def launch(s, t, argv, space, message=None, parent=None, resume=None, role=None):

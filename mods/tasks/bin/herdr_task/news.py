@@ -16,7 +16,7 @@ from .agents import (
     STATUSES, trust_asked,
 )
 from .sessions import session_of
-from .launch import coordinator_in
+from .launch import coordinator_in, parent_for
 from .store import locate, read_list, Store, store_files
 from .output import line, minutes, view
 from .takeover import backup_news
@@ -183,7 +183,7 @@ def news_pass(report, folder=None):
                     # A backup's line stands apart: it neither replaces nor is replaced.
                     outbox[:] = [x for x in outbox if not (x["key"] == key and "backup" not in (ev, x["event"])
                                                            and (x["event"] == ev or ev != "stalled"))]
-                    outbox.append({"key": key, "space": bare(t["space"]), "folder": os.path.basename(s.loc["folder"]), "event": ev, "status": v["status"],
+                    outbox.append({"key": key, "space": bare(t["space"]), "feature": t.get("feature"), "folder": os.path.basename(s.loc["folder"]), "event": ev, "status": v["status"],
                                    "stall": stall[0] if ev == "stalled" else None, "text": text, "at": now()})
             ids = {str(t["id"]) for t in s.data["tasks"]}
             for k in [k for k in mine if k not in ids and k != "_init"]:
@@ -196,11 +196,11 @@ def news_pass(report, folder=None):
             return True  # another folder's task: not looked at this time; a backup's line is news either way
         return bool(c) and (c["stall"] == x["stall"] if x["event"] == "stalled" else c["status"] == x["status"])
     outbox[:] = [x for x in outbox if holds(x) and now() - x["at"] < NEWS_KEEP_MS]
-    for space in dict.fromkeys(x["space"] for x in outbox):
-        batch = [x for x in outbox if x["space"] == space]
+    for space, feature in dict.fromkeys((x["space"], x.get("feature")) for x in outbox):
+        batch = [x for x in outbox if x["space"] == space and x.get("feature") == feature]
         if now() - min(x["at"] for x in batch) < NEWS_SETTLE_MS:
             continue
-        to = coordinator_in(space)
+        to = parent_for(None, space, feature) if feature else coordinator_in(space)
         k = hc_json("get", to) if to else None
         if to and news_send(to, "\n".join(x["text"] for x in batch)):
             outbox[:] = [x for x in outbox if x not in batch]

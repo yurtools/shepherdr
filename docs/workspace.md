@@ -1,12 +1,12 @@
 # Workspace UI development build
 
-The implementation is available on `main`. It is based on upstream 3.1.35;
-there is no new tagged release. The additional source and Office previews are included.
+This guide describes the current development checkout, based on upstream 3.1.35.
+There is no new tagged release. The additional source and Office previews are included.
 
 ## Everyday workflow
 
-Select a space in the left sidebar. **Sessions** below it lists that space's saved
-conversations; the tab bar holds the open tabs. The **Files** button opens the
+Select a space in the left sidebar. **Features / Sessions** below it follows the
+selected space; the tab bar holds the open tabs. The **Files** button opens the
 project tree. File contents open in a separate document pane.
 
 | Action | Control |
@@ -14,14 +14,97 @@ project tree. File contents open in a separate document pane.
 | Use the same agent as chat or a terminal | **Chat / Terminal** in its pane header |
 | Change the conversation width | **Wide / Comfortable** in the Chat header |
 | Show the Assistant or another running agent alongside | **Beside…** in a pane header |
-| Reopen a closed Codex conversation | **Sessions → conversation → Resume** |
-| Resume a conversation alongside the current pane | **Sessions → conversation → Beside** |
+| Reopen a closed Codex conversation | **Sessions → click a conversation** |
+| Resume a conversation alongside the current pane | **Sessions → Open… → conversation → Beside** |
 | Edit or render Markdown / CSV | Open it from **Files**, then choose **Source / Preview** |
 
 The **Agents** button opens a right-hand panel listing the space's Assistant and
 running agents, including task workers. **Open** focuses their existing view;
 **Beside** shows the same session alongside the current pane. It does not launch
-another agent. **Sessions** below Spaces remains the saved local Codex history.
+another agent. **Sessions** below Spaces remains the saved local Codex history; **Features** is the default tab for named feature work.
+
+## Features
+
+A space keeps its main Assistant for discussion and coordination. Each named
+feature has an independent Feature Assistant that can start and supervise workers.
+Both use the shared Worker, Reviewer, review, worktree and task settings.
+
+- **+ → Start feature…** asks for a name and opens its conversation. Its agent
+  starts with your first message.
+- The flag beside a reply's Fork action starts a feature with the chosen reply
+  as its objective and bounded supporting context up to that point. It starts
+  the feature agent, which generates its title using the normal signed-in CLI;
+  no API key is required. The original Fork action retains its existing behavior.
+- **Shepherdr settings → Agents → Feature Assistant** chooses its model,
+  thinking level, permissions and instructions; the space can override these.
+  A Codex Feature Assistant uses the space Assistant's configured account.
+- **Features** below Spaces lists the selected space's features with the
+  Assistant icon and existing status colors. Click to focus or resume one;
+  **+** starts another. The check mark marks it Completed, and **All** includes
+  completed features with a restore action. This changes organization, not task
+  acceptance or merge status.
+- Closing a feature's Chat view leaves its record and workers available.
+  Its recorded account, session, role and task ownership survive reopening.
+  Feature task news and delegated approval reviews return to the owning feature,
+  including after a feature agent restarts. Space Autopilot continues to belong
+  to the main Assistant. Existing tasks are not transferred when a feature starts.
+
+Feature records are machine-local `data/workspace-features.json` in Herdr's app
+folder. Native Feature creation currently supports local spaces. Existing remote
+Assistant and task behavior is retained. Ordinary Sessions history still indexes
+Codex logs; named feature records also retain Claude sessions captured by a live view.
+
+## Browser tabs and web-chat shortcuts
+
+Use **+ → New browser tab…** for an editable URL, or choose a configured web-chat
+shortcut such as ChatGPT. Each opens in its own workspace tab. The browser viewer
+provides Back, Forward, Reload, a **URL** button and **Ctrl+L / F6** to edit the address.
+The **Window** action opens the same browser profile in a full browser window when
+sign-in or another site feature needs it. Clipboard text uses the desktop clipboard;
+file selection in the viewer uses Zenity on Linux when installed (otherwise use Window).
+
+Tabs retain their current URL and browser target in `data/workspace-browsers.json`.
+Herdr keeps their tab order and selection. Viewer terminals survive an app restart;
+if core recovery restores a dedicated viewer terminal as a shell, the tab watcher
+restarts that viewer and loads its saved URL. Closing a workspace tab closes its
+view; login profiles are retained. No browser or ChatGPT authentication is copied
+from either Codex account.
+
+Pages with the same profile share browser cookies within a space. Different spaces
+are isolated by default. In a shortcut's Profile field, use a different name for a
+separate login, or explicitly use `shared:name` to share that named profile across
+spaces. Several pages in a profile have independent Chrome targets: navigating one
+must not navigate its neighbors.
+
+These are actual websites. A ChatGPT page uses the website's selected mode and
+account; it is not a Codex agent and has no automatic local skills or project-file
+access. Website login requirements still apply. ChatGPT account sign-in itself has
+not been automated or asserted by the local browser fixtures.
+
+## Manage the + menu
+
+**+ → Manage…** edits Agents and Web chats. Agent entries update `programs.json`
+without changing account wrappers or credentials. Disable hides an entry from this
+menu; Remove deletes a custom override and keeps the entry hidden if it is built in.
+Names, executable arguments and icons are editable. Web-chat entries have a name,
+URL and browser profile. Shortcuts and hidden agents are saved in
+`data/workspace-launchers.json`. Changes appear when reopening the menu.
+
+## Skills, commands and clipboard menus
+
+In a local Codex Chat, type **$** for the assigned account's skills, including shared
+user and project skills. **/skills** opens the same picker. Disabled skill entries
+in that account's config are omitted. **/status** is handled as a native CLI command
+before reply quotes, task references or approval-card answers can alter it, and
+shows its result in Terminal. In a not-yet-started conversation, it opens the agent
+terminal first; enter `/status` once startup or folder trust is complete. Interactive
+CLI menus continue to use Terminal.
+
+Right-click the Chat input for **Cut / Copy / Paste / Select all**. Operations keep
+the captured selection and do not edit a draft that changed while the menu was open.
+Reply menus offer native selected-text Copy and Copy message. Terminal menus offer
+Copy, Paste and Select all; Cut is disabled because terminal output is read-only.
+When right-click belongs to a terminal program, **Shift+right-click** opens Herdr's menu.
 
 ## Named Codex accounts
 
@@ -76,7 +159,7 @@ Click a file to open it in a separate document pane. Further files open as tabs 
 that pane. **+ Pane**, or Shift-click on a file, requests an additional pane.
 Use **×** on a document tab to close just that file. Other tabs and the Files tree
 stay open. Unsaved edits are kept as a recoverable draft; reopen the file to
-continue editing. Closing the last file leaves an empty document pane. If draft
+continue editing. Closing the last file closes its document pane and returns the room to the remaining panes. If draft
 storage fails, the file stays open with an error. Let an in-progress Save finish
 before closing its tab. The command `workspace-document.close-file` closes the
 active file.

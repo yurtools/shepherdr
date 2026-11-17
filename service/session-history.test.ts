@@ -5,6 +5,8 @@ let verified = true;
 let calls: any[] = [], row: any, ps: any[], ts: any[], ss: any[], viewProps: any;
 let listRead: ((args: string[]) => Promise<any>) | null;
 const state = new Map<string, any>();
+const storage=new Map<string,string>();
+(globalThis as any).localStorage={getItem:(k:string)=>storage.get(k)??null,setItem:(k:string,v:string)=>storage.set(k,v)};
 mock.module("herdr", () => fakeHerdr({
   props: () => viewProps,
   focused: () => ({ pane: "target" }),
@@ -31,7 +33,7 @@ const H = await import("../mods/tabs-tasks/session-history.js");
 beforeEach(() => {
   ss = [{ id: "space", name: "First space", active: true, folder: "/project", tabs: [{ id: "tab" }] }];
   viewProps = { overlay: "history-dialog" }; listRead = null;
-  verified = true; calls = []; ps = [{ pane: "target", tab: "tab" }]; ts = []; state.clear();
+  verified = true; calls = []; ps = [{ pane: "target", tab: "tab" }]; ts = []; state.clear();storage.clear();
   row = { home: "/account-two", session: "00000000-0000-0000-0000-000000000001", key: "key", cwd: "/project", title: "Saved chat", model: "model-one", effort: "high", sandbox: "workspace-write", approval: "on-request" };
 });
 test("a resumed folder-history session explicitly uses its own account and saved model/policy", () => {

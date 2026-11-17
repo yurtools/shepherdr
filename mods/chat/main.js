@@ -1,3 +1,4 @@
+import { startFeature, workspaceCall } from "./features.js";
 import { approvalArgv } from "./approval.js";
 import { measuredHeight, viewportScroll, hoverMessage, measureOrder, pendingMarkdownHeight } from "./core/chat-layout.js";
 // Chat: an agent's conversation as a chat, read from the agent's own session log, with a
@@ -161,7 +162,7 @@ const shownLines = (text, h, width) => {
   }
   return out.join("\n");
 };
-const ICONS = { copy: "copy", reply: "reply", rewind: "rewind", fork: "git-fork", react: "smile-plus" };
+const ICONS = { copy: "copy", reply: "reply", rewind: "rewind", fork: "git-fork", feature: "flag", react: "smile-plus" };
 // Reaction pills: this wide and tall (inside the ACT row, so they sit on the icons' center line
 // without towering over them), this far apart; and the gap between them and the smiley.
 const PILL = 46, PILL_H = 20, PILL_GAP = 4, PILL_EDGE = 6;
@@ -272,7 +273,7 @@ export default class Chat extends View {
     this.origin = P?.terminal ?? null;
     this.addr = (this.companion && boundAgent(companionRecords()[this.companion])?.address) || this.origin;
     // No agent yet (a Coordinator tab): it may have started one already (this slot's label).
-    this.role = P?.role ?? null;
+    this.role = P?.role ?? terminals().find(k=>k.address===this.addr)?.labels?.["herdr.role"] ?? null; this.feature = P?.feature ?? terminals().find(k=>k.address===this.addr)?.labels?.["herdr.feature"] ?? null; this.featureRecord = P?.featureRecord ?? null;
     this.slot = P?.slot ?? null;
     // A thread: a task worker's chat, in the Tasks panel ({ terminal, thread: true, task,
     // title }). The same conversation, box and cards, but only a view: it never claims the
@@ -385,7 +386,7 @@ export default class Chat extends View {
     this.recall = -1;
     this.slashSel = 0;
     this.slashOff = null;
-    this.cmds = [];
+    this.cmds = []; this.skills = [];
     // "#": the spaces this agent's machine reaches (core/mentions.js) and the ones picked into the box
     this.reach = null;
     this.picked = [];
@@ -513,6 +514,7 @@ export default class Chat extends View {
     this.draftFile = `${appHome()}/data/chat-drafts/${safe(this.companion ? `${this.originKey}:view:${this.companion}` : this.originKey)}.json`;
     if (!this.addr && this.role) this.phase = "fresh";
     if (this.phase === "fresh") this.loadChoice(cx);
+    if (this.feature && this.phase === "fresh" && (this.featureRecord?.session || this.featureRecord?.context)) cx.timer.after(700, cx => this.startAgent(this.featureRecord?.session ? null : {id:`feature-start-${Date.now()}`,text:'Start this feature from the supplied context. Plan its work and coordinate the implementation.',files:[],quote:null}, cx));
     this.loadFirst(cx, labels);
     if (this.addr || this.role) cx.spawn(async (cx) => { await this.loadDraft(cx); attach.prune(); });
     if (this.addr) cx.spawn(async (cx) => this.follow(cx));
@@ -824,7 +826,7 @@ export default class Chat extends View {
     const space = this.assistant(), out = new Map();
     if (!space || this.machine) return out;
     for (const x of this.spaceTasks ?? []) {
-      if ((x.space ?? x.queue?.space) !== space || !x.ref) continue;
+      if ((x.space ?? x.queue?.space) !== space || !x.ref || (x.feature ?? null) !== (this.feature ?? null)) continue;
       for (const a of x.live ?? []) if (a.address && !out.has(a.address)) out.set(a.address, x);
     }
     return out;
@@ -1181,6 +1183,7 @@ export default class Chat extends View {
           const defaults = await agent.defaults(kind, this.machine, { pid });
           if (this.dfltFor !== `${kind}|${pid}`) return;
           this.dflt = defaults;
+          this.skills = kind === "codex" ? await slash.skills(this.machine, t.foreground?.cwd ?? t.cwd, defaults.home) : [];
           this.profileName = (await agent.profiles(this.machine)).find(x => x.home === defaults.home)?.name ?? agent.NAMES[kind];
           this.argv = [...agent.launchPrefix(kind, t.argv ?? this.argv ?? [], defaults.home), ...(this.argv ?? []).slice((this.argv ?? []).findIndex(a => /^(codex|claude)$/.test(String(a).split("/").pop())) + 1)];
         } catch (e) { this.dfltFor = null; this.note = { id: "account-unavailable", text: String(e.message ?? e) }; }
@@ -1431,6 +1434,7 @@ export default class Chat extends View {
     this.pickedTasks = [];
     // Also while the agent asks in its terminal: the words answer it there (deliver()).
     if (!text && !this.files.length) return;
+    if((this.kind??this.choice?.sel?.agent)==='codex' && /^\/(status|skills)\s*$/.test(text) && this.files.length){toast({title:'Remove attachments to run this command',body:'Your draft and files are retained.'});return;}
     const msg = { id: `m${Date.now()}`, text, files: this.files, quote: this.quote };
     this.box.set_value("");
     // If the textarea still adds Enter's new line after this, take it out again.
@@ -1459,10 +1463,18 @@ export default class Chat extends View {
     const list = this.suggestions();
     if (list.length) {
       const c = list[Math.min(this.slashSel, list.length - 1)];
-      if (c.task || c.space) { this.pick(c, cx); const v = this.box.value(); cx.timer.after(30, () => this.box.set_value(v)); return; }
+      if (c.task || c.space || c.skill) { this.pick(c, cx); const v = this.box.value(); cx.timer.after(30, () => this.box.set_value(v)); return; }
       if (this.box.value().trim() !== `/${c.name}`) { this.pick(c, cx); cx.timer.after(30, () => this.box.set_value(`/${c.name} `)); return; }
     }
     this.send(cx, hold);
+  }
+
+  nativeStatus(cx) {
+    if(!this.addr){toast({title:'Starting the terminal',body:'Once the agent is ready, enter /status there to see its native status screen.'});this.startAgent(null,cx,true);return;}
+    if(this.status()==='working'||this.asks.length||openCard(this.addr)) {
+      toast({title:'Run /status in Terminal',body:'Finish the current turn or answer the pending prompt first.'});this.toTerminal();return;
+    }
+    cx.spawn(async()=>{const r=await personHc(['send',this.addr,'/status']);if(r?.code)toast({title:'Status did not open',body:r.stderr??'Try /status in Terminal.'});else this.toTerminal();});
   }
 
   // A held message goes once the agent stops working (and isn't asking something).
@@ -1479,6 +1491,8 @@ export default class Chat extends View {
 
   deliver(msg, cx) {
     // /model never reaches the CLI by any way in (held, or sent by another mod): send() says why.
+    if ((this.kind??this.choice?.sel?.agent) === 'codex' && /^\/skills\s*$/.test(msg.text??'')) { this.box.set_value('$'); this.box.focus(); cx.notify(); return; }
+    if ((this.kind??this.choice?.sel?.agent) === 'codex' && /^\/status\s*$/.test(msg.text??'')) { this.nativeStatus(cx); return; }
     const mm = !msg.files?.length && /^\/model(?:\s+(\S+))?\s*$/i.exec(msg.text ?? "");
     if (mm) { this.modelCommand(mm[1] ?? null, cx); return; }
     if (this.phase === "fresh") { this.startAgent(msg, cx); return; }
@@ -1650,13 +1664,16 @@ export default class Chat extends View {
         .map(({ x }) => ({ task: x, name: `@${taskRef(x)}`, about: x.title, state: x.status_text ?? x.state, key: `task-${x.folder}-${taskRef(x)}` }));
       if (tk.length) return tk;
     }
+    const sk = slash.skillSuggestions(v, this.skills ?? []); if (sk !== null) return sk;
     const w = slash.typing(v);
     if (w === null || !this.cmds.length) return [];
     return slash.match(this.cmds, w);
   }
 
   pick(c, cx) {
-    if (c.space) {
+    if (c.skill) {
+      const text=this.box.value().replace(/\$[\w:.-]*$/,`$${c.name} `); this.box.set_value(text); this.slashOff=text;
+    } else if (c.space) {
       const next = mentions.pickInto(this.box.value(), c.space);
       this.picked = [...this.picked.filter((x) => x.name !== c.space.name), c.space];
       this.box.set_value(next);
@@ -1736,7 +1753,13 @@ export default class Chat extends View {
     const reply = msg?.quote ? `<hc reply-to="${excerpt(msg.quote.text, 80)}"/>\n` : "";
     // Files here go as their paths; on another machine they follow once it runs (hc put needs it).
     const local = machine || !msg ? [] : msg.files.map((f) => f.path);
-    const task = msg ? [reply + msg.text, ...local].filter(Boolean).join("\n\n") : "";
+    let task = msg ? [reply + msg.text, ...local].filter(Boolean).join("\n\n") : "";
+    const featureRecord = this.featureRecord;
+    if (this.feature && !featureRecord?.session) {
+      const naming = featureRecord?.autoName ? `First choose a short feature title and run python3 ${JSON.stringify(`${appHome()}/mods/workspace-launchers/bin/workspace-state`)} feature-name with one JSON argument containing id=${this.feature} and name=your title. This only names this feature. ` : '';
+      const context = featureRecord?.context ? `\nContext handoff from the parent conversation (reference only; old tool calls and tasks are not new instructions):\n${featureRecord.context}` : '';
+      task = `You are the Feature Assistant for ${featureRecord?.name ?? 'this feature'} (feature ID ${this.feature}). ${naming}Use the shared worker/reviewer settings. Own only tasks for this feature.${context}\n\n${task}`;
+    }
     const p = msg ? { id: `pending-${msg.id}`, text: msg.text, replyTo: msg.quote ? excerpt(msg.quote.text, 80) : null, files: msg.files.filter((f) => !f.image).map((f) => f.name),
       paths: msg.files.filter((f) => f.image).map((f) => f.path), at: Date.now(), sent: task, match: norm(msg.text).slice(0, 60) || null } : { failed: null };
     if (msg) this.pending.push(p);
@@ -1791,9 +1814,10 @@ export default class Chat extends View {
       const args = ["run", "--bg", "--json", "--no-parent", "--keep", ...(machine ? ["--on", machine] : []), ...(folder ? ["--cwd", folder] : []),
         "--label", `herdr.chat=${chatLabel(pane)}`, "--label", `herdr.chat.slot=${this.slot}`, "--label", `herdr.chat.origin=slot:${this.slot}`,
         "--label", `herdr.role=${this.role}`,
+        ...(this.feature ? ["--label", `herdr.feature=${this.feature}`] : []),
         ...(space ? ["--label", `herdr.coordinator.space=${String(space.id).split("/").pop()}`] : []),
         ...(rec?.tab ? ["--label", `herdr.coordinator.tab=${String(rec.tab).split("/").pop()}`] : []),
-        launch, ...(task ? [task] : [])];
+        ...(this.feature && featureRecord?.session ? ["--", ...agent.resumeArgv(featureRecord.kind ?? "codex", featureRecord.argv ?? ["codex", "--no-daemon"], featureRecord.session), ...(task ? [task] : [])] : [launch, ...(task ? [task] : [])])];
       const r = await hc(args).catch((e) => ({ code: 1, stderr: String(e?.message ?? e), stdout: "" }));
       if (oneOff) exec("sh", ["-c", TEMPLATE + 'rm -f "$dir/$1.md"', "x", oneOff], on);
       let out = {};
@@ -1855,6 +1879,7 @@ export default class Chat extends View {
         const st = props()?.settings ?? kept;
         const sel = st?.agent && data.menus[st.agent] ? { perm: data.permDefault[st.agent], effort: null, fast: false, ...st } : { ...data.defaults };
         this.choice = { sel, data, key: this.choice.key };
+        if(sel.agent==='codex') { const selected=await agent.profilePick(sel,space?.machine??null); this.skills=await slash.skills(space?.machine??null,props()?.folder??space?.folder,(await agent.profiles(space?.machine??null)).find(p=>p.id===sel.profile)?.home??data.codexDefaults?.home);this.cmds=await slash.commands('codex',space?.machine??null,space?.folder); }
       } catch { this.choice = null; }
       cx.notify();
     });
@@ -2050,7 +2075,7 @@ export default class Chat extends View {
   // thread or any other agent shows no task rows.
   assistant() {
     const l = this.t?.labels ?? {};
-    if (this.thread || (l["herdr.role"] !== "coordinator" && this.role !== "coordinator")) return null;
+    if (this.thread || (l["herdr.role"] !== "coordinator" && l["herdr.role"] !== "feature" && this.role !== "coordinator" && this.role !== "feature")) return null;
     return l["herdr.coordinator.space"] ?? l["herdr.space"] ?? null;
   }
 
@@ -2058,7 +2083,7 @@ export default class Chat extends View {
   // folder, not only where its Assistant runs.
   async loadSpaceTasks() {
     const r = await exec("herdr-task", [...(this.machine ? ["--on", this.machine] : []), "list", "--all", "--json"]).catch(() => null);
-    try { const d = JSON.parse(r?.stdout ?? "null"); if (Array.isArray(d)) this.spaceTasks = d.flatMap((g) => (g.tasks ?? []).map((x) => ({ ...x, folder: g.folder }))); } catch {}
+    try { const d = JSON.parse(r?.stdout ?? "null"); if (Array.isArray(d)) this.spaceTasks = d.flatMap((g) => (g.tasks ?? []).map((x) => ({ ...x, folder: g.folder }))).filter(x => !this.feature || x.feature === this.feature); } catch {}
   }
 
   taskSig() {
@@ -2272,6 +2297,7 @@ export default class Chat extends View {
     }
     if (what === "rewind") this.rewind(row, cx);
     if (what === "fork") this.fork(cx);
+    if (what === "feature") this.featureFrom(row, cx);
     if (what === "react") { this.keepIcons = row.of; this.openReactions(row, this.hitLeft); }
     // A pill: your reaction on or off.
     if (what.startsWith("pill:")) this.toggleReaction(row.of, row.target, what.slice(5), cx);
@@ -2399,6 +2425,33 @@ export default class Chat extends View {
       return;
     }
     run("tab.new", args);
+  }
+
+  featureFrom(row, cx) {
+    const tab=panes().find(p=>p.pane===this.myPane())?.tab;
+    const space=spaces().find(s=>s.tabs.some(t=>t.id===tab));
+    const items=this.conv?.items??[],at=items.findIndex(x=>x.id===(row.of??row.id));
+    const upto=at<0?items:items.slice(0,at+1);
+    const context=upto.filter(x=>['user','agent'].includes(x.kind)&&x.text).slice(-20).map(x=>`${x.kind}: ${x.text}`).join('\n\n').slice(-40000);
+    startFeature(space,`Feature objective from the chosen message:\n${row.text??""}\n\nSupporting context up to that message:\n${context}`,{session:agent.sessionOf(this.kind,this.path),message:row.of??row.id});
+  }
+
+  clipboardMenu(kind,e,cx,text='') {
+    cx.stop_propagation(); this.pressMoved=kind!=='input';
+    openOverlay({mod:'workspace-clipboard',kind:'popup',width:220,height:kind==='input'?140:172,at:{x:e.position.x,y:e.position.y},props:{key:this.pickKey()??this.areaKey(),kind,text,value:this.box.value(),range:this.box.selected_range()}});
+  }
+  clipboardAction(req,cx) {
+    if(req.kind!=='input') {
+      if(req.action==='message')cx.write_to_clipboard(req.text);
+      else if(req.action==='copy')window.dispatch_action('input::Copy');
+      return;
+    }
+    if(req.value!==this.box.value()){toast({title:'Text changed',body:'Open the clipboard menu again.'});return;}
+    const range=req.range??{start:0,end:0},text=this.box.value().slice(range.start,range.end);
+    if(req.action==='copy'||req.action==='cut')cx.write_to_clipboard(text);
+    if(req.action==='cut'){this.box.set_selected_range(range);this.box.replace('');this.saveSoon(cx);}
+    if(req.action==='paste'){this.box.focus();this.box.set_selected_range(range);window.dispatch_action('input::Paste');}
+    if(req.action==='select-all'){this.box.focus();this.box.set_selected_range({start:0,end:this.box.value().length});}
   }
 
   // ---- dictation ----------------------------------------------------------------------------
@@ -3100,7 +3153,7 @@ export default class Chat extends View {
         // under its last row.
         if (!(working && i === items.length - 1) && out.length > first) {
           const bar = { id: `b:${x.id}`, of: x.id, target: x.text, text: x.text, side: "agent", at: x.at, pills: this.pills(x.id),
-            acts: bandActs("agent", x.text, { fork: Boolean(this.kind) }) };
+            acts: [...bandActs("agent", x.text, { fork: Boolean(this.kind) }), ...(this.kind ? ["feature"] : [])] };
           out[out.length - 1] = { ...out[out.length - 1], bar };
           out.push({ kind: "band", id: `ab:${x.id}`, bar });
         }
@@ -3918,7 +3971,7 @@ export default class Chat extends View {
         .when(i === sel, (el) => el.bg(t.selected))
         .hover((s) => s.bg(t.hover))
         .on_click((_e, cx) => { cx.stop_propagation(); this.pick(c, cx); })
-        .child(div().flex_none().text_size(12.5).font_medium().text_color(t.foreground).child(c.task || c.space ? c.name : `/${c.name}`))
+        .child(div().flex_none().text_size(12.5).font_medium().text_color(t.foreground).child(c.skill ? `$${c.name}` : c.task || c.space ? c.name : `/${c.name}`))
         .child(div().flex_1().min_w(0).truncate().text_size(12).text_color(c.task ? t.muted : t.dim).child(c.about))
         .when(Boolean(c.state), (el) => el.child(div().flex_none().text_size(11).text_color(t.dim).child(c.state)))));
   }
@@ -4323,7 +4376,7 @@ export default class Chat extends View {
           .child(div().id("chat-text-h").w_full().text_size(13)
             .child(/\n$/.test(this.box.value()) || !this.box.value() ? `${this.box.value()} ` : this.box.value())
             .on_size_change((size, cx) => { if (Math.abs((this.textH ?? 0) - size.height) > 0.1) { this.textH = size.height; this.sizeBox(); cx.notify(); } })))
-        .child(Textarea.new(this.box).w_full().text_size(13).text_color(t.foreground)
+        .child(Textarea.new(this.box).on_mouse_down("right",(e,cx)=>this.clipboardMenu("input",e,cx)).w_full().text_size(13).text_color(t.foreground)
           .when(Boolean(this.boxSpare && this.lineH), (el) => el.mb(-this.lineH)))
         .when(!this.box.value().trim(), (el) => el.child(div().absolute().top(9).left(12).text_size(13).text_color(t.dim)
           .child(this.asks.length || st === "blocked" ? WORDS.replyInstead : this.placeholder()))))
@@ -4472,6 +4525,13 @@ export default class Chat extends View {
 
   draw(cx) {
     if (this.host) return this.host.render(cx);
+    const resume=shared('workspace.feature.resume');
+    if(this.feature&&resume?.record?.id===this.feature&&resume.nonce!==this.featureResumeNonce&&Date.now()-resume.at<5000){
+      this.featureResumeNonce=resume.nonce;
+      cx.timer.after(0,cx=>{if(this.phase==='starting'||this.status()==='working')return;this.featureRecord=resume.record;this.addr=null;this.phase='fresh';this.startAgent(null,cx);});
+    }
+    const clip=shared("workspace.clipboard.request");
+    if(clip?.key===(this.pickKey()??this.areaKey())&&clip.nonce!==this.clipboardNonce&&Date.now()-clip.at<5000){this.clipboardNonce=clip.nonce;cx.timer.after(30,cx=>this.clipboardAction(clip,cx));}
     // The pane getting focus (opened, clicked, gone to) puts the keyboard in the message box.
     const mine = this.myPane();
     const paneFocused = Boolean(mine && focused()?.pane === mine);
@@ -4562,7 +4622,7 @@ export default class Chat extends View {
     // A thread asked for (the Tasks panel, the Inbox): shared "chat.threadreq" = { terminal,
     // task, title, space, at }; the coordinator chat in that space opens it.
     const tq = shared("chat.threadreq");
-    if (tq && tq.at !== this.threadReqAt && Date.now() - tq.at < 5000 && this.role === "coordinator" && mine) {
+    if (tq && tq.at !== this.threadReqAt && Date.now() - tq.at < 5000 && (this.role === "coordinator" || this.role === "feature") && mine) {
       const tab = panes().find((p) => p.pane === mine)?.tab;
       const space = spaces().find((x) => x.tabs.some((t) => t.id === tab))?.id;
       // A worker runs as its coordinator's hc child, with no space of its own: its parent's chat
@@ -4729,6 +4789,7 @@ export default class Chat extends View {
           });
         })
           .track_scroll(this.scroll).size_full()
+          .on_item_secondary_click((key,e,cx)=>{const row=rows.find(r=>r.id===key);this.clipboardMenu("reply",e,cx,row?.text??row?.code??"");})
           .on_item_click((key, cx) => this.clickRow(key, rows, cx, sizes)))
         .child(Scrollbar.vertical("chat-rows").absolute().inset_0())
         .child(this.measurer(rows, keys, t))

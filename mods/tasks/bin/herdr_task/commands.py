@@ -108,6 +108,8 @@ def cmd_add(args):
         # The person's setting wins: worktrees off for this repo means in the folder, --worktree or not.
         mode = "here" if args.here or not worktrees_on(s) else "worktree"
         t = s.new(args.title.strip(), prompt, mode)
+        feature = caller_labels().get("herdr.feature")
+        if feature: t["feature"] = feature
         set_opts(t, args)
         space = bare(args.space) if args.space else caller_space()
         set_base(s, t, args.base, space, new=True)
@@ -276,7 +278,7 @@ def begin(s, t, argv, space, parent=None):
         # The folder's commit as it starts: still there, and nothing tracked changed, at ready means
         # it changed nothing, so there is nothing to review (review_refusal, #744).
         t["folder_start"] = git(s.loc["folder"], "rev-parse", "HEAD")[1] or None
-    parent = parent_for(parent, space)
+    parent = parent_for(parent, space, t.get("feature"))
     return launch(s, t, argv, space, brief(s, t, parent, space, argv), parent=parent)
 
 
@@ -925,7 +927,7 @@ def start_again(s, t, space, key=None, argv_json=None, message=None, parent=None
     is a resumed session's first message when no `message` is given (a handoff needs none)."""
     unarchive(s, t)
     prev = last_agent(t)
-    parent = parent_for(parent or (prev or {}).get("parent"), space)
+    parent = parent_for(parent or (prev or {}).get("parent"), space, t.get("feature"))
     # The last agent's argv again, unless the task's agent, model or effort changed since (edit).
     keep = prev and prev.get("argv") and (t.get("pick_at") or 0) <= (prev.get("at") or 0)
     argv = agent_argv(None, argv_json) if argv_json else worker_argv(s, t, space, key) if key else \

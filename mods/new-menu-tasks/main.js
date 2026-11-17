@@ -1,6 +1,8 @@
+import { launcherAgents } from "./workspace-store.js";
+import { workspaceCall, startFeature } from "./features.js";
 import { View, div, svg, image } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
-import { theme, knownAgents, run, openOverlay, closeOverlay, props, window, keys } from "herdr";
+import { theme, knownAgents, run, setShared, openOverlay, closeOverlay, props, window, keys } from "herdr";
 import { spaces, panes, inRender } from "./live.js";
 import { coordinatorTab, requestCoordinator } from "./coordinator.js";
 import { H, TEXT, RADIUS } from "./ui.js";
@@ -26,12 +28,13 @@ function shortcut(name) {
 
 export default class NewMenu extends View {
   init(_props, cx) {
-    this.agents = [];
+    this.agents = []; this.catalog = {chats:[],hidden_agents:[]};
     this.handle = cx.focus_handle();
     this.handle.focus();
     cx.spawn(async cx => {
-      try { this.agents = await knownAgents({ on: spaces().find(s => s.active)?.machine }); }
+      try { this.catalog = await workspaceCall("catalog"); this.agents = await knownAgents({ on: spaces().find(s => s.active)?.machine }); }
       catch { this.failed = true; }
+      this.agents=launcherAgents(this.agents,this.catalog);
       cx.notify();
     });
   }
@@ -52,14 +55,14 @@ export default class NewMenu extends View {
   draw() {
     const t = theme();
     const space = spaces().find(s => s.active);
-    const installed = this.agents.filter(a => a.installed);
-    const choices = agentChoices(this.agents);
+    const installed = this.agents.filter(a => a.installed && !this.catalog.hidden_agents.includes(a.key));
+    const choices = agentChoices(this.agents.filter(a=>!this.catalog.hidden_agents.includes(a.key)));
     // One coordinator per space: once there is one, the row goes to it. On another machine it runs there.
     const coordTab = coordinatorTab(space);
     const coordinate = () => coordTab ? run("tab.select", { id: coordTab.id }) : requestCoordinator(space);
     const canCoordinate = Boolean(coordTab || space);
     const aRow = assistantRow({ open: Boolean(coordTab) });
-    return v_flex().min_h(0).w_full().h(209 + Math.min(10, Math.max(1, choices.length)) * H.lg).bg(t.popover).p(5).text_size(TEXT.body)
+    return v_flex().min_h(0).w_full().h(Math.min(760, 305 + (Math.min(10, Math.max(1, choices.length)) + this.catalog.chats.length) * H.lg)).bg(t.popover).p(5).overflow_y_scrollbar().text_size(TEXT.body)
       .id("new-menu").track_focus(this.handle)
       .on_key_down((e) => {
         if (e.modifiers.control || e.modifiers.platform || e.modifiers.alt) return;
@@ -72,6 +75,9 @@ export default class NewMenu extends View {
       .child(this.row("terminal", svg("icons/shell.svg").size(14), NEW_MENU.terminal, () => run("tab.new", { space: space?.id }), shortcut("tab.new")))
       .child(this.row("coordinator", svg("mods/coordinator/network.svg").size(14), aRow.label, coordinate,
         aRow.hint, canCoordinate))
+      .child(this.row("browser", svg("mods/coordinator/network.svg").size(14), "New browser tab…", () => openOverlay({mod:"workspace-launchers",kind:"dialog",width:600,height:310,props:{mode:"browser"}})))
+      .child(this.row("feature", svg("mods/coordinator/network.svg").size(14), "Start feature…", () => startFeature(space)))
+      .children(this.catalog.chats.map(chat => this.row(`web-${chat.id}`, svg("mods/coordinator/network.svg").size(14), chat.name, () => { setShared("workspace.browser.request",{...chat,space:space?.id,at:Date.now(),nonce:Math.random()}); })))
       .child(div().h(28).flex_none().px(8).flex().items_center().text_size(TEXT.label).font_medium().text_color(t.dim).child(NEW_MENU.agents))
       .child(v_flex().flex_1().min_h(0).overflow_y_scrollbar()
         .children(choices.map((a, i) => this.row(a.key, a.tint ? svg(a.icon).size(14).text_color(t.foreground) : image(a.icon).size(14), a.name,
@@ -80,6 +86,7 @@ export default class NewMenu extends View {
       .child(div().h(1).mx(8).my(5).bg(t.border))
       .child(this.row("space", svg("mods/workspace-chrome/plus.svg").size(14), NEW_MENU.space, () => run("tabs-tasks.newspace"), shortcut("tabs-tasks.newspace") || shortcut("space.new")))
       .child(this.row("worktree", svg("mods/workspace-chrome/branch.svg").size(14), NEW_MENU.worktreeNew, () => openOverlay({ mod: "worktree", kind: "dialog", width: 460, height: 280, props: { space: space?.id, folder: panes().find(p => p.focused)?.cwd, action: "new" } }), "", Boolean(space)))
-      .child(this.row("worktree-open", svg("mods/workspace-chrome/branch.svg").size(14), NEW_MENU.worktreeOpen, () => openOverlay({ mod: "worktree", kind: "dialog", width: 560, height: 480, props: { space: space?.id, folder: panes().find(p => p.focused)?.cwd, action: "open" } }), "", Boolean(space)));
+      .child(this.row("worktree-open", svg("mods/workspace-chrome/branch.svg").size(14), NEW_MENU.worktreeOpen, () => openOverlay({ mod: "worktree", kind: "dialog", width: 560, height: 480, props: { space: space?.id, folder: panes().find(p => p.focused)?.cwd, action: "open" } }), "", Boolean(space)))
+      .child(this.row("manage-launchers", svg("mods/workspace-chrome/settings.svg").size(14), "Manage…", () => openOverlay({mod:"workspace-launchers",kind:"dialog",width:660,height:700,props:{mode:"manage"}})));
   }
 }

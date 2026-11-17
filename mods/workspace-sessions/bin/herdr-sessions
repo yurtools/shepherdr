@@ -173,6 +173,7 @@ def sessions(folder, space, live=True):
                     continue
                 key = session_key(root, info["session"])
                 saved = load(records / (key + ".json"), {})
+                if saved.get("feature"): info["feature"] = saved["feature"]
                 if saved.get("space"):
                     if saved["space"] != space:
                         continue
@@ -204,7 +205,7 @@ def capture(row):
     dest = app_home() / "data/session-history"
     dest.mkdir(parents=True, exist_ok=True, mode=0o700)
     # Only metadata: no credentials, prompt text or transcript copies in this index.
-    data = {k: row[k] for k in ("space", "title", "argv") if k in row}
+    data = {k: row[k] for k in ("space", "title", "argv", "feature") if k in row}
     fd, tmp = tempfile.mkstemp(dir=dest)
     try:
         with os.fdopen(fd, "w") as f:

@@ -54,10 +54,25 @@ def locked():
 def plain_command(value):
  if isinstance(value,list):
   if len(value)==3 and value[0].split('/')[-1] in ('sh','bash','zsh') and value[1] in ('-c','-lc'):return plain_command(value[2])
-  return [str(x) for x in value] if value and all(isinstance(x,str) for x in value) else None
- if not isinstance(value,str) or re.search(r'[;&|`\n\r<>$]',value):return None
+  return list(value) if value and all(isinstance(x,str) for x in value) else None
+ if not isinstance(value,str):return None
+ quote=None;escaped=False
+ for c in value:
+  if escaped:escaped=False;continue
+  if quote=="'":
+   if c=="'":quote=None
+   continue
+  if c=='\\':escaped=True;continue
+  if c in ('`','$'):return None
+  if quote=='"':
+   if c=='"':quote=None
+   continue
+  if c in ("'",'"'):quote=c
+  elif c in '; &|<>\n\r'.replace(' ',''):return None
  try:return shlex.split(value) or None
  except ValueError:return None
+
+def action_key(req):return hashlib.sha256(json.dumps([req.get('tool_name'),req.get('tool_input')],sort_keys=True,ensure_ascii=False).encode()).hexdigest()
 
 def request_key(req):return hashlib.sha256(json.dumps(req,sort_keys=True,ensure_ascii=False).encode()).hexdigest()
 def redact(text):
@@ -84,7 +99,7 @@ def context(req, terminal=None, metadata=None):
  role='coordinator' if role in ('assistant','coordinator') else 'reviewer' if role=='reviewer' else 'worker' if task else role
  return {'terminal':terminal,'space':space,'task':task,'session':session,'role':role,'account':home,
          'cwd':os.path.realpath(req.get('cwd') or (meta.get('foreground') or {}).get('cwd') or meta.get('cwd') or os.getcwd()),
-         'agent':'codex' if codex else 'claude','reviewer':labels.get('herdr.coordinator') or '',
+         'agent':'codex' if codex else 'claude','reviewer':labels.get('herdr.owner') or labels.get('herdr.coordinator') or '', 'feature':labels.get('herdr.feature') or '',
          'native_review':any('approvals_reviewer' in str(a) and 'auto_review' in str(a) for a in argv),
          'task_mode':labels.get('herdr.approval.mode')}
 
@@ -126,6 +141,7 @@ def matches(rule,req,ctx):
   if rule.get('task'): 
    if rule['task']!=ctx.get('task'):return False
   elif rule.get('session')!=ctx.get('session'):return False
+ if rule.get('match')=='request':return rule.get('action_key')==action_key(req)
  words=plain_command((req.get('tool_input') or {}).get('command'))
  if not words:return False
  pattern=rule.get('pattern') or []
@@ -144,15 +160,16 @@ def grant(path, terminal=None, scope='task', match='exact', prefix=None, hours=1
  req,ctx=request_context(path,terminal)
  if not is_permission(req):raise ValueError('Plans and questions cannot receive execution approval rules.')
  words=plain_command((req.get('tool_input') or {}).get('command'))
- if not words:raise ValueError('Remembered command rules require one plain command. Use Allow once for shell scripts or compound commands.')
+ request_match=not words and scope=='task' and match=='exact'
+ if not words and not request_match:raise ValueError('Starting-with rules require one plain command. Use exact action for this task or Ask Assistant for scripts.')
  if scope not in ('task','space','account') or match not in ('exact','prefix') or decision not in ('allow','deny'):raise ValueError('Invalid rule scope, match or decision.')
  if scope=='space' and not ctx.get('space'):raise ValueError('This agent has no space. Use task/session scope instead.')
- pattern=plain_command(prefix) if match=='prefix' else words
- if not pattern or words[:len(pattern)]!=pattern:raise ValueError('The prefix must match the pending command’s argument list.')
+ pattern=plain_command(prefix) if match=='prefix' else words if words else [summary(req)]
+ if not pattern or not request_match and words[:len(pattern)]!=pattern:raise ValueError('The prefix must match the pending command’s argument list.')
  if match=='prefix' and (len(pattern)<2 or pattern[0].split('/')[-1] in ('sh','bash','zsh','env') or pattern[0].split('/')[-1] in ('python','python3','node','ruby','perl') and pattern[1].startswith('-')):raise ValueError('That prefix grants arbitrary commands. Choose a more specific command or Allow once.')
  if '[redacted]' in redact(shlex.join(pattern)):raise ValueError('Do not save credentials in approval rules. Use Allow once.')
  rule={'id':secrets.token_hex(8),'created':int(time.time()*1000),'expires':time.time()+max(0.01,min(float(hours),24*365))*3600,
-       'scope':scope,'match':match,'pattern':pattern,'tool':req['tool_name'],'decision':decision,'cwd':ctx['cwd'],'account':ctx['account'],
+       'scope':scope,'match':'request' if request_match else match,'action_key':action_key(req) if request_match else None,'pattern':pattern,'tool':req['tool_name'],'decision':decision,'cwd':ctx['cwd'],'account':ctx['account'],
        'space':ctx['space'] if scope!='account' else '', 'task':ctx['task'] if scope=='task' else '', 'session':ctx['session'] if scope=='task' and not ctx['task'] else ''}
  with locked():
   rules=read(store()/'rules.json',[]) or [];write(store()/'rules.json',[r for r in rules if not r.get('expires') or r['expires']>time.time()]+[rule])
@@ -163,14 +180,16 @@ def grant(path, terminal=None, scope='task', match='exact', prefix=None, hours=1
 
 def review_ticket(path, req, ctx, force=False):
  opts=settings(ctx);reviewer=ctx.get('reviewer')
- if reviewer and not hc_get(reviewer).get('state'):reviewer=None
+ if reviewer and hc_get(reviewer).get('state')!='live':reviewer=None
  if not reviewer:
   # Regular agents may belong to a space with an Assistant. Inspect the model, never start an agent.
   try:
    r=subprocess.run(['hc','ls','--json'],capture_output=True,text=True,timeout=3);all=json.loads(r.stdout).get('terminals',[])
    for row in all:
     meta=hc_get(row.get('address',''));labels=meta.get('labels') or {}
-    if labels.get('herdr.coordinator.space')==ctx.get('space') and ctx.get('space'):reviewer=row['address'];break
+    if ctx.get('feature'):
+     if labels.get('herdr.feature')==ctx['feature'] and labels.get('herdr.role')=='feature':reviewer=row['address'];break
+    elif labels.get('herdr.coordinator.space')==ctx.get('space') and ctx.get('space') and labels.get('herdr.role')=='coordinator':reviewer=row['address'];break
   except (OSError,ValueError,subprocess.TimeoutExpired):pass
  if not reviewer or reviewer==ctx.get('terminal'):return {'action':'wait','reason':'No other running space Assistant is available to review this request.'}
  folder=store()/'pending';ticket_path=folder/(Path(path).stem+'.json');old=read(ticket_path)
@@ -224,9 +243,20 @@ def own_review_command(req,ctx):
   return bool(ticket and ticket.get('reviewer')==ctx['terminal'] and ticket.get('status')=='pending' and ticket.get('expires',0)>time.time() and secrets.compare_digest(str(ticket.get('token','')),token))
  except (ValueError,IndexError):return False
 
+def own_feature_name(req,ctx):
+ if ctx.get('role')!='feature' or not ctx.get('feature'):return False
+ words=plain_command((req.get('tool_input') or {}).get('command')) or []
+ if words and words[0] in ('python','python3'):words=words[1:]
+ if len(words)!=3 or words[:2]!=[str(app_home()/'mods/workspace-launchers/bin/workspace-state'),'feature-name']:return False
+ try:
+  value=json.loads(words[2])
+  return set(value)=={'id','name'} and value['id']==ctx['feature'] and isinstance(value['name'],str) and 0<len(value['name'].strip())<=80
+ except (ValueError,TypeError,KeyError):return False
+
 def evaluate(path, terminal=None):
  req,ctx=request_context(path,terminal)
  if not is_permission(req):return {'action':'wait','reason':'Plans and questions require their own answer.'}
+ if own_feature_name(req,ctx):return response('allow','Feature Assistant may name its own feature.','feature-name')
  if own_review_command(req,ctx):return response('allow','Designated Assistant may submit this exact review decision.','review-control')
  opts=settings(ctx)
  if opts['mode']!='manual':

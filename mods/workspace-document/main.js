@@ -3,7 +3,7 @@ import { highlighted } from "./highlight.js";
 import { HIGHLIGHT_LANGUAGES } from "./core/syntax.js";
 import { View, div } from "gpui-kit";
 import { h_flex, v_flex, Editor, EditorState, TextView } from "gpui-base";
-import { props, panes, shared, focused, nextCommand, readTextFile, writeTextFile, appHome, theme, settings, exec, spaces } from "herdr";
+import { run, setShared, props, panes, shared, focused, nextCommand, readTextFile, writeTextFile, appHome, theme, settings, exec, spaces } from "herdr";
 import * as fs from "fs/promises";
 import { MAX_TEXT, language, documentKind, parseCSV, delimiterFor, saveState } from "./core/documents.js";
 
@@ -118,6 +118,7 @@ export default class Document extends View {
     if (!doc || doc.closing) return;
     if (doc.saving) { doc.notice = 'File is saving. Close it after saving finishes.'; cx.notify(); return; }
     doc.closing = true; cx.notify();
+    let paneToClose = null;
     try {
       if (doc.text !== null) await this.draft(doc);
       doc.closed = true; doc.revision = (doc.revision ?? 0) + 1;
@@ -125,8 +126,19 @@ export default class Document extends View {
       this.docs.delete(key);
       if (this.active === key) this.active = keys[at + 1] ?? keys[at - 1] ?? null;
       doc.editor?.release();
+      // Closing this exact document pane is LAST: disposal cancels its pending calls.
+      const slot=props()?.slot, candidates=panes().filter(p=>p.mod==='workspace-document');
+      const ownPane=slot?shared('workspace.documents')?.[slot]:candidates.length===1?candidates[0].pane:null;
+      if (!this.docs.size && ownPane && candidates.some(p=>p.pane===ownPane)) {
+        const records = { ...(shared('workspace.documents') ?? {}) };
+        for (const [slot, pane] of Object.entries(records)) if (pane === ownPane) delete records[slot];
+        setShared('workspace.documents', records);
+        localStorage.removeItem('document-pane');
+        paneToClose = ownPane;
+      }
     } catch (e) { doc.notice = `File could not be closed: draft could not be saved: ${e.message ?? e}`; }
     finally { doc.closing = false; cx.notify(); }
+    if (paneToClose) run("pane.close", { pane: paneToClose });
   }
   fileTab(key, doc, t) {
     return h_flex().id(`tab-${hash(key)}`).h(26).flex_none().items_center().rounded(6)

@@ -260,6 +260,38 @@ member and 400,000 output characters. Excel previews include at most 100 sheets,
 500 rows and 100 columns per sheet, with 40 rows per page. A notice identifies
 truncation. Open oversized or layout-sensitive documents in their usual app.
 
+## Changes across repositories
+
+The native **Changes** panel follows the selected space's saved project folder,
+independently of the focused terminal or Feature worktree. It discovers the folder's
+own enclosing repository and repositories below it. Select **All repositories** for
+collapsible groups, with changed repositories first, or pick one repository to inspect its branch and changed files.
+Click a file to see its diff. Identical relative paths in different repositories stay
+separate. Empty repositories stay visible with “No uncommitted changes”.
+
+To commit, select one repository, enter its message and press **Commit**. The panel
+shows the full destination path and stages/commits that repository's changes only.
+Message drafts and repository selection persist separately per space/folder/machine.
+Running workers and their worktrees are not selected or changed by the panel.
+Tracked submodule references remain in the parent; their checked-out repositories
+also have their own groups. Untracked nested repositories are excluded from parent
+staging. Already-staged embedded repositories require reviewing the parent's index
+before committing. Failed commits can leave files staged, as with ordinary Git.
+
+Changes refresh every ten seconds; discovery runs every minute or immediately with
+**Refresh**. Discovery does not follow directory symlinks and skips `.git`, dependency,
+cache and build folders. It is bounded to six levels, 4,000 directories and 50
+repositories; incomplete discovery is reported. Narrow the space folder to discover
+more repositories. Parent staging excludes embedded repos even when discovery skips
+their dependency/build folders. The list shows up to
+1,000 changed files across repositories; previews are bounded to 1,500 lines.
+
+Python 3 and Git must be available on the space's machine. Remote reads and commits
+use the same helper through Herdr's remote execution API, with the same bounds;
+remote interactive authentication/signing prompts cannot be answered in this panel.
+This extension is native-only; the web Changes panel retains its existing behavior.
+If an update preserves your customized layout and writes `shepherdr.json.new`,\n+adopt that layout or change only the `changes` block's content mod to\n+`workspace-changes` in your existing layout.
+
 ## Refer to project files in chat
 
 Right-click a file in **Files** to copy its project-relative or absolute path, or

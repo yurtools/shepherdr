@@ -14,6 +14,8 @@ The feature groups below are ordered by importance to the user's workflow.
   Source / Preview, source highlighting, DOCX/Excel content views and file references.
   Space settings can edit the project folder, with Browse, validation and an explicit
   save that keeps the native space and Files root aligned.
+  Changes groups multiple repositories beneath that folder, with per-repository
+  selection, branch labels, diff previews and separate commit-message drafts.
 - Approvals: role defaults, bounded rules, delegated reviews, decision-source history
   and future rules created from history without replaying old actions.
 - Sessions and instructions: resume/focus from the sidebar, named feature ownership,

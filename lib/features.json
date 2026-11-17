@@ -462,7 +462,7 @@
         "worktree"
       ],
       "herdr": {
-        "builtin": "Herdr's Changes side panel"
+        "mods": ["workspace-changes"]
       },
       "web": {
         "files": [

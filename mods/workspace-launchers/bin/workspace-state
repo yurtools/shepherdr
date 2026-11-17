@@ -32,7 +32,7 @@ def main(command,p):
   if command=='catalog':
    programs=load(ROOT/'programs.json',{}).get('programs',{})
    import shutil
-   return {**cat,'agents':[{'key':k,**v,'installed':bool(v.get('run') and shutil.which(v['run'][0]))} for k,v in programs.items() if v.get('run')]}
+   return {**cat,'agents':[{'key':k,**v,'tint':bool(v.get('tint',False)),'installed':bool(v.get('run') and shutil.which(v['run'][0]))} for k,v in programs.items() if v.get('run')]}
   if command=='save-chat':
    name=str(p.get('name','')).strip()[:80]
    if not name:raise ValueError('Enter a name.')

@@ -15,6 +15,9 @@ class WorkspaceState(unittest.TestCase):
   self.root.joinpath('programs.json').write_text(json.dumps({'programs':{'secondary':{'name':'Account Two','run':['/account-two-wrapper']}}}))
   self.call('save-agent',{'id':'codex','name':'Codex','command':'codex --model "model name"'})
   d=json.loads((self.root/'programs.json').read_text())['programs'];self.assertEqual(d['secondary']['run'],['/account-two-wrapper']);self.assertEqual(d['codex']['run'],['codex','--model','model name'])
+ def test_configured_icons_keep_their_colors_unless_tint_is_explicit(self):
+  self.root.joinpath('programs.json').write_text(json.dumps({'programs':{'secondary':{'name':'Account Two','run':['/account-two'],'icon':'icons/codex.svg'},'symbol':{'run':['/tool'],'tint':True}}}))
+  rows={r['key']:r for r in self.call('catalog')['agents']};self.assertFalse(rows['secondary']['tint']);self.assertTrue(rows['symbol']['tint'])
  def test_disable_and_remove_do_not_touch_authentication(self):
   auth=self.root/'auth.json';auth.write_text('private placeholder')
   self.call('save-agent',{'id':'codex','command':'codex'})

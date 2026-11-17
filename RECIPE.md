@@ -8,7 +8,7 @@ Yurherdr started as a fork of Elias Stravik's [Shepherdr](https://github.com/eli
 orchestration, artifacts and optional web service, with explicit upstream credit and compatible
 runtime IDs. This is a native App layout, not a Herdr TUI plugin.
 
-![Yurherdr — native workspace with public demo data](preview.png)
+![Yurherdr public demo: Features, Markdown preview and multi-repository Changes](preview.png)
 
 ## What you see
 

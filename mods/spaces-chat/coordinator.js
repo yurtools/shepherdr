@@ -1,3 +1,4 @@
+import {loadProjectRoots} from './project-folder.js';
 // Coordinators: an agent started from the `coordinator` template (herdr-core), at most one per
 // space, in a tab of its own pinned first. Its workers are agents it started in tabs of their own:
 // its children, or terminals labelled herdr.coordinator=<its tab> (they survive its restart).
@@ -185,9 +186,7 @@ export async function openCoordinator(space, show = true, settings = null) {
     toast({ title: `${space.machine} is offline`, body: "Its Assistant starts when it's back." });
     return;
   }
-  if (!shared("workspace.roots")) {
-    try { setShared("workspace.roots", JSON.parse(await readTextFile(`${appHome()}/data/workspace-folders.json`) ?? "{}")); } catch {}
-  }
+  await loadProjectRoots();
   const folder = folderOf(space);
   // Unless the New space dialog chose, the coordinator runs what Shepherdr settings say for the space.
   if (!settings) settings = shepherdrFor(await readShepherdr(), space.id).coordinator;

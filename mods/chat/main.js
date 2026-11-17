@@ -1,3 +1,4 @@
+import {projectFolder} from './project-folder.js';
 import {appendInstructions,spaceInstructions} from './core/instructions.js';
 import {readShepherdr} from './coordinator.js';
 import LinkedMarkdown from './linked-markdown.js';
@@ -1758,7 +1759,7 @@ export default class Chat extends View {
     const rec = this.slotRec();
     const space = spaces().find((x) => x.id === (props()?.space ?? rec?.space));
     const machine = space?.machine ?? null;
-    const folder = props()?.folder ?? rec?.folder ?? space?.folder ?? null;
+    let folder = props()?.folder ?? rec?.folder ?? space?.folder ?? null;
     // Assistants start from the "assistant" template (chats saved before it was renamed say "coordinator").
     const named = props()?.template ?? this.role;
     const template = named === "coordinator" ? "assistant" : named;
@@ -1787,6 +1788,8 @@ export default class Chat extends View {
     this.phase = "starting";
     cx.notify();
     cx.spawn(async (cx) => {
+      // A still-empty Assistant may have been opened before its space folder changed.
+      if(this.role==='coordinator'&&space)folder=await projectFolder(space);
       // Chosen settings (the New space dialog, props.settings): the template's words with that
       // agent and its flags, as a one-off template (as restart.sh does), written beside the
       // template on the machine it runs on. There, an agent that isn't installed leaves the

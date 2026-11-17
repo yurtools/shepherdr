@@ -202,8 +202,13 @@ separately. Scratch-root tests never install hooks into an external home.
 
 ## Files and documents
 
-**Files** stays as a tree for the selected space. **Folder…** assigns an explicit
-local project root for that space, saved in `data/workspace-folders.json`. Switching
+**Files** stays as a tree for the selected space. In **Space settings**, the
+**Project folder** field accepts a path or **Browse…**; **Save folder** validates an
+existing local directory and updates both Herdr's space folder and the saved Files
+root. **Files → Folder…** uses the same save path. Remote-space folder editing is
+not currently offered. Running agents and existing Feature records keep their
+folders; new Assistants and new Features use the new root, including before Files
+has mounted. The override is saved in `data/workspace-folders.json`. Switching
 chat or document focus does not change it. Expanded folders and the selected file
 are remembered per space/root.
 

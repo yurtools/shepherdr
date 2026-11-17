@@ -1,3 +1,4 @@
+import {projectFolder,saveProjectFolder} from './project-folder.js';
 import { fileActions } from "./file-reference.js";
 // Derived from Herdr files (Apache-2.0; LICENSE-herdr). This clone keeps the tree visible and opens a separate document pane.
 import { View, div, svg } from "gpui-kit";
@@ -161,12 +162,14 @@ export default class Files extends View {
     const space = spaces().find(s => s.active);
     if (!space || space.machine) return;
     cx.spawn(async cx => {
-      const folder = await pickFolder({ prompt: "Project folder for this space" });
-      if (!folder) return;
-      const roots = { ...(shared("workspace.roots") ?? {}), [space.id]: folder };
-      await fs.mkdir(`${appHome()}/data`, { recursive: true });
-      await fs.writeFile(`${appHome()}/data/workspace-folders.json`, JSON.stringify(roots, null, 2));
-      setShared("workspace.roots", roots); this.refresh(cx); cx.notify();
+      try {
+        const expected=await projectFolder(space);
+        const folder = await pickFolder({ prompt: "Project folder for this space" });
+        if (!folder || spaces().find(s=>s.active)?.id!==space.id) return;
+        await saveProjectFolder(space,folder,expected);
+        this.error=null;this.refresh(cx);
+      } catch(e) { this.error=String(e.message??e); }
+      cx.notify();
     });
   }
 

@@ -12,6 +12,8 @@ The feature groups below are ordered by importance to the user's workflow.
   model/thinking/permissions controls, local skills picker and native `/status`.
 - Project files: persistent tree, separate editable document panes, Markdown/CSV
   Source / Preview, source highlighting, DOCX/Excel content views and file references.
+  Space settings can edit the project folder, with Browse, validation and an explicit
+  save that keeps the native space and Files root aligned.
 - Approvals: role defaults, bounded rules, delegated reviews, decision-source history
   and future rules created from history without replaying old actions.
 - Sessions and instructions: resume/focus from the sidebar, named feature ownership,

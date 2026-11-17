@@ -27,6 +27,18 @@ a scheduling feature. [Approval history](approvals.md#history-and-future-rules)
 shows decision sources and can create future rules from saved request context.
 [The workspace guide](workspace.md) describes these controls in full.
 
+## Project folder
+
+In a local space's settings, **Project folder** appears below the scope selector
+on every page. Edit the absolute path or choose **Browse…**, then press **Save
+folder**. The directory must already exist. This field saves explicitly rather
+than on each keystroke.
+
+Saving keeps Herdr's space folder and Files' project-root override aligned. It
+does not move files, switch Git branches, restart agents or relocate existing
+Features. New space Assistants and new Features use the selected folder. Editing
+remote-space folders is currently unavailable.
+
 ## Where you set them
 
 - **Settings, the level switch.** At the top of each page a space can set its own of (Agents, Tasks, Autopilot,

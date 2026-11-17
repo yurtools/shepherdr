@@ -50,9 +50,10 @@ The daily workflow, in order of importance:
    features side by side, close their views and return later without losing the work. Configure
    the Feature Assistant separately while sharing Worker and Reviewer settings with the space
    Assistant. The Features list shows combined activity, including workers still running.
-3. **Choose the intended account.** Configure named Codex profiles in launchers and per-space roles.
-   Preserve their homes/logins through launch, resume, fork and restart. Bind model/thinking/
-   permissions and skill discovery to that account; do not copy credentials.
+3. **Choose the intended account.** Configure named Codex profiles for space roles and named
+   launchers for ordinary tabs. These are separate configurations targeting separately signed-in
+   CLI homes. Preserve the assigned account through launch, resume, fork and restart, with its
+   model/thinking/permissions and skill discovery; do not copy credentials.
 4. **Inspect project files.** Root Files in the selected space. Keep its tree while documents open
    elsewhere. Edit source or switch Markdown/CSV preview modes. File paths, @ references and
    source links target the intended chat/document pane without auto-sending a message. Inspect changes
@@ -77,6 +78,29 @@ The daily workflow, in order of importance:
 
 Long conversations keep thinking and tool activity collapsible. Chat and document panes can be
 resized without replacing the running agent or discarding its conversation.
+
+## Current support and boundaries
+
+- **Agent engines:** full Chat and the Space settings roles support Codex and Claude Code.
+  This two-agent integration comes from the Shepherdr 3.1.35 foundation. The **+** menu can
+  launch other installed CLIs in terminals, including Kimi and OpenCode; their full Chat and
+  Assistant/Feature/Worker role adapters are not implemented. Registering a launcher does not
+  add those integrations. In Space settings, engine selection is inside the model menu;
+  named Codex accounts have an adjacent account dropdown.
+- **Accounts and features:** named account profiles currently support Codex only. Features
+  run in local spaces and retain their own conversations and tasks. Starting a feature does
+  not automatically create a separate integration checkout; worker/task worktree settings
+  control code isolation for parallel work.
+- **Approval boundaries:** rules have account/folder/scope and expiry boundaries. Prefix rules
+  apply to plain commands; scripts and complex actions need their own supported exact-action
+  or once-only decision. Codex Auto-review requires a new or restarted agent. Its final native
+  decision is not reported back as a known allow/deny in Yurherdr history. Autopilot scheduling
+  is separate and remains attached to the space Assistant.
+- **Native and web:** Feature, document and browser extensions are validated on native Linux;
+  they do not imply full web or cross-platform parity. Native Changes supports multiple repos;
+  web Changes remains single-repository. Office previews show bounded read-only content,
+  without full page layout or formula recalculation. Discovery, file and preview limits are
+  documented in [the workspace guide](docs/workspace.md).
 
 ## Built from
 

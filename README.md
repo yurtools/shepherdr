@@ -22,15 +22,15 @@ Features are ordered by their importance to the daily workflow.
 
 | Area | What you can do | Current scope |
 | --- | --- | --- |
-| Agent workspace | Switch Chat / Terminal for the same running agent; open agents beside each other; collapse thinking and tool activity | Native Linux workflow verified; wide or comfortable chat |
-| Features and coordination | Keep a space Assistant for discussion; start named Feature Assistants that coordinate their own workers | Independent conversations, shared Worker / Reviewer settings; activity includes running workers |
-| Codex accounts and controls | Choose named accounts, including separate logins; set Model, Thinking and Permissions | Account preserved through launch, resume, fork and restart; local skills picker and `/status` |
-| Files and documents | Keep the project tree visible while opening files in separate panes; refer to files from Chat; inspect changes across repositories | Editable text; Markdown / CSV Source / Preview; source highlighting; close individual files; native repository groups, diffs and repository-specific commits |
-| Approvals | Set role defaults, remember bounded command rules, request Assistant review and inspect decision history | Create future rules from history; account/folder/scope binding; native Codex handoffs report their actual visibility limits |
+| Agent workspace | Switch Chat / Terminal for the same running agent; open agents beside each other; collapse thinking and tool activity | Codex/Claude Code Chat and space roles; other CLI launchers are Terminal only |
+| Features and coordination | Keep a space Assistant for discussion; give each named Feature Assistant its own conversation, tasks and worker updates | Local spaces; persistent task ownership; shared Worker / Reviewer settings; activity includes running workers |
+| Codex accounts and controls | Choose separate named logins; set Model, Thinking and Permissions for the assigned account | Named profiles are Codex-only; retained through launch, resume, fork and restart; skills picker and `/status` |
+| Files and documents | Set the space folder; keep the project tree visible while files open in separate panes; refer to files from Chat | Editable text; Markdown / CSV modes; source highlighting; individual file close; native multi-repository groups, diffs and commits |
+| Approvals | Choose who resolves requests; save expiring command rules; inspect who decided and why | Per-role/per-space Ask me, rules, Assistant review or Codex Auto-review; account/folder binding; future rules from history |
 | Sessions | Find closed conversations below Spaces; click to resume or focus; open beside another conversation | Local Codex history across configured accounts; account retained |
-| Space instructions | Append project-specific instructions to the global role prompt | Separate additions for Assistant, Feature Assistant, Workers and Reviewer; applied on fresh starts |
+| Space instructions | Append project-specific instructions to the global role prompt | Separate additions for Assistant, Feature Assistant, Workers and Reviewer; fresh starts use them, existing contexts are retained |
 | Browser tabs | Open editable URLs or configured web-chat shortcuts; retain pages and browser profiles | Native local spaces; website logins are separate from Codex; normal-browser fallback for verification loops |
-| Reports and remote access | Use inherited task tracking, artifacts, optional voice, Autopilot and a tailnet web app | Desktop-specific extensions do not all have web equivalents |
+| Reports and remote access | Use inherited task tracking, artifacts, optional voice, Autopilot and a tailnet web app | Autopilot belongs to the space Assistant; native extensions have limited web parity; inherited remote support |
 
 Source highlighting includes HTML, CSS, TypeScript, JavaScript, Java, SQL, Bash,
 XML, JSON, YAML, Helm, Liquibase, Python and Terraform. DOCX and Excel OOXML previews

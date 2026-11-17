@@ -111,6 +111,16 @@ not been automated or asserted by the local browser fixtures.
 
 ## Manage the + menu
 
+Launchers and space roles have different support. **+** can open other installed CLIs
+in terminals, while full Chat and Assistant/Feature/Worker/Reviewer selection currently
+supports Codex and Claude Code. Kimi and OpenCode role adapters are not implemented;
+named account profiles are Codex-only. Adding a launcher does not add a space-role adapter.
+
+If a launcher says **Not installed** while its command works in a terminal, the desktop
+app may have a different executable search path. Set an absolute executable path in
+**Manage…** or correct the app's launch environment. Installing a second copy is not
+required when the executable already exists.
+
 **+ → Manage…** edits Agents and Web chats. Agent entries update `programs.json`
 without changing account wrappers or credentials. Disable hides an entry from this
 menu; Remove deletes a custom override and keeps the entry hidden if it is built in.

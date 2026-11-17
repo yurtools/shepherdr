@@ -60,3 +60,9 @@ transfer ownership of upstream work, or imply endorsement by Herdr or Elias Stra
 Current guides describe Yurherdr's implemented behavior. The detailed parity
 pages are retained upstream comparison notes; their checkmarks do not establish
 that every native Yurherdr extension is available on the web or on Herdr TUI.
+
+The Space settings and Chat integration in the Shepherdr 3.1.35 baseline supported
+Codex and Claude Code explicitly. Yurherdr retains that engine boundary while adding
+named Codex account profiles and Feature Assistants. Kimi/OpenCode terminal launchers
+do not currently provide full Chat or role support; further engine adapters remain
+unimplemented. See [agent configuration](settings.md#supported-agent-engines-and-accounts).

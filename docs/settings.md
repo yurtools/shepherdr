@@ -27,6 +27,19 @@ a scheduling feature. [Approval history](approvals.md#history-and-future-rules)
 shows decision sources and can create future rules from saved request context.
 [The workspace guide](workspace.md) describes these controls in full.
 
+## Supported agent engines and accounts
+
+The Assistant, Feature Assistant, Worker and Reviewer role pickers currently support
+**Codex and Claude Code**, inherited from Shepherdr 3.1.35. Choose the engine through
+the model menu's Codex/Claude tabs. Named account profiles are currently Codex-only;
+when profiles exist, their dropdown appears beside the model control with Codex selected.
+A second Codex profile is another login for the same engine.
+
+The **+ → Manage…** launcher catalog can contain other installed CLIs, including
+Kimi and OpenCode. These can open terminals but do not yet have full Chat or space-role
+adapters. Installing a CLI, adding a launcher or editing an account profile does not
+add that integration. See [launchers](workspace.md#manage-the--menu).
+
 ## Project folder
 
 In a local space's settings, **Project folder** appears below the scope selector

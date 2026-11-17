@@ -4,7 +4,7 @@ import LinkedMarkdown from './linked-markdown.js';
 import { chatLink, hasChatLink } from './core/chat-links.js';
 import { startFeature, workspaceCall } from "./features.js";
 import { approvalArgv } from "./approval.js";
-import { measuredHeight, viewportScroll, hoverMessage, measureOrder, pendingMarkdownHeight } from "./core/chat-layout.js";
+import { measuredHeight, viewportScroll, hoverMessage, measureOrder, pendingMarkdownHeight, messageChunks } from "./core/chat-layout.js";
 // Chat: an agent's conversation as a chat, read from the agent's own session log, with a
 // box to write to it. The agent keeps running in its terminal; this only shows it another way.
 // Opened by the `pane-chat` header's Chat / Terminal switch in the agent pane's spot: the
@@ -3151,7 +3151,10 @@ export default class Chat extends View {
         const from = out.length;
         if (x.replyTo) out.push({ kind: "replyref", id: `rr:${x.id}`, to: x.replyTo, of: x.id, side: "user" });
         // Rewind goes to a prompt; a /command isn't one.
-        out.push(x);
+        const fold=this.foldOf(x,[{type:'md',text:x.text??''}]);
+        if(fold&&!fold.open)out.push({...x,clip:fold.clips.get(0)});
+        else messageChunks(x.text).forEach((text,n)=>out.push({...x,id:n?`${x.id}:u${n}`:x.id,text}));
+        if(fold)out.push({kind:'fold',id:`fold:${x.id}`,of:x.id,open:fold.open});
         const chips = this.mentioned(x.text);
         if (chips.length) out.push({ kind: "chips", id: `tc:${x.id}`, tasks: chips.map((t) => ({ id: t.id, ref: taskRef(t), title: t.title })) });
         if (x.paths?.length) out.push({ kind: "imgs", id: `i:${x.id}`, paths: x.paths });
@@ -3373,7 +3376,7 @@ export default class Chat extends View {
       case "code": return 16 + (x.clip ?? String(x.code).split("\n").length * 19);
       case "fold": case "queued": return 26;
       case "day": return 18;
-      case "user": case "pending": return 30 + lines(x.text, w * 0.8 - 24) * 20 + (x.from ? 17 : 0) + ((x.images || x.files?.length) ? 20 : 0);
+      case "user": case "pending": return 30 + (x.clip??lines(x.text, w * 0.8 - 24) * 20) + (x.from ? 17 : 0) + ((x.images || x.files?.length) ? 20 : 0);
       case "agent": return 30 + (x.clip ?? lines(x.text, w * 0.8 - 24) * 21);
       case "tools": return this.opened.has(x.id) ? 26 + x.steps.length * 19 : 20;
       case "artifact": return x.pending || x.line ? 20 : 62 + (x.peek?.paths?.some((p) => this.views[p]) ? fitThumbs(x.peek.paths.filter((p) => this.views[p]).map((p) => this.views[p]), PEEK_W - 22).h + 8 : 0) + (x.peek?.text ? 8 + Math.ceil((x.peek.text.length * 7) / (PEEK_W - 22)) * 18 : 0);
@@ -3431,28 +3434,38 @@ export default class Chat extends View {
   }
 
   prepareLinkedMarkdown(rows,t,cx) {
-    const want=new Map();this.collectMarkdown=want;
-    try{for(const row of rows)if(hasChatLink(row.text))this.rowBare(row,t,`v${this.measureGen}-${this.rowRevisions?.get(row.id)?.revision??0}-`);}
-    finally{this.collectMarkdown=null;}
+    // Preparing every linked row inside render exceeded the native time budget
+    // on long worker logs. Reuse the plan and build one row per deferred callback.
+    const plan=rows.filter(row=>hasChatLink(row.text)).map(row=>({row,pre:`v${this.measureGen}-${this.rowRevisions?.get(row.id)?.revision??0}-`,open:this.unfolded?.has(row.id)}));
+    const key=this.pickKey()??this.areaKey(),query=this.findQuery?.()??'',previous=this.linkMarkdownPlan;
+    if(previous?.key===key&&previous.query===query&&previous.rows.length===plan.length&&plan.every((p,i)=>{
+      const old=previous.rows[i];return old.pre===p.pre&&old.open===p.open&&old.row.text===p.row.text&&old.row.kind===p.row.kind&&old.row.clip===p.row.clip;
+    }))return;
+    const generation=(this.linkMarkdownGeneration??0)+1;this.linkMarkdownGeneration=generation;
+    this.linkMarkdownPlan={key,query,rows:plan};
+    const want=new Map();let index=0;
     const current=this.linkMarkdown??new Map();
-    const changed=want.size!==current.size||[...want].some(([id,p])=>current.get(id)?.text!==p.text||current.get(id)?.key!==p.key);
-    if(!changed||this.linkMarkdownPending)return;
-    this.linkMarkdownPending=true;
-    cx.timer.after(0,cx=>{
-      this.linkMarkdownPending=false;
-      for(const [id,p] of current)if(!want.has(id)){p.view.release();current.delete(id);}
-      for(const [id,p] of want){
-        const old=current.get(id);
-        if(old){if(old.text!==p.text||old.key!==p.key){old.view.set_props(p);current.set(id,{...p,view:old.view});}}
-        else current.set(id,{...p,view:cx.new(LinkedMarkdown,p)});
+    const step=cx=>{
+      if(generation!==this.linkMarkdownGeneration)return;
+      if(index<plan.length){
+        const p=plan[index++],collected=new Map();this.collectMarkdown=collected;
+        try{this.rowBare(p.row,t,p.pre);}finally{this.collectMarkdown=null;}
+        for(const [id,p] of collected){
+          want.set(id,p);const old=current.get(id);
+          if(old){if(old.text!==p.text||old.key!==p.key){old.view.set_props(p);current.set(id,{...p,view:old.view});}}
+          else current.set(id,{...p,view:cx.new(LinkedMarkdown,p)});
+        }
       }
       this.linkMarkdown=current;cx.notify();
-    });
+      if(index<plan.length)cx.timer.after(0,step);
+      else for(const [id,p] of current)if(!want.has(id)){p.view.release();current.delete(id);}
+    };
+    cx.timer.after(0,step);
   }
 
   rowBare(x, t, pre = "") {
     const markdown=(id,text)=>{
-      if(this.collectMarkdown)this.collectMarkdown.set(id,{id,text,key:this.pickKey()??this.areaKey()});
+      if(this.collectMarkdown){this.collectMarkdown.set(id,{id,text,key:this.pickKey()??this.areaKey()});return div();}
       const kept=this.linkMarkdown?.get(id);
       return kept&&kept.text===text?div().flex_none().child(kept.view):TextView.markdown(id,text).scrollable(false).selectable(true).flex_none();
     };
@@ -3468,7 +3481,8 @@ export default class Chat extends View {
       // accent's own text color on the full accent was too faint on light accents).
       div().max_w(most).flex_none().px(12).py(8).rounded(12).bg(t.accent + "33").border_1().border_color(t.accent + "4d")
         .text_color(t.foreground).when(faded, (el) => el.opacity(0.55))
-        .child(markdown(`${pre}chat-md-${x.id}`, this.findMark(typed(this.mentionsIn(text))) || " ").flex_none()));
+        .child(x.clip?this.clipped(t.accent+"33",x.clip,markdown(`${pre}chat-md-${x.id}`,this.findMark(typed(this.mentionsIn(shownLines(text,x.clip,most-24))))||" ").flex_none())
+          :markdown(`${pre}chat-md-${x.id}`, this.findMark(typed(this.mentionsIn(text))) || " ").flex_none()));
     const theirs = (text) => h_flex().w_full().justify_start().child(
       div().max_w(most).flex_none().px(12).py(8).rounded(12).bg(t.raised).text_color(t.foreground)
         // Folded: only the lines that show (shownLines()), as their own view

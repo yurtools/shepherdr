@@ -67,6 +67,18 @@ test('linked Markdown creates retained child views after render and reuses or re
  v.prepareLinkedMarkdown([{id:'one',text:'[different](/repo/other.txt)'}],{},cx);queued.shift()(cx);expect(creates).toBe(1);expect(updates).toHaveLength(1);
  v.prepareLinkedMarkdown([],{},cx);queued.shift()(cx);expect(released).toHaveLength(1);
 });
+test('long worker logs prepare linked rows incrementally outside render, cancel stale plans, and reuse unchanged content',()=>{
+ const v:any=new prepare();v.measureGen=1;v.pickKey=()=> 'thread';v.findQuery=()=>'';
+ let collected=0,created=0;const queued:any[]=[];
+ v.rowBare=(row:any,_t:any,pre:string)=>{collected++;v.collectMarkdown.set(pre+row.id,{id:pre+row.id,text:row.text,key:'thread'});};
+ const cx:any={timer:{after:(_n:number,fn:any)=>queued.push(fn)},new:()=>{created++;return {release(){},set_props(){}}},notify(){}};
+ const rows=Array.from({length:200},(_,i)=>({id:String(i),text:'[doc](/repo/file.md)'}));
+ v.prepareLinkedMarkdown(rows,{},cx);expect(collected).toBe(0);
+ queued.shift()(cx);expect(collected).toBe(1);expect(created).toBe(1);
+ v.prepareLinkedMarkdown(rows,{},cx);expect(queued).toHaveLength(1);
+ v.prepareLinkedMarkdown([] ,{},cx);while(queued.length)queued.shift()(cx);
+ expect(collected).toBe(1);expect(v.linkMarkdown.size).toBe(0);
+});
 const childSource=readFileSync(new URL('../mods/chat/linked-markdown.js',import.meta.url),'utf8');
 test('the retained Markdown callback routes the clicked href back to its own chat',()=>{
  const calls:any[]=[];const native=element('TextView');

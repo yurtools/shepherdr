@@ -106,6 +106,13 @@ def session_of(pid):
         for f in files:
             m = re.search(r"/rollout-.*?([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$", f)
             if m:
+                try:
+                    with open(f, encoding='utf-8') as log:
+                        source=(json.loads(log.readline()).get('payload') or {}).get('source')
+                    if isinstance(source,dict) and 'subagent' in source:
+                        continue
+                except (OSError,ValueError):
+                    continue
                 return m.group(1), f
     return None, None
 
@@ -165,6 +172,8 @@ def _start(path):
                     continue
                 p = o.get("payload") or {}
                 if o.get("type") == "session_meta":
+                    if isinstance(p.get('source'),dict) and 'subagent' in p['source']:
+                        return None, ''
                     at = at or _ms(p.get("timestamp") or o.get("timestamp"))
                 elif o.get("type") == "user" and not o.get("isMeta"):
                     at = at or _ms(o.get("timestamp"))

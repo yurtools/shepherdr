@@ -116,3 +116,34 @@ class FeatureNaming(unittest.TestCase):
   self.assertFalse(A.own_feature_name(req,{'role':'worker','feature':'one'}))
   self.assertFalse(A.own_feature_name(req,{'role':'feature','feature':'two'}))
 if __name__=='__main__':unittest.main()
+
+class ApprovalHistoryRules(unittest.TestCase):
+ setUp=ApprovalPolicy.setUp
+ mode=ApprovalPolicy.mode
+ def history(self):
+  ctx=A.request_context(self.path)[1];A.audit(self.req,ctx,'allow','Decided by person','user');return A.history_rows()[-1],ctx
+ def test_completed_approval_keeps_exact_account_folder_and_task_without_replaying(self):
+  row,ctx=self.history();self.path.unlink();self.path.with_suffix('.context').unlink()
+  self.meta['cwd']='/different';self.meta['argv']=['env','CODEX_HOME=/other','codex']
+  with mock.patch.object(A.subprocess,'run',side_effect=AssertionError('must not execute or inspect a current terminal')):
+   info=A.history_inspect(row['id']);out=A.grant_history(row['id'],match='prefix',prefix='git status')
+  rule=out['rule'];self.assertEqual(info['context']['cwd'],ctx['cwd']);self.assertEqual(rule['account'],ctx['account'])
+  self.assertTrue(A.matches(rule,self.req,ctx));self.assertFalse(A.matches(rule,self.req,{**ctx,'account':'other'}))
+  self.assertFalse(list((A.app_home()/'data/chat-asks/ans').glob('*')))
+  self.assertEqual(A.history_rows()[-1]['source'],'user')
+ def test_complex_historical_actions_remain_task_and_payload_bound(self):
+  self.req={**self.req,'tool_input':{'command':'git status && echo done'}};A.write(self.path,self.req)
+  row,ctx=self.history();rule=A.grant_history(row['id'])['rule'];self.assertEqual(rule['match'],'request')
+  self.assertTrue(A.matches(rule,self.req,ctx));self.assertFalse(A.matches(rule,{**self.req,'tool_input':{'command':'git push'}},ctx))
+  with self.assertRaisesRegex(ValueError,'plain command'):A.grant_history(row['id'],scope='space')
+ def test_redacted_and_contextless_legacy_history_never_guess_a_rule(self):
+  self.req={**self.req,'tool_input':{'command':'tool --token private-secret'}};A.write(self.path,self.req)
+  row,_=self.history();self.assertNotIn('private-secret',json.dumps(row));self.assertNotIn('rule_seed',row)
+  with self.assertRaisesRegex(ValueError,'context'):A.history_inspect(row['id'])
+  A.write(A.store()/'history.json',[{'at':1,'key':'old','source':'user','command':'git status','account':'old'}])
+  legacy=A.history_rows()[0];self.assertTrue(legacy['id'])
+  with self.assertRaisesRegex(ValueError,'context'):A.grant_history(legacy['id'])
+ def test_native_review_history_reports_handoff_without_claiming_an_allow(self):
+  self.mode('codex-review');self.meta['argv']+=['-c','approvals_reviewer="auto_review"']
+  self.assertEqual(A.evaluate(self.path)['action'],'native');row=A.history_rows()[-1]
+  self.assertEqual(row['source'],'codex-review');self.assertEqual(row['decision'],'delegated')

@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { measuredHeight, viewportScroll, hoverMessage, measureOrder, pendingMarkdownHeight } from "./chat-layout.js";
+import { measuredHeight, viewportScroll, hoverMessage, measureOrder, pendingMarkdownHeight, messageChunks } from "./chat-layout.js";
 test("a tall last reply becoming visible does not mean the viewport is at the bottom", () => {
  expect(viewportScroll(100, -20, 3000, 800)).toEqual({ offset: 120, bottom: false });
  expect(viewportScroll(2190, -30, 3000, 800)).toEqual({ offset: 2200, bottom: true });
@@ -30,4 +30,12 @@ test("long Markdown placeholders wait for content, while short labels and folded
  expect(pendingMarkdownHeight({...row,clip:420},23,800)).toBe(false);
  expect(pendingMarkdownHeight({kind:'agent',text:'[Short label](https://example.com/'+ 'path/'.repeat(1000)+')'},23,800)).toBe(false);
  expect(pendingMarkdownHeight({kind:'agent',text:'<!--'+ 'hidden '.repeat(1000)+'-->Short reply'},23,800)).toBe(false);
+});
+test('external context messages expand as bounded rows without losing UTF-16 text',()=>{
+ const text=('A lengthy context paragraph with links https://example.test/file\n').repeat(800)+'😀tail';
+ const chunks=messageChunks(text);expect(chunks.length).toBeGreaterThan(10);expect(chunks.join('')).toBe(text);
+ expect(chunks.every(s=>s.length<=4001)).toBe(true);
+ expect(chunks.every(s=>!/[\uD800-\uDBFF]$/.test(s))).toBe(true);
+ const rows=Array.from({length:100},(_,i)=>({id:String(i)}));
+ expect(measureOrder(rows,rows.map(r=>r.id),new Map(),new Map(),99,Date.now()).length).toBeLessThanOrEqual(8);
 });

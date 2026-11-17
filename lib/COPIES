@@ -86,3 +86,5 @@ core/chat-links.js: chat workspace-document
 
 core/instructions.js: chat shepherdr-settings
 space-instructions.js: shepherdr-settings
+core/feature-state.js: workspace-sessions
+core/approval-history.js: workspace-approvals

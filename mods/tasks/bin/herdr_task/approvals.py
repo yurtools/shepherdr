@@ -122,9 +122,22 @@ def is_permission(req):return req.get('tool_name') not in ('AskUserQuestion','Ex
 def summary(req):
  value=(req.get('tool_input') or {}).get('command') if isinstance(req.get('tool_input'),dict) else ''
  return redact(shlex.join(value) if isinstance(value,list) else str(value or req.get('tool_name') or 'Permission'))
+
+def rule_seed(req,ctx):
+ # Retain enough bounded, non-secret evidence to create a future rule even after
+ # the request and terminal have gone. Never retain the full tool input.
+ if not is_permission(req) or '[redacted]' in summary(req) or '[redacted]' in redact(json.dumps(req.get('tool_input'),ensure_ascii=False)):
+  return None
+ words=plain_command((req.get('tool_input') or {}).get('command'))
+ if words and len(shlex.join(words))>500:words=None
+ return {'context':{k:ctx.get(k,'') for k in ('terminal','space','task','session','account','cwd')},
+         'tool':req.get('tool_name'),'words':words,'action_key':action_key(req)}
+
 def audit(req,ctx,decision,reason,source):
- row={'at':int(time.time()*1000),'key':request_key(req),'terminal':ctx.get('terminal'),'space':ctx.get('space'),
+ row={'id':secrets.token_hex(8),'at':int(time.time()*1000),'key':request_key(req),'terminal':ctx.get('terminal'),'space':ctx.get('space'),
       'task':ctx.get('task'),'account':ctx.get('account'),'command':summary(req),'decision':decision,'reason':str(reason)[:1000],'source':source}
+ seed=rule_seed(req,ctx)
+ if seed:row['rule_seed']=seed
  with locked():
   path=store()/'history.json';history=read(path,[]) or [];write(path,[*history[-499:],row])
 
@@ -160,23 +173,57 @@ def grant(path, terminal=None, scope='task', match='exact', prefix=None, hours=1
  req,ctx=request_context(path,terminal)
  if not is_permission(req):raise ValueError('Plans and questions cannot receive execution approval rules.')
  words=plain_command((req.get('tool_input') or {}).get('command'))
+ rule=save_rule(ctx,req['tool_name'],words,action_key(req),summary(req),scope,match,prefix,hours,decision)
+ audit(req,ctx,decision,'Saved '+scope+' '+match+' rule','user-rule')
+ return rule
+
+def save_rule(ctx,tool,words,action,command,scope='task',match='exact',prefix=None,hours=1,decision='allow'):
  request_match=not words and scope=='task' and match=='exact'
  if not words and not request_match:raise ValueError('Starting-with rules require one plain command. Use exact action for this task or Ask Assistant for scripts.')
  if scope not in ('task','space','account') or match not in ('exact','prefix') or decision not in ('allow','deny'):raise ValueError('Invalid rule scope, match or decision.')
  if scope=='space' and not ctx.get('space'):raise ValueError('This agent has no space. Use task/session scope instead.')
- pattern=plain_command(prefix) if match=='prefix' else words if words else [summary(req)]
+ pattern=plain_command(prefix) if match=='prefix' else words if words else [command]
  if not pattern or not request_match and words[:len(pattern)]!=pattern:raise ValueError('The prefix must match the pending command’s argument list.')
  if match=='prefix' and (len(pattern)<2 or pattern[0].split('/')[-1] in ('sh','bash','zsh','env') or pattern[0].split('/')[-1] in ('python','python3','node','ruby','perl') and pattern[1].startswith('-')):raise ValueError('That prefix grants arbitrary commands. Choose a more specific command or Allow once.')
  if '[redacted]' in redact(shlex.join(pattern)):raise ValueError('Do not save credentials in approval rules. Use Allow once.')
  rule={'id':secrets.token_hex(8),'created':int(time.time()*1000),'expires':time.time()+max(0.01,min(float(hours),24*365))*3600,
-       'scope':scope,'match':'request' if request_match else match,'action_key':action_key(req) if request_match else None,'pattern':pattern,'tool':req['tool_name'],'decision':decision,'cwd':ctx['cwd'],'account':ctx['account'],
+       'scope':scope,'match':'request' if request_match else match,'action_key':action if request_match else None,'pattern':pattern,'tool':tool,'decision':decision,'cwd':ctx['cwd'],'account':ctx['account'],
        'space':ctx['space'] if scope!='account' else '', 'task':ctx['task'] if scope=='task' else '', 'session':ctx['session'] if scope=='task' and not ctx['task'] else ''}
  with locked():
   rules=read(store()/'rules.json',[]) or [];write(store()/'rules.json',[r for r in rules if not r.get('expires') or r['expires']>time.time()]+[rule])
   # Explicitly remembering an approval activates rules for this task/session, without widening global defaults.
   overrides=read(store()/'overrides.json',{}) or {};overrides[session_key(ctx)]={'mode':'rules','expires':rule['expires']};write(store()/'overrides.json',overrides)
- audit(req,ctx,decision,'Saved '+scope+' '+match+' rule','user-rule')
  return rule
+
+def history_rows(space=''):
+ rows=read(store()/'history.json',[]) or []
+ for row in rows:
+  row.setdefault('id',hashlib.sha256(json.dumps([row.get('key'),row.get('at'),row.get('source')]).encode()).hexdigest()[:16])
+ return [r for r in rows if not space or r.get('space')==space or not r.get('space')][-500:]
+
+def history_inspect(ident):
+ row=next((r for r in history_rows() if r['id']==ident),None)
+ if not row:raise ValueError('This history entry is no longer available. Refresh history.')
+ seed=row.get('rule_seed')
+ if not seed:
+  # An older entry may still have its exact original request. Never infer a
+  # historic account/folder from whatever a terminal happens to run today.
+  for p in (app_home()/'data/chat-asks/req').glob('*.json'):
+   req=read(p)
+   if isinstance(req,dict) and request_key(req)==row.get('key'):
+    ctx=read(p.with_suffix('.context'))
+    if ctx and ctx.get('request_key')==row['key']:seed=rule_seed(req,ctx)
+    break
+ if not seed or not seed.get('context',{}).get('cwd') or not seed.get('context',{}).get('account'):
+  raise ValueError('This older or redacted entry has no reusable account/folder context. Create a rule from a new approval.')
+ return {'context':seed['context'],'command':row.get('command',''),'words':seed.get('words'),
+         'suggested_prefix':shlex.join((seed.get('words') or [])[:2]),'permission':True,'history':True,'seed':seed}
+
+def grant_history(ident,scope='task',match='exact',prefix=None,hours=1,decision='allow'):
+ info=history_inspect(ident);seed=info['seed']
+ rule=save_rule(seed['context'],seed['tool'],seed.get('words'),seed['action_key'],info['command'],scope,match,prefix,hours,decision)
+ # Saving a rule is distinct from answering/replaying the original action.
+ return {'rule':rule,'reason':'Rule saved for future matching requests. The original action was not run or answered.'}
 
 def review_ticket(path, req, ctx, force=False):
  opts=settings(ctx);reviewer=ctx.get('reviewer')
@@ -267,7 +314,9 @@ def evaluate(path, terminal=None):
    audit(req,ctx,rule['decision'],reason,'rule');return response(rule['decision'],reason,'rule')
  if opts['mode']=='assistant':return review_ticket(path,req,ctx)
  if opts['mode']=='codex-review':
-  if ctx['agent']=='codex' and ctx.get('native_review'):return {'action':'native','reason':'Continue through Codex native Auto-review.'}
+  if ctx['agent']=='codex' and ctx.get('native_review'):
+   audit(req,ctx,'delegated','Sent to Codex Auto-review; its final decision is not reported to Shepherdr.','codex-review')
+   return {'action':'native','reason':'Continue through Codex native Auto-review.'}
   return {'action':'wait','reason':'Native Auto-review requires a new or restarted Codex agent. Other agents use manual approval.'}
  return {'action':'wait','reason':'Waiting for your decision.'}
 

@@ -11,6 +11,24 @@
 // time).
 import { codexQuestions } from "./asks.js";
 
+// One Codex process can hold its main rollout and guardian/reviewer rollouts.
+// File-descriptor ordering does not identify the conversation shown to the user.
+export const CODEX_LOG_PICKER = String.raw`
+import json, sys
+paths = list(dict.fromkeys(line.strip() for line in sys.stdin if line.strip()))
+for path in paths:
+    try:
+        with open(path, encoding="utf-8") as f:
+            meta = json.loads(f.readline())
+        source = (meta.get("payload") or {}).get("source")
+        if isinstance(source, dict) and "subagent" in source:
+            continue
+    except (OSError, ValueError):
+        continue
+    print(path)
+    break
+`;
+
 export const FIND = `
 kind="$1"; pid="$2"
 procs() { if [ -r /proc/self/stat ]; then cat /proc/[0-9]*/stat 2>/dev/null | awk '{ p = $1; sub(/.*\\) /, ""); print p, $2 }'; else ps -axo pid=,ppid= 2>/dev/null; fi; }
@@ -25,9 +43,9 @@ for p in "$pid" $(kids "$pid"); do
     echo "pending"; exit 0
   else
     if [ -d "/proc/$p/fd" ]; then
-      f=$(for d in /proc/$p/fd/*; do readlink "$d"; done 2>/dev/null | grep '/rollout-.*\\.jsonl$' | head -1)
+      f=$(for d in /proc/$p/fd/*; do readlink "$d"; done 2>/dev/null | grep '/rollout-.*\\.jsonl$' | python3 -c '${CODEX_LOG_PICKER}')
     else
-      f=$(lsof -p "$p" -Fn 2>/dev/null | sed -n 's/^n//p' | grep '/rollout-.*\\.jsonl$' | head -1)
+      f=$(lsof -p "$p" -Fn 2>/dev/null | sed -n 's/^n//p' | grep '/rollout-.*\\.jsonl$' | python3 -c '${CODEX_LOG_PICKER}')
     fi
     [ -n "$f" ] && { echo "$f"; exit 0; }
   fi

@@ -1,8 +1,9 @@
 import { featureRecords, featureRequest, startFeature, workspaceCall } from "./features.js";
 import { div, svg } from "gpui-kit";
 import { v_flex, h_flex, Input, InputState } from "gpui-base";
-import { theme, shared, setShared, terminals } from "herdr";
-import { spaces } from "./live.js";
+import { theme, shared, setShared } from "herdr";
+import { spaces, terminals } from "./live.js";
+import { featureActivity } from './core/feature-state.js';
 import { historyScope, historyRead, openHistory, requestSession } from "./session-history.js";
 import { button, segmented, plainError } from "./ui.js";
 import { holdKeys, dropKeys } from "./keyholder.js";
@@ -47,7 +48,7 @@ export default class Sidebar {
   chooseSection(section,cx) { this.section=section;localStorage.setItem('history-section',section);cx.notify(); }
   features(cx) {
     const t=theme(),rows=featureRecords().filter(r=>r.space===this.space?.id),q=(this.search.value()??'').trim().toLowerCase();
-    const list=rows.filter(r=>(this.filter==='all'||r.status!=='completed')&&(!q||r.name.toLowerCase().includes(q)));
+    const list=rows.filter(r=>(this.filter==='all'||r.status!=='completed')&&(!q||r.name.toLowerCase().includes(q))),all=terminals();
     return v_flex().id('features-sidebar').size_full().min_h(0).text_color(t.foreground)
       .child(v_flex().p(10).gap(8).flex_none()
        .child(segmented('workspace-history-tabs',[['features','Features'],['sessions','Sessions']],this.section,(section,_e,cx)=>this.chooseSection(section,cx)))
@@ -59,13 +60,12 @@ export default class Sidebar {
       .when(Boolean(this.error),el=>el.child(div().p(8).text_size(11).text_color(t.blocked).child(this.error)))
       .child(v_flex().id('feature-list').flex_1().min_h(0).overflow_y_scroll().px(6).gap(4)
        .children(list.map(row=>{
-        const live=terminals().find(k=>k.state==='live'&&k.labels?.['herdr.feature']===row.id&&k.labels?.['herdr.role']==='feature');
-        const status=live?.status?.state??(row.session?'Paused':'New'),color=status==='blocked'?t.blocked:status==='working'?t.working:status==='done'||row.status==='completed'?t.done:t.dim;
+        const activity=featureActivity(row,all),status=activity.state,color=status==='blocked'?t.blocked:status==='working'?t.working:status==='done'?t.done:t.dim;
         return h_flex().id(`feature-${row.id}`).p(9).gap(7).items_center().rounded(7).cursor_pointer().hover(x=>x.bg(t.hover))
          .on_click(()=>featureRequest(row.id))
          .child(svg('mods/coordinator/network.svg').size(15).flex_none().text_color(color))
          .child(v_flex().flex_1().min_w(0).gap(4).child(div().truncate().text_size(12).font_medium().child(row.name))
-          .child(div().text_size(11).text_color(color).child(row.status==='completed'?'Completed':status)))
+          .child(div().text_size(11).text_color(color).child(activity.label)))
          .child(button(`feature-complete-${row.id}`,row.status==='completed'?'↶':'✓',{kind:'plain',onClick:(_e,cx)=>{cx.stop_propagation();cx.spawn(async cx=>{try{await workspaceCall('feature-update',{id:row.id,status:row.status==='completed'?'active':'completed'});setShared('workspace.features',(await workspaceCall('features')).features);}catch(e){this.error=plainError(e);}cx.notify();});}}));
        }))
        .when(!list.length,el=>el.child(div().p(10).text_size(12).text_color(t.dim).child(q?'No matching features.':'Start a feature from + or a conversation.'))));

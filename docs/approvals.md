@@ -111,3 +111,19 @@ Ask Assistant reviews the complete request independently of whether it can becom
 a command-prefix rule. Workers belonging to a named feature route that review to
 its Feature Assistant. An expired or unavailable reviewer leaves the decision with
 the person; approval never executes the requested operation as the reviewer.
+
+## History and future rules
+
+Approval history labels decisions by their source: You (once), You (saved rule),
+a matching saved rule, or Assistant review. A native Codex Auto-review handoff is
+shown as **Sent for review**, with **final result not reported**; it is not recorded
+as an allow or deny because Codex owns that final decision.
+
+Use **Create rule…** beside a history entry to review its command, original account
+and folder, then choose an exact/prefix match, scope, expiry and allow/deny decision.
+**Save rule for future requests** creates only a future rule. It never replays or
+answers the old request. Scripts and non-command actions can only match the exact
+payload in the original task/session. Redacted entries and older entries without
+their original request context cannot be converted; create a rule from a new
+approval instead. Newly recorded entries retain bounded rule context after their
+requests close, without storing full tool-input payloads.

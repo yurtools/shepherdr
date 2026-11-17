@@ -11,13 +11,15 @@ except ImportError:
  sys.path.insert(0,os.path.realpath(entry));from herdr_task import approvals as A
 
 def parser():
- p=argparse.ArgumentParser();p.add_argument('command',choices=['evaluate','inspect','grant','list','history','revoke','clear-history','review','decide','launch','override','record'])
+ p=argparse.ArgumentParser();p.add_argument('command',choices=['evaluate','inspect','grant','history-inspect','history-grant','list','history','revoke','clear-history','review','decide','launch','override','record'])
  p.add_argument('--request');p.add_argument('--terminal');p.add_argument('--space',default='');p.add_argument('--role',default='agent');p.add_argument('--cwd',default='')
  p.add_argument('--scope',choices=['task','space','account'],default='task');p.add_argument('--match',choices=['exact','prefix'],default='exact');p.add_argument('--prefix');p.add_argument('--hours',type=float,default=1)
  p.add_argument('--id');p.add_argument('--token');p.add_argument('--decision',choices=['allow','deny','ask'],default='allow');p.add_argument('--reason',default='')
  p.add_argument('--respond',action='store_true');p.add_argument('--argv');p.add_argument('--mode',choices=[*A.MODES,'inherit']);return p
 
 def main(a):
+ if a.command=='history-inspect':return A.history_inspect(a.id)
+ if a.command=='history-grant':return A.grant_history(a.id,a.scope,a.match,a.prefix,a.hours,a.decision)
  if a.command=='evaluate':return A.evaluate(a.request,a.terminal)
  if a.command=='inspect':
   req,ctx=A.request_context(a.request,a.terminal);words=A.plain_command((req.get('tool_input') or {}).get('command'))
@@ -39,6 +41,7 @@ def main(a):
   return A.review_ticket(a.request,req,ctx,True)
  if a.command=='decide':return A.decide(a.id,a.token,a.decision,a.reason)
  if a.command in ('list','history'):
+  if a.command=='history':return {'rows':A.history_rows(a.space)}
   rows=A.read(A.store()/('rules.json' if a.command=='list' else 'history.json'),[]) or []
   return {'rows':[r for r in rows if not a.space or r.get('space')==a.space or not r.get('space')][-500:]}
  if a.command in ('revoke','clear-history'):

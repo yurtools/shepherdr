@@ -9,6 +9,12 @@ Select a space in the left sidebar. **Features / Sessions** below it follows the
 selected space; the tab bar holds the open tabs. The **Files** button opens the
 project tree. File contents open in a separate document pane.
 
+Feature status includes its live workers, so a waiting Feature Assistant with a
+working worker shows **Working · 1 worker**, rather than Paused. Worker Chat selects
+the main CLI conversation even when Codex also holds internal Auto-review logs.
+Large incoming context messages fold like long replies; expanded text is divided
+into bounded rows, keeping the full message available for Copy.
+
 | Action | Control |
 | --- | --- |
 | Use the same agent as chat or a terminal | **Chat / Terminal** in its pane header |

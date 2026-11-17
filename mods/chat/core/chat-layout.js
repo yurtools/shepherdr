@@ -23,7 +23,23 @@ export function measureOrder(rows, keys, heights, measuredAt, near, now) {
   // Native Markdown settles over several frames. Once settled, pointer repaint must not
   // continuously recreate its hidden measuring views. Content/width/zoom changes get new keys.
   const settling = rows.map((_, i) => i).filter(i => heights.has(keys[i]) && now - (measuredAt.get(keys[i]) ?? 0) < 4000);
-  return [...new Set([...fresh, ...settling])].slice(0, 60);
+  return [...new Set([...fresh, ...settling])].slice(0, 8);
+}
+
+// External agents can send large context messages, bypassing the composer's
+// paste-to-file limit. Bound each native Markdown layout without losing text.
+export function messageChunks(value,limit=4000) {
+  const text=String(value??''),out=[];
+  for(let at=0;at<text.length;){
+    let end=Math.min(text.length,at+limit);
+    if(end<text.length){
+      const newline=text.lastIndexOf('\n',end);
+      if(newline>at+limit/2)end=newline+1;
+      if(end>at&&/[\uD800-\uDBFF]/.test(text[end-1]))end--;
+    }
+    out.push(text.slice(at,end));at=end;
+  }
+  return out.length?out:[''];
 }
 
 // Rich text first reports its padding/one-line placeholder before native Markdown

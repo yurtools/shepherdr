@@ -1,5 +1,10 @@
 # Artifacts, Jump and Keybinds
 
+> **Scope:** retained Shepherdr comparison notes. Yurherdr's current native
+> extensions and limits are documented in [the workspace guide](../workspace.md)
+> and [the parity overview](../parity.md); inherited ticks are not new verification.
+
+
 Window: `mods/artifacts` (main.js list and sidebar head, markup.js, recipe-view.js), `mods/chat-image/artifact-bar.js`
 (the viewer's bar), `mods/chat/main.js` (artifact lines in a chat), `mods/jump`, `mods/keybinds`. Web:
 `web/plugins/artifacts/client.tsx` (A), `web/src/screens/Recipe.tsx` (R), `web/plugins/keyboard/search.tsx` (S),

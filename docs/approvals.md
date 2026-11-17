@@ -1,6 +1,6 @@
 # Approval modes and remembered decisions
 
-Approval handling is configured in **Shepherdr settings → Agents → Approvals** or
+Approval handling is configured in **Yurherdr settings → Agents → Approvals** or
 **Space settings → Agents → Approvals**. The dialog is wider to fit the controls.
 Choose a default and optional Assistant, Workers and Reviewer overrides. Space
 settings override the global layer; roles set to Default inherit its mode.
@@ -20,12 +20,12 @@ Approval mode determines who answers a permission request. The Assistant's Full
 Access setting does not automatically approve a worker's request. **Autopilot**
 schedules work and wakes the Assistant; it is independent of this approval policy.
 
-Codex Auto-review takes effect on a new or restarted Codex launch. Shepherdr sets
+Codex Auto-review takes effect on a new or restarted Codex launch. Yurherdr sets
 an interactive `on-request` approval policy and `workspace-write` sandbox,
 preserving an explicit read-only sandbox. It removes bypass/never-ask options.
 The chosen account and conversation are retained. Native or managed Codex policy
 can still deny an action. Native decisions stay in Codex's own flow and are not
-copied into Shepherdr's rule history. See the official
+copied into Yurherdr's rule history. See the official
 [Auto-review documentation](https://learn.chatgpt.com/docs/sandboxing/auto-review).
 
 Tasks can set an explicit override with:

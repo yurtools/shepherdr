@@ -1,4 +1,22 @@
-# Upgrading
+# Upgrading Yurherdr
+
+## Current development installs
+
+The product is named Yurherdr; this repository remains `yurtools/shepherdr`.
+Pull the intended checkout and run `shepherdr update`, then `shepherdr doctor`.
+Keep using the same checkout and normal HOME. Do not rename the live source folder,
+settings/data directories, services or layout file as part of branding.
+
+The current build preserves existing spaces, sessions, Codex account homes,
+browser profiles, global prompts and personal key bindings. Space-specific role
+instructions are additive. New approval history entries retain bounded context
+for creating future rules; old redacted/contextless entries cannot be inferred.
+Native worker Chat and task session indexing skip Codex internal reviewer logs.
+
+Read [installation](install.md), [the workspace guide](workspace.md) and
+[the naming compatibility table](upstream.md#naming-and-compatibility). The following
+sections retain upstream migration history; version numbers there are Shepherdr
+runtime versions, not Yurherdr release tags.
 
 ## From 3.0.x
 

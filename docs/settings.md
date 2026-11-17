@@ -4,6 +4,29 @@ Every setting has a value for **Everywhere**, the default. A setting that makes 
 one **space**: the space's own wins there, and a setting the space doesn't set is inherited from Everywhere. Reset
 drops the space's own, and it inherits again. A few settings are one for every space, or one per machine.
 
+
+## Yurherdr workspace settings
+
+The settings entry may still be labeled **Shepherdr** in the native UI. It opens
+Yurherdr's role and workspace configuration; the module ID remains
+`shepherdr-settings`. The public name does not create another settings store.
+
+The highest-impact choices are the Assistant and Feature Assistant account,
+model, thinking level and permissions. Workers and Reviewer settings are shared
+by both coordinating roles. Account selection retains independent Codex homes
+and logins; launcher definitions are edited through **+ → Manage…**.
+
+Per-space **Space instructions** append text to the current global prompt for
+each of Assistant, Feature Assistant, Workers and Reviewer. These additions
+autosave independently. Clear removes just that role's space addition. Fresh
+conversations/tasks pick them up; resumed conversations keep their context.
+
+The Agents page also holds approval defaults and role overrides. Approved rules,
+Assistant review and Codex Auto-review have distinct semantics; Autopilot remains
+a scheduling feature. [Approval history](approvals.md#history-and-future-rules)
+shows decision sources and can create future rules from saved request context.
+[The workspace guide](workspace.md) describes these controls in full.
+
 ## Where you set them
 
 - **Settings, the level switch.** At the top of each page a space can set its own of (Agents, Tasks, Autopilot,
@@ -20,11 +43,14 @@ drops the space's own, and it inherits again. A few settings are one for every s
 | Page | Setting | Level | Why |
 |---|---|---|---|
 | Agents | Assistant (CLI, model, effort, fast, permissions) | Everywhere, space | A repo may want a stronger model or another CLI |
+| Agents | Feature Assistant (account/profile, model, effort, permissions) | Everywhere, space | Independent feature conversations; space account inherited by default |
 | Agents | Workers | Everywhere, space | The same: what a task in this space runs on |
 | Agents | Reviewer | Everywhere, space | The same |
 | Agents | Backup agent | Everywhere, space | A space whose work shouldn't move to the other CLI |
 | Agents | Reactions (every agent reacts with an emoji; on) | Everywhere, space | A space may want a plainer chat |
-| Agents | Instructions (assistant.md, worker.md, reviewer.md) | Everywhere only | Repo rules belong in the repo's AGENTS.md or CLAUDE.md, which every agent there reads |
+| Agents | Global role prompts (assistant.md, feature.md, worker.md, reviewer.md) | Everywhere | Shared starting instructions for each role |
+| Agents | Space instructions | Space, per role | Append local guidance to the current global role prompt; repository AGENTS.md / CLAUDE.md still applies |
+| Agents | Approval defaults and role overrides | Everywhere, space | Choose manual, rules, Assistant review or native Codex handoff; inspect decision history |
 | Tasks | Merge, Review, Must fix, Proof | Everywhere, space | How much care a repo needs differs |
 | Tasks | Tasks at once | Everywhere, space | It counts per folder already |
 | Tasks | Archive Done after | Everywhere, space | Some repos keep done work in view longer |
@@ -56,7 +82,7 @@ task values a machine set before (the old machine scope) still apply there until
   `autopilot` (`{ every, events, heartbeat }`). The window pushes each machine its share (Everywhere's and its spaces' by their
   ids there), and when the web app is served from another machine its service keeps the file in step with that host
   (`service/sync.ts`). So a space on any machine, and the web on the Mac mini, see the same values. On a machine
-  still on an older Shepherdr the file is `~/.herdr/shepherdr.json`; pushes and syncs find it there.
+  still on an older Yurherdr the file is `~/.herdr/shepherdr.json`; pushes and syncs find it there.
 - `tasks.worktree_root` (in `everywhere`, a machine's or a space's `tasks`; no row in the window yet): the folder new
   task worktrees go in, e.g. a bigger disk (`~` allowed). Unset: `~/.local/share/shepherdr/worktrees`. A task keeps
   the worktree it has.

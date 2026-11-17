@@ -1,8 +1,14 @@
 # Window and web parity
 
-Shepherdr 3.1's web app works exactly as Shepherdr's 3.0 layout in the Herdr window: the same contents, labels,
-controls, states, menus, empty and error texts, sub-pages and behavior. Only the look is 2.1's, fitted to desktop,
-tablet and phone. The window decides; where the two differ, the web changes.
+These pages preserve the inherited Shepherdr desktop/web comparison. They are
+reference and acceptance notes, not a claim that every Yurherdr extension is
+available on the web. Native Yurherdr has additional Feature Assistants, Sessions,
+account controls, document panes, browser pages and approval-history actions.
+Use [the workspace guide](workspace.md) for implemented behavior and limitations.
+
+The inherited comparison targets the shared contents, labels, menus and states.
+The phone may use a different layout or touch interaction. New native features
+need explicit web acceptance checks before their parity can be claimed.
 
 Each surface has its own page under [docs/parity/](parity/), made from the window's mod code (not from memory): every
 element of the window's surface, its web twin, and a tick once they match. An element the web shows differently on
@@ -25,4 +31,6 @@ working line, `core/bg-jobs.js` for the background jobs over the box, …).
 | Settings › Autopilot (Everywhere's and a space's own) | `mods/shepherdr-settings/autopilot-section.js`, `mods/tasks/bin/herdr_task/autopilot.py` | `service/settings.ts`, `service/autopilot.ts`, `web/src/Settings.tsx` | [autopilot](parity/autopilot.md) |
 | New space, Add machine, worktrees, rename dialogs | `mods/newspace`, `mods/machine-add-chat`, `mods/spaces-chat/rename.js`, worktree dialog | `web/plugins/places/add.tsx`, `web/plugins/places/section.tsx`, `web/src/screens/AddMachine.tsx`, `web/src/screens/Worktree.tsx` | [dialogs](parity/dialogs.md) |
 
-A surface is done when every row on its page is ticked (✓) or a web-only form (◇) with its reason. Nothing is ✗.
+A parity surface is complete only after its current behavior is checked. Inherited
+checkmarks describe the recorded upstream comparison; they do not certify newer
+Yurherdr changes or the Herdr TUI host.

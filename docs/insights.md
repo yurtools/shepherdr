@@ -1,13 +1,13 @@
 # Usage insights
 
-An add-on that keeps a private log of how you use Shepherdr, so your own Assistant can look at it and suggest better
-ways to work when you ask ("How do I use Shepherdr? Any tips?").
+An add-on that keeps a private log of how you use Yurherdr, so your own Assistant can look at it and suggest better
+ways to work when you ask ("How do I use Yurherdr? Any tips?").
 
 ## The promise
 
-- **Yours alone.** The log stays on your own machines, in `~/.local/state/shepherdr/service/`. It is never sent to Shepherdr's
+- **Yours alone.** The log stays on your own machines, in `~/.local/state/shepherdr/service/`. It is never sent to Yurherdr's
   makers, to any server or to anyone else. No analytics library, no telemetry. The only hop is the web app handing
-  its events to your own Shepherdr service, the same one it already talks to, which writes them on its machine.
+  its events to your own Yurherdr service, the same one it already talks to, which writes them on its machine.
 - **Never your words.** It keeps kinds, ids, counts and times: which screen, for how long, which button, which
   feature, that an error showed. Never a message, a secret, a file's contents or what you typed.
 - **Read only when you ask.** Your Assistant reads it only when you ask about how you work, and never sends it on.
@@ -19,7 +19,7 @@ good. Switch it off any time.
 
 ## What is recorded
 
-Only what Shepherdr keeps nowhere else, one JSON object per line in `usage.jsonl`:
+Only what Yurherdr keeps nowhere else, one JSON object per line in `usage.jsonl`:
 
 | kind | When | Fields |
 |---|---|---|
@@ -33,7 +33,7 @@ Only what Shepherdr keeps nowhere else, one JSON object per line in `usage.jsonl
 Every line has `at` (ms) and, when known, `from`: `web`, `phone`, `window`, `voice` or `terminal`. Anything else is
 dropped before it is written (`core/usage.js`).
 
-What Shepherdr already keeps is read where it lives, not copied: tasks and their timings (`herdr-task list --all
+What Yurherdr already keeps is read where it lives, not copied: tasks and their timings (`herdr-task list --all
 --json`), Autopilot's wakes (`~/.local/share/shepherdr/tasks/.autopilot.json`) and when you wrote to agents (their own logs). The
 Assistant's instructions (`templates/assistant.md`, Usage insights) say where each is.
 

@@ -1,18 +1,26 @@
 # The web app
 
-Shepherdr 3.1 is also a web app: the same spaces, Assistants, tasks, cards, artifacts and settings as the Herdr window,
+> Yurherdr retains the inherited Shepherdr service, URL prefix and storage names.
+> The native workspace is the primary implementation target. Feature Assistants,
+> the Features/Sessions sidebar, named browser pages, document panes and newer
+> native chat controls do not all have matching web interfaces. The shared log
+> reader now selects the main Codex rollout rather than internal reviewer logs;
+> that does not imply full UI parity. See [parity scope](parity.md).
+
+
+Yurherdr 3.1 is also a web app: the same spaces, Assistants, tasks, cards, artifacts and settings as the Herdr window,
 on a phone, a tablet or another computer's browser, on the same data. Its look is 2.1's web app; what it does is
 3.0's.
 
 ## Where it is
 
 `https://<this machine's tailnet name>/shepherdr/`, shared only on your tailnet with `tailscale serve` (never funnel,
-never the open internet); or the always-on machine you serve it from (below). Shepherdr settings → Web shows the link and a QR code for your phone. It needs Tailscale
+never the open internet); or the always-on machine you serve it from (below). Yurherdr settings → Web shows the link and a QR code for your phone. It needs Tailscale
 running here; without it the service still runs, with no web app.
 
 Another HTTPS port: when something else on this machine already holds the tailnet's 443 (a reverse proxy, a container
 publishing 443, a `tailscale serve --tcp 443` forward), `shepherdr web https-port 8443` moves it to
-`https://<this machine's tailnet name>:8443/shepherdr/` within seconds, and every link Shepherdr gives follows
+`https://<this machine's tailnet name>:8443/shepherdr/` within seconds, and every link Yurherdr gives follows
 (`./install.sh --https-port 8443` sets it at install; updates keep it; `shepherdr web https-port 443` goes back, and
 `shepherdr web https-port` alone says the one now). When sharing fails, Settings → Web and `shepherdr doctor` say
 tailscale's own reason, and name a free port when the one asked for is taken. A port is this machine's own: Serve from
@@ -51,7 +59,7 @@ connection it came on). A page from anywhere else can't change anything: writes 
   processing, the helper failing), the call goes on with the mic hushed while the agent speaks (`mods/chat/audio.ts`
   callAudio). Dictation writes the words while you speak (realtime Scribe: the page with a single-use token from
   `/api/dictate/live`, the window's `record.ts` with the key in memory), so Done lands them in about 0.2 s; the
-  recording is uploaded to `/api/dictate` only when the live words can't come. The voice agent has four Shepherdr tools (`core/voice.js` TOOLS), answered by the service with the web app's
+  recording is uploaded to `/api/dictate` only when the live words can't come. The voice agent has four Yurherdr tools (`core/voice.js` TOOLS), answered by the service with the web app's
   reach (`service/voice-tools.ts`): `look` reads anything (the call's context, any chat or a search in it, spaces,
   machines, tasks, a task's summary and checks, Needs you, news, Autopilot, automations, settings, secret names,
   artifacts), `open` shows something in the app the call runs in: the very page or window that started it (the page gets
@@ -83,11 +91,11 @@ connection it came on). A page from anywhere else can't change anything: writes 
   act first. `open` also shows the shown space's Artifacts, Files and Changes panels and its Assistant's terminal (a
   space named: that space first, then its panel), Tasks filtered by a state and words, and a Settings page by its
   spoken name.
-  SHEP-105: a call is with Shepherdr itself, not one chat. It starts from the voice button beside Search in the
+  SHEP-105: a call is with Yurherdr itself, not one chat. It starts from the voice button beside Search in the
   sidebar's brand row (SHEP-135; on a call it turns into Mute and End in one outlined capsule, no card under it), or a
   phone's voice button at the end of the bottom bar (on a call Full screen, Mute and End in the same capsule). A chat's box has no call button
   (SHEP-108): its round button is always Send, grey until there is something to send; where neither brand row nor bar shows, the strip sits at the top.
-  SHEP-118: a web call opens full screen (always dark: Shepherdr, its clock, an orb that breathes while it listens,
+  SHEP-118: a web call opens full screen (always dark: Yurherdr, its clock, an orb that breathes while it listens,
   swells with whoever speaks, swirls while it thinks or works and greys while muted; only Minimize, Mute and End).
   Minimized, the bar and strip show Full screen, Mute and End; the brand row Mute and End (SHEP-135). Whatever
   the voice opens or does on the page minimizes it, and its screen tool never reads it (`[data-call-screen]`). SHEP-124:
@@ -103,7 +111,7 @@ connection it came on). A page from anywhere else can't change anything: writes 
 
 `./install.sh` installs the window's layout and the web app. `./install.sh --web` installs the web app alone (no
 Herdr window): its spaces are the service's own. Either builds the web app from a fresh clone (with Bun, installed
-from bun.sh if it's missing), and `shepherdr update` updates the same kind. Shepherdr settings → Window → Add-ons → Web turns the web app off
+from bun.sh if it's missing), and `shepherdr update` updates the same kind. Yurherdr settings → Window → Add-ons → Web turns the web app off
 and on; the service keeps its background work either way.
 
 ## Serve from an always-on machine
@@ -111,12 +119,12 @@ and on; the service keeps its background work either way.
 A laptop sleeps, and its web app with it. Serve it from a machine that stays on instead: a Mac mini, a cloud VM, any
 machine linked over herdr-core (`hc machine add`, or Add machine in the sidebar). The Herdr window stays where it is.
 
-- **Shepherdr settings → Web → Serve from**, in the window or the web app: this computer and every linked machine, with
+- **Yurherdr settings → Web → Serve from**, in the window or the web app: this computer and every linked machine, with
   its system and Offline when it is. Pick one and confirm; to move it back, pick This computer.
 - Or from a terminal: `shepherdr web serve-from <machine>` (`here` moves it back), `shepherdr web status`. Its
   `/shepherdr` already shared to something else there: `--take-link` sets that aside, and moving away puts it back.
 
-What a move does, in order: installs Shepherdr's web service on that machine over the link, or brings it up to date
+What a move does, in order: installs Yurherdr's web service on that machine over the link, or brings it up to date
 (`~/.local/share/shepherdr`, under launchd on macOS or a systemd user unit on Linux; Bun from bun.sh when it has
 none; what it replaces is backed up and `shepherdr uninstall` there puts it back), copies the pins, sidebar, Notify,
 settings and role instructions over, then tells every machine. The new one shares
@@ -145,7 +153,7 @@ Settings → Web shows the new link and its QR code everywhere. It needs Python 
 
 | Work | Runs on |
 | --- | --- |
-| The task tick, the automations scheduler's check (herdr-task) | each machine with a Shepherdr service ticks its own; the host ticks the machines with none (VMs) that any service ran tasks on; another service ticks those only while the host can't be reached (herdr-task's lock keeps two ticks of one machine apart) |
+| The task tick, the automations scheduler's check (herdr-task) | each machine with a Yurherdr service ticks its own; the host ticks the machines with none (VMs) that any service ran tasks on; another service ticks those only while the host can't be reached (herdr-task's lock keeps two ticks of one machine apart) |
 | Autopilot wakes and automations | each machine's own scheduler (one per machine: herdr-task's lock); the tick above only checks it runs. A space's switch flipped from another machine is handed to herdr-task on the space's own machine, which keeps it and wakes it |
 | News, the memory guard, retries of cut turns | inside each machine's tick, so with it |
 | Push alerts to phones | the host only (the pages subscribe there) |

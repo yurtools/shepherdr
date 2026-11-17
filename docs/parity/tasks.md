@@ -1,5 +1,10 @@
 # Tasks panel and task view
 
+> **Scope:** retained Shepherdr comparison notes. Yurherdr's current native
+> extensions and limits are documented in [the workspace guide](../workspace.md)
+> and [the parity overview](../parity.md); inherited ticks are not new verification.
+
+
 Window: `mods/tasks/main.js` (T), `mods/tasks-menu/main.js` (TM), `mods/chat/panel.js` (P), `mods/task-pr/main.js`
 (PR), `mods/task-browser/main.js` (B). Web:
 `web/plugins/tasks/client.tsx` (W), `web/src/groups.ts` (G), `web/src/App.tsx` TaskPage (A), `web/src/Panel.tsx`

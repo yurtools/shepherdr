@@ -1,5 +1,10 @@
 # Settings (Agents, Tasks, Notify, Secrets, Machines, Window, Web, and the frame)
 
+> **Scope:** retained Shepherdr comparison notes. Yurherdr's current native
+> extensions and limits are documented in [the workspace guide](../workspace.md)
+> and [the parity overview](../parity.md); inherited ticks are not new verification.
+
+
 Made from the window's mod (`mods/shepherdr-settings`, with `lib/settings.js`, `mods/chat-models` and
 `mods/coordinator`'s instructions view). Autopilot has its own page: [autopilot](autopilot.md).
 ✓ matches, ◇ a web-only form on purpose (why), ✗ still differs.

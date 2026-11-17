@@ -1,5 +1,29 @@
 # Changelog
 
+## Unreleased — Yurherdr development workspace
+
+Product name: Yurherdr. The repository remains `yurtools/shepherdr`; runtime
+version 3.1.35 and compatibility IDs are retained. This is not a new release tag.
+The feature groups below are ordered by importance to the user's workflow.
+
+- Agent workspace: same-session Chat / Terminal, side-by-side views, wide chat,
+  independent named Feature Assistants and shared Worker / Reviewer settings.
+- Accounts and controls: named Codex logins through launch/resume/fork/restart,
+  model/thinking/permissions controls, local skills picker and native `/status`.
+- Project files: persistent tree, separate editable document panes, Markdown/CSV
+  Source / Preview, source highlighting, DOCX/Excel content views and file references.
+- Approvals: role defaults, bounded rules, delegated reviews, decision-source history
+  and future rules created from history without replaying old actions.
+- Sessions and instructions: resume/focus from the sidebar, named feature ownership,
+  and additive per-space role instructions over the current global prompt.
+- Browser pages and launchers: persistent URLs/profiles, editable shortcuts and
+  launchers, stable rendering/reconnects, and a normal-browser verification fallback.
+- Reliability: worker Chat and task resume indexing select the main Codex rollout
+  rather than guardian logs; large incoming messages fold and render in bounded
+  batches; Feature activity includes its running workers.
+
+The entries below are retained upstream Shepherdr release history.
+
 ## 3.1.35
 
 The 15 November fixes from GitHub: Shepherdr no longer tries SSH to machines you never linked, tasks stop getting stuck

@@ -1,8 +1,8 @@
-# Develop
+# Develop Yurherdr
 
 ```text
 layouts/shepherdr.json   the layout (two live blocks shipped blank: tasks-thread-term, artifacts-view-body)
-mods/<name>/             the 28 mods, installed as they are (names fixed: data/<mod> state follows them)
+mods/<name>/             the bundled mods, installed as they are (names fixed: data/<mod> state follows them)
 lib/                     shared modules, one source each; bin/sync-shared copies them into the mods in lib/COPIES
 lib/addons.json          the add-ons: mods, blocks, keys, helpers, needs, web plugins (docs/addons.md)
 lib/features.json        every feature: its Herdr side, its web side and its shared logic (CI checks all three)
@@ -73,10 +73,13 @@ python3 scripts/parity.py /tmp/shep-try          # every difference with the liv
 Never point `--root` at the real home for a try, and never start Herdr or herdr-task with a changed `HOME` or
 `HERDR_APP_HOME`: a window or scheduler on another home can overwrite every machine's spaces.
 
-## The herdr.dev listing (at release, with the person's yes)
+## Herdr App Gallery metadata
 
-- The repo root is the listed layout folder: `layouts/shepherdr.json`, `mods/`, `RECIPE.md`, `preview.png`,
-  `keys.json`. herdr.dev reads the recipe's title and first paragraph.
-- Repo topics: add `herdr-layout` (the listing), keep `herdr` and `shepherdr`, and drop `herdr-plugin` (the
-  terminal-plugin card; `herdr-plugin.toml` is gone from main, 2.1 stays installable from `v2.1`).
-- Tag `v3.0.0` and the GitHub release only after the person says yes; patch bumps after that.
+The public name is Yurherdr; runtime identifiers remain compatible with Shepherdr.
+See [publishing](publishing.md) for the current Gallery workflow and repository-name
+decision. The root has the layout, mods, `RECIPE.md` and a privacy-safe `preview.png`.
+Use `herdr-layout` for the complete App workspace. Do not add `herdr-plugin` or a
+TUI manifest merely to make the native project appear in a different catalog.
+Publishing the default-branch docs and Gallery metadata does not cut a release.
+Version bumps, tags, GitHub releases and package publication still require the
+user's explicit instruction.

@@ -1,5 +1,10 @@
 # Accept card, toasts, status bar, confirm and prompt dialogs
 
+> **Scope:** retained Shepherdr comparison notes. Yurherdr's current native
+> extensions and limits are documented in [the workspace guide](../workspace.md)
+> and [the parity overview](../parity.md); inherited ticks are not new verification.
+
+
 Made from the window's mods: `mods/accept-card`, `mods/toasts` (and the toasts its callers post: `mods/chat`,
 `lib/inbox.js`), `mods/workspace-status-chat`, `mods/confirm-chat`, `mods/prompt-chat` (and their askers:
 `lib/coordinator.js`, `mods/spaces-chat/popups.js`). ✓ matches, ◇ a web-only form on purpose (why), ✗ still differs.

@@ -1,5 +1,10 @@
 # Tab bar, + menu, tab menu and pane header
 
+> **Scope:** retained Shepherdr comparison notes. Yurherdr's current native
+> extensions and limits are documented in [the workspace guide](../workspace.md)
+> and [the parity overview](../parity.md); inherited ticks are not new verification.
+
+
 Window: `mods/tabs-tasks/main.js` (TB), `mods/new-menu-tasks/main.js` (NM), `mods/menu-tasks/main.js` (MT),
 `mods/coordinator/main.js` (CO: Switch agent, Close the Assistant), `mods/pane-chat/main.js` (PC) and
 `mods/pane-chat/autopilot.js` (AP), `lib/coordinator.js` (LC: closeTab, renameTab, closeSpace). Web:

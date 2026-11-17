@@ -1,83 +1,83 @@
-# Shepherdr — yurtools fork
+# Yurherdr
 
-A Linux-focused workspace fork of [Shepherdr](https://github.com/eliasstravik/shepherdr),
-built on [Herdr](https://herdr.dev). The goal is a central agent conversation with
-Chat / Terminal switching, reliable Codex account selection, and a separate file
-pane with Source / Preview views.
+Chat, agents, terminals and project files in one Herdr App window.
 
-**Status: development implementation on `main`.** The runtime is based
-on upstream Shepherdr 3.1.35. Named accounts, separate document panes, side-by-side
-agent views, file references, source highlighting and Office content previews
-are implemented. Approval settings have automated checks and native UI inspection.
-There is no fork-specific release yet.
+**Yurherdr is a personal development workspace built on [Herdr App](https://herdr.dev).**
+It started as a fork of [Shepherdr](https://github.com/eliasstravik/shepherdr),
+created by Elias Stravik, and grew into yurtools' own IDE-style workspace for
+working with coding agents. It retains Shepherdr's task orchestration and adds
+named feature conversations, separate Codex accounts, document panes and browser tabs.
 
-[Roadmap](docs/fork-plan.md) · [Contributing](CONTRIBUTING.md) ·
-[Issues](https://github.com/yurtools/shepherdr/issues) ·
-[Upstream](https://github.com/eliasstravik/shepherdr)
+**Development build, based on Shepherdr 3.1.35.** The features below are implemented.
+Linux is the validation target; inherited macOS support is not a new validation claim.
+There is no Yurherdr release tag or version bump yet. The repository remains
+[`yurtools/shepherdr`](https://github.com/yurtools/shepherdr); its name has not changed.
 
-## What this fork is for
+[Usage](docs/workspace.md) · [Install](docs/install.md) · [Approvals](docs/approvals.md) ·
+[Contributing](CONTRIBUTING.md) · [Issues](https://github.com/yurtools/shepherdr/issues)
 
-| Area | Behavior | Status |
+## What Yurherdr does
+
+Features are ordered by their importance to the daily workflow.
+
+| Area | What you can do | Current scope |
 | --- | --- | --- |
-| Chat / Terminal | Switch views of the same running agent; collapse thinking and tool activity | Implemented; live switching verified on Linux |
-| Side-by-side views | Show existing agents beside each other, including from the Agents panel; adjust Chat width | Implemented; native Linux workflow verified |
-| Codex profiles | Use separate named accounts, preserving the profile through launch, resume, fork and restart | Implemented; account lifecycle covered by automated tests |
-| Space Assistant | Choose its agent/profile in space settings; show the assignment in chat | Implemented; account selection verified in the Linux UI |
-| Chat controls | Account-bound Model, Thinking and Permissions; scoped approval defaults in Settings → Agents | Implemented; account-bound controls and approval policy paths tested |
-| Files | Keep a persistent tree rooted at the selected space's project folder | Implemented; switching between space roots verified on Linux |
-| Documents | Open files separately; copy paths or reference files in a chat draft | Implemented; separate-pane workflow verified on Linux |
-| Markdown and CSV | Switch between editable source and rendered Markdown or a CSV table | Implemented; Source / Preview verified in the Linux UI |
-| Sessions | Find saved conversations below Spaces; preview, resume or open beside with the original account | Implemented; local Codex sessions across configured accounts |
-| Source code | Highlighted source and a separate Edit view for the requested languages | Implemented; lexical colors include Helm, Liquibase and Terraform |
-| Office files | Read-only DOCX content and Excel worksheet previews | Implemented; local OOXML files, with documented limits |
+| Agent workspace | Switch Chat / Terminal for the same running agent; open agents beside each other; collapse thinking and tool activity | Native Linux workflow verified; wide or comfortable chat |
+| Features and coordination | Keep a space Assistant for discussion; start named Feature Assistants that coordinate their own workers | Independent conversations, shared Worker / Reviewer settings; activity includes running workers |
+| Codex accounts and controls | Choose named accounts, including separate logins; set Model, Thinking and Permissions | Account preserved through launch, resume, fork and restart; local skills picker and `/status` |
+| Files and documents | Keep the project tree visible while opening files in separate panes; refer to files from Chat | Editable text; Markdown / CSV Source / Preview; source highlighting; close individual files |
+| Approvals | Set role defaults, remember bounded command rules, request Assistant review and inspect decision history | Create future rules from history; account/folder/scope binding; native Codex handoffs report their actual visibility limits |
+| Sessions | Find closed conversations below Spaces; click to resume or focus; open beside another conversation | Local Codex history across configured accounts; account retained |
+| Space instructions | Append project-specific instructions to the global role prompt | Separate additions for Assistant, Feature Assistant, Workers and Reviewer; applied on fresh starts |
+| Browser tabs | Open editable URLs or configured web-chat shortcuts; retain pages and browser profiles | Native local spaces; website logins are separate from Codex; normal-browser fallback for verification loops |
+| Reports and remote access | Use inherited task tracking, artifacts, optional voice, Autopilot and a tailnet web app | Desktop-specific extensions do not all have web equivalents |
 
-The agent is assigned when a regular agent pane opens, or in the space's Assistant
-settings. The chat composer does not need another agent selector. Each Codex
-profile keeps its own login and state.
+Source highlighting includes HTML, CSS, TypeScript, JavaScript, Java, SQL, Bash,
+XML, JSON, YAML, Helm, Liquibase, Python and Terraform. DOCX and Excel OOXML previews
+are read-only content views. They do not reproduce full Office page layout or
+recalculate formulas. See [document limits](docs/workspace.md#files-and-documents).
 
-## Get the development source
+## Install the development build
+
+Requires Herdr App and herdr-core, Python 3.8+, Git and a signed-in agent CLI.
+Bun builds the service and web UI. [Optional dependencies](docs/install.md#requirements)
+cover browsers, remote access and voice.
 
 ```bash
 git clone https://github.com/yurtools/shepherdr.git
 cd shepherdr
 git switch main
+./install.sh --dry-run
+./install.sh
+shepherdr doctor
 ```
 
-`main` contains the implemented workspace features in the [usage guide](docs/workspace.md).
-Use focused feature branches for further development.
-Upstream history remains available at [eliasstravik/shepherdr](https://github.com/eliasstravik/shepherdr).
+Select the **shepherdr** layout with **Ctrl+Shift+L**. The layout ID, CLI commands,
+service names and storage paths retain their existing names for compatibility.
+Current installations may still label their settings **Shepherdr**. These are
+Yurherdr's inherited runtime identifiers, not a second product to install.
 
-For development, start with [Contributing](CONTRIBUTING.md) and the
-[implementation plan](docs/fork-plan.md). The inherited runtime requires macOS or
-Linux, herdr-app 0.1.12+, herdr-core 0.1.17+, Python 3.8+, Git and a signed-in agent
-CLI. Bun builds the service and web app. The fork's initial validation target is
-Linux; this does not claim new cross-platform validation.
-
-## Installation and updates
-
-The `main` branch includes an installer for the development build. The existing
-[installation guide](docs/install.md) describes the inherited Shepherdr runtime,
-including its services, helpers and agent hooks. Install from `main` for the
-workspace features described in the [usage guide](docs/workspace.md).
-
-Development installs use a scratch root, as described in
-[Contributing](CONTRIBUTING.md). Changes to an active Herdr installation are a
-separate step after validation. Update from the intended checkout and branch;
-do not replace a fork checkout with an upstream clone to update it.
+For updates, pull the intended checkout and run `shepherdr update`, then
+`shepherdr doctor`. Read [the upgrade guide](docs/upgrading.md) before changing
+an existing installation. Personal key bindings and edited role prompts are preserved.
 
 ## Documentation
 
-- [Workspace UI usage and account configuration](docs/workspace.md)
-- [Implementation plan and acceptance checks](docs/fork-plan.md)
-- [Contribution and fork maintenance workflow](CONTRIBUTING.md)
-- [Upstream provenance and inherited documentation](docs/upstream.md)
-- [Code layout and upstream development checks](docs/develop.md)
-- [Inherited installation guide](docs/install.md)
-- [Inherited settings](docs/settings.md) and [add-ons](docs/addons.md)
+- [Workspace guide: features, accounts, files, sessions and browser tabs](docs/workspace.md)
+- [Installation](docs/install.md), [settings](docs/settings.md) and [add-ons](docs/addons.md)
+- [Approval behavior and history](docs/approvals.md)
+- [Architecture, implementation status and acceptance checks](docs/fork-plan.md)
+- [Development](docs/develop.md), [web app](docs/web.md) and [web parity limits](docs/parity.md)
+- [Origins, licensing and the Yurherdr name](docs/upstream.md)
+- [Gallery publishing and repository naming](docs/publishing.md)
 
-## License and attribution
+## Origins and license
 
-MIT licensed. Shepherdr was created by Elias Stravik; the original copyright and
-[license](LICENSE) are retained. This is an independent fork maintained under
-[yurtools](https://github.com/yurtools), not an official Herdr or upstream Shepherdr
-release. Herdr-related licensing is retained in [LICENSE-herdr](LICENSE-herdr).
+Yurherdr is derived from Shepherdr 3.1.35, with its Git history and original
+copyright retained. Elias Stravik created Shepherdr; yurtools maintains these
+workspace extensions. [LICENSE](LICENSE) remains MIT, and Herdr-related licensing
+is retained in [LICENSE-herdr](LICENSE-herdr).
+
+Yurherdr is an independent project, not an official Herdr or Shepherdr release.
+The desktop Gallery is the appropriate listing for this layout and its mods;
+it is not a Herdr TUI plugin. [Read the Gallery recipe](RECIPE.md).

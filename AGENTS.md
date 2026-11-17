@@ -1,8 +1,12 @@
-# Working on Shepherdr
+# Working on Yurherdr
 
 ## Fork context
 
-This checkout is the yurtools development fork. Read [CONTRIBUTING.md](CONTRIBUTING.md)
+This is Yurherdr, maintained in the unchanged `yurtools/shepherdr` repository and derived from Shepherdr 3.1.35.
+The user explicitly prohibited renaming the GitHub repository for now. Preserve internal
+`shepherdr` identifiers and data paths. Order public feature descriptions by importance,
+not chronology. Use [docs/publishing.md](docs/publishing.md) for the App Gallery; do not
+misrepresent it as a Herdr TUI plugin. Read [CONTRIBUTING.md](CONTRIBUTING.md)
 and [docs/fork-plan.md](docs/fork-plan.md) for its branch workflow, current status
 and acceptance requirements. Keep planned features distinct from implemented behavior
 in the README and docs. Preserve upstream attribution and version history.

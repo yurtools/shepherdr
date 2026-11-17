@@ -1,10 +1,15 @@
-# Contributing to the yurtools fork
+# Contributing to Yurherdr
 
-This fork is developing the account-aware workspace described in
-[the plan](docs/fork-plan.md). The `main` branch implements named accounts,
-document panes, side-by-side agent views and per-space session history; see
-[the usage guide](docs/workspace.md) for its current behavior and limits.
-Please keep changes focused so upstream improvements remain practical to merge.
+Yurherdr is the IDE-style workspace maintained in `yurtools/shepherdr`, derived
+from Elias Stravik's Shepherdr 3.1.35. The product name and GitHub repository name
+are separate: **do not rename the repository**, live checkout, data paths, services
+or layout IDs without a further explicit instruction.
+
+The default branch contains the implemented workspace described in [the usage
+guide](docs/workspace.md). Feature summaries must be ordered by user importance,
+not by development chronology. Keep upstream credit and historical release notes.
+See [the architecture/status guide](docs/fork-plan.md) and
+[Gallery publishing](docs/publishing.md).
 
 ## Branches and upstream
 

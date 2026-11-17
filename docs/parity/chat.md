@@ -1,5 +1,10 @@
 # Chat
 
+> **Scope:** retained Shepherdr comparison notes. Yurherdr's current native
+> extensions and limits are documented in [the workspace guide](../workspace.md)
+> and [the parity overview](../parity.md); inherited ticks are not new verification.
+
+
 Window: `mods/chat/main.js` (W), `mods/chat/cards.js`, `mods/chat-models/main.js` (M), `mods/chat-react/main.js` (E),
 `mods/chat-call/main.js` (B), `mods/chat-image`. Web: `web/plugins/chat/client.tsx` (C), `web/plugins/chat/rows.tsx`
 (R), `web/plugins/chat/activity.tsx` (A), `web/plugins/chat/find.tsx` (F), `fold.tsx`, `markdown.tsx`,

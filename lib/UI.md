@@ -1,5 +1,10 @@
 # UI building blocks (lib/ui.js)
 
+> Yurherdr retains this inherited Shepherdr component/design reference. Runtime
+> IDs remain compatible; see [the workspace guide](../docs/workspace.md) for current
+> product behavior and [origins](../docs/upstream.md) for attribution.
+
+
 One source for sizes, status colors and the controls every mod repeats. `lib/ui.js` is copied
 into each of our mods by `bin/sync-shared` (listed in `lib/COPIES`), so a mod imports it as
 `import { button, TEXT } from "./ui.js";`. Edit `lib/ui.js`, never a copy, then run

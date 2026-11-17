@@ -1,16 +1,19 @@
 # Install
 
-> **Fork status:** this guide describes the inherited Shepherdr 3.1.35 runtime.
-> The `main` branch adds the features in [the workspace guide](workspace.md);
-> select `main` before installing that development build. Use the
-> [fork install/update commands](workspace.md#installation-and-optional-mods)
-> to install from that checkout while preserving personal key bindings.
-> For development and scratch-root testing, start with [Contributing](../CONTRIBUTING.md).
+> **Yurherdr development build.** This is the workspace derived from Shepherdr 3.1.35.
+> Use `main` for the published source and [the workspace guide](workspace.md) for
+> current features and limits. Commands and storage still use `shepherdr` for
+> compatibility; see [origins and naming](upstream.md).
 
-Shepherdr 3.1.35 is a layout for the Herdr app plus its mods, helpers and role instructions, and a web app for your tailnet ([Web](web.md)). One script puts them in
+Yurherdr, based on Shepherdr 3.1.35, is a layout for the Herdr app plus its mods, helpers and role instructions, and a web app for your tailnet ([Web](web.md)). One script puts them in
 place, never overwrites what you made yourself, and keeps a backup of anything it replaces.
 
 ## Requirements
+
+The current native workspace was verified on Linux with herdr-app **0.1.16** and
+herdr-core **0.1.21**. The older minimum versions below describe the inherited
+runtime; update Herdr App/core if newer native controls are unavailable. Windows
+installation is not provided by this installer.
 
 - macOS or Linux, the Herdr app 0.1.12 or newer (`herdr-app --version`) with herdr-core 0.1.17 or newer
   (`hc --version`). Open Herdr once first, so it writes its home (`~/.config/herdr-app`).
@@ -31,7 +34,7 @@ git clone https://github.com/yurtools/shepherdr && cd shepherdr
 shepherdr doctor            # check it
 ```
 
-Then in Herdr, `Ctrl+Shift+L` picks the Shepherdr layout.
+Then in Herdr, `Ctrl+Shift+L` picks the **shepherdr** layout (Yurherdr’s compatibility ID).
 
 A fresh clone has no web app built (`web/dist` isn't in git): the installer builds it with Bun (`bun install`,
 `bun run build`) whenever it's missing or older than its sources, so nothing to do by hand. A build that fails stops
@@ -42,20 +45,20 @@ What goes where:
 | What | Where |
 |---|---|
 | The layout | `~/.config/herdr-app/layouts/shepherdr.json` |
-| 28 mods (the add-ons, [Add-ons](addons.md)) | `~/.config/herdr-app/mods/<name>/`, one swap per mod so Herdr reloads each once |
+| The bundled mods (the add-ons, [Add-ons](addons.md)) | `~/.config/herdr-app/mods/<name>/`, one swap per mod so Herdr reloads each once |
 | Shared modules, helpers | `~/.config/herdr-app/lib/`, `~/.config/herdr-app/bin/` |
-| Keys | merged into `~/.config/herdr-app/keys.json`: free keys added; a key you already use is asked about (kept without a terminal; `--keys ours` takes Shepherdr's) |
-| Role instructions | `~/.config/herdr-core/templates/{assistant,worker,reviewer}.md`; one you edited is kept, the new one goes beside it as `.new` |
+| Keys | merged into `~/.config/herdr-app/keys.json`: free keys added; a key you already use is asked about (kept without a terminal; `--keys ours` takes Yurherdr's) |
+| Role instructions | `~/.config/herdr-core/templates/{assistant,feature,worker,reviewer}.md`; one you edited is kept, the new one goes beside it as `.new` |
 | Helpers on the PATH | links in `~/.local/bin`: `herdr-task`, `herdr-artifact`, `herdr-secret`, `herdr-browser`, `shepherdr` |
 | Question cards | hooks in `~/.claude/settings.json` (SessionStart, PermissionRequest) and `~/.codex/hooks.json` (SessionStart, PermissionRequest); `--no-hooks` leaves them out. Codex asks once to trust a new hook, and needs `hooks = true` in `~/.codex/config.toml` |
-| agent-browser (the task browser) | one already on the PATH when it's 0.41.1 up to 0.41.x, else Shepherdr's own copy in `~/.local/share/shepherdr/agent-browser/<version>/` and Chrome for Testing (`agent-browser install`, into `~/.agent-browser`). See [The task browser's agent-browser](#the-task-browsers-agent-browser) |
+| agent-browser (the task browser) | one already on the PATH when it's 0.41.1 up to 0.41.x, else Yurherdr's own copy in `~/.local/share/shepherdr/agent-browser/<version>/` and Chrome for Testing (`agent-browser install`, into `~/.agent-browser`). See [The task browser's agent-browser](#the-task-browsers-agent-browser) |
 | The guard (`--guard`, opt-in) | `~/.local/bin/herdr-app`: refuses to open a window with another HOME, `HERDR_APP_HOME` or core session (it can overwrite every machine's spaces); subcommands pass through |
 
 What it records: `~/.config/herdr-app/data/shepherdr/installed.json`, a sha256 per file it put there. Running it
 again changes only what changed; a file you edited since is kept (the new copy goes beside it as `.new`), except a
-mod file Shepherdr changed too: that one is replaced and yours goes to the backup folder.
+mod file Yurherdr changed too: that one is replaced and yours goes to the backup folder.
 
-What it retires: a file Shepherdr shipped before and no longer ships (or a mod `lib/addons.json` dropped) is removed on
+What it retires: a file Yurherdr shipped before and no longer ships (or a mod `lib/addons.json` dropped) is removed on
 the next update, whether you edited it or not; a changed one is backed up first and the update says where. A one-file
 helper copy from an older release that doctor rejects (no current SHEP block) is replaced the same way.
 
@@ -70,10 +73,10 @@ mod called `chat`, say). Nothing is written then; it names each one. `--adopt` b
 
 ## The task browser's agent-browser
 
-Each task's browser runs [agent-browser](https://github.com/vercel-labs/agent-browser). Shepherdr pins a version
-(0.41.1) and works with any newer 0.41.x too: one you already have on the PATH (npm, Homebrew…) is used as it is, unless Shepherdr has its own copy here.
+Each task's browser runs [agent-browser](https://github.com/vercel-labs/agent-browser). Yurherdr pins a version
+(0.41.1) and works with any newer 0.41.x too: one you already have on the PATH (npm, Homebrew…) is used as it is, unless Yurherdr has its own copy here.
 When there's none, or it's another version, install, `shepherdr update` and an agent's first `herdr-browser` command
-install Shepherdr's own copy: agent-browser's release binary for this machine (macOS or Linux, x64 or arm64), checked
+install Yurherdr's own copy: agent-browser's release binary for this machine (macOS or Linux, x64 or arm64), checked
 against the pinned version's checksum, into `~/.local/share/shepherdr/agent-browser/<version>/`. No npm, no sudo,
 nothing global. When Chrome isn't found it runs `agent-browser install` for Chrome for Testing. A new pin in an
 update installs the new version and removes the old copy; `shepherdr uninstall` removes it.
@@ -131,9 +134,9 @@ herdr-artifact's own copy when they run a command there (the copy already there 
 `herdr-secret install --on`. So a half-done copy never reaches every machine. Turning the Other machines add-on off stops the
 sync too.
 
-## What Shepherdr contacts
+## What Yurherdr contacts
 
-Shepherdr only talks to what you set up yourself. In the background it contacts:
+Yurherdr only talks to what you set up yourself. In the background it contacts:
 
 - **Machines you linked** in Herdr (herdr-core's links, `hc machine ls`), over that same link: their spaces, tasks,
   health and artifacts for the sidebar and the web app, the task tick, the tools sync above, and the map of which
@@ -156,10 +159,10 @@ remove the machine in Herdr.
 
 ## Where your data lives
 
-Shepherdr keeps its own data in its own folders, never under Herdr's name (`shepherdr where` prints every path):
+Yurherdr keeps its own data in its own folders, never under Herdr's name (`shepherdr where` prints every path):
 
 ```text
-~/.config/shepherdr/          settings.json (Shepherdr settings), model-picks.json
+~/.config/shepherdr/          settings.json (Yurherdr settings), model-picks.json
 ~/.local/share/shepherdr/     tasks/, artifacts/, secrets/ (the vault, owner-only), worktrees/ (new tasks'), tools.json
 ~/.local/state/shepherdr/     service/ (the web service's token, log, usage insights), browser/ (task browsers'
                               sign-ins), secret-drop/, cli-check.json, machine-hold.json, migrate.json (the move's journal)
@@ -174,12 +177,12 @@ them still lands right through `~/.herdr`'s links. Task worktrees go to `~/.loca
 
 Herdr's own folders get only code: the mods, layout, `lib/`, `core/`, `bin/` and templates, each file listed in the
 install record (`~/.config/herdr-app/data/shepherdr/installed.json`, a sha256 each), so an update rewrites exactly
-those and an uninstall removes exactly those. A Shepherdr from before 3.1.27 kept its data in `~/.herdr`: the first
+those and an uninstall removes exactly those. A Yurherdr from before 3.1.27 kept its data in `~/.herdr`: the first
 install or update moves it ([Upgrading](upgrading.md)).
 
 ## Uninstall
 
 `shepherdr uninstall` removes the files it installed that you haven't changed (a mod you changed stays whole), its
 keys (putting back any it replaced), links, guard and hooks, and puts back what the install replaced. Your Herdr
-`data/`, Shepherdr's data folders (tasks, worktrees, artifacts, secrets, settings: `shepherdr where`) and your own mods stay. Switch Herdr to another
-layout first if Shepherdr's is showing.
+`data/`, Yurherdr's data folders (tasks, worktrees, artifacts, secrets, settings: `shepherdr where`) and your own mods stay. Switch Herdr to another
+layout first if Yurherdr's is showing.

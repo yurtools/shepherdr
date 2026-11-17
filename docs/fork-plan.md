@@ -1,134 +1,93 @@
-# Workspace UI fork plan
+# Yurherdr architecture and delivery status
 
-This fork extends Shepherdr's existing Chat/Terminal workflow for Linux. Keep the
-upstream implementation and make focused changes that can be reviewed and tested
-independently. The requirements below are implemented on `main`;
-see [the usage guide](workspace.md) for behavior and limits, including Office previews.
+Yurherdr is a development workspace derived from Shepherdr 3.1.35. The project
+keeps the inherited runtime and extends it with focused changes. The public name
+is Yurherdr; the repository remains `yurtools/shepherdr` and the runtime's
+`shepherdr` identifiers remain compatible. See [origins](upstream.md) and
+[publishing](publishing.md).
+
+## Product priorities and implemented scope
+
+| Priority | Area | Implemented behavior | Remaining boundary |
+| --- | --- | --- | --- |
+| 1 | Agent workspace | Same-session Chat / Terminal; collapsible activity; wide chat; extra views beside existing agents | Extra views share the underlying process and account |
+| 2 | Features and coordination | Named Feature Assistants alongside the space Assistant; own task ownership; shared Worker / Reviewer settings; sidebar activity includes workers | Native local-space feature workflow |
+| 3 | Accounts and agent controls | Named Codex profiles retained through launch/resume/fork/restart; model/thinking/permissions; Feature role override; skills picker and `/status` | Authentication remains in each CLI's account home |
+| 4 | Project files and documents | Persistent space-rooted tree; separate text editing and preview panes; Markdown/CSV modes; lexical highlighting; DOCX/Excel content; file references and links | Bounded read-only Office previews, cached formulas, no full layout reproduction |
+| 5 | Approvals | Role defaults, bounded exact/prefix rules, Assistant review, native Codex handoff, source-labeled history and future rules from history | Codex owns its final native decision; old contextless history is not guessed |
+| 6 | Sessions and project instructions | Space-scoped history below Spaces; click to resume/focus; preview/Open dialog; role-specific additions to current global prompts | General remote/non-Codex history indexing remains limited |
+| 7 | Browser pages and launchers | Persistent native browser pages, editable URLs, configured chat shortcuts, profile isolation, Manage launchers and system-browser fallback | Headless site verification can fail; pages do not inherit Codex skills or login |
+| 8 | Inherited services | Tasks, artifacts, optional Autopilot, voice, other machines and tailnet web access | New native workspace extensions do not imply complete web parity |
+
+These are implementation descriptions, not a new cross-platform certification.
+The native workflow has been checked on Linux. Existing tests cover the inherited
+runtime plus the account, document, approval, browser and Chat changes; the
+inherited macOS and remote code remains subject to its own environment checks.
 
 ## Baseline and maintenance
 
-- Start from upstream Shepherdr 3.1.35, commit
-  `abd5a0f1aa6faf2d0ee8d6559dc7f064fdae488e`.
-- Keep `main` as the fork's implemented workspace and reviewed changes; develop
-  further changes on focused feature branches. Track original history via `upstream/main`.
-- Keep the original MIT license and attribution.
-- Review upstream changes before merging them into `main`.
-- Audit installer and update repository references before installing a fork build,
-  so an update cannot silently replace the fork with an upstream release.
-- Use scratch-root installs and isolated test fixtures during development.
-  Installing the fork into the active Herdr configuration is a separate step.
+- Starting runtime: Shepherdr 3.1.35, commit
+  `abd5a0f1aa6faf2d0ee8d6559dc7f064fdae488e`, by Elias Stravik.
+- Keep the original Git history, MIT license, Herdr-related license and attribution.
+- `main` is the public default branch. Develop further changes on focused branches
+  and publish only complete, checked behavior there. `upstream/main` tracks the
+  original project's history where available.
+- Do not change runtime versions, cut tags or publish releases without an explicit
+  instruction. The Unreleased changelog describes Yurherdr additions separately.
+- Retain layout/module IDs, CLI names, data paths, role templates, service names and
+  installation records during public rebranding. A future migration needs a plan,
+  backups, compatibility aliases and rollback behavior.
+- Test in scratch roots. Never run another Herdr window or use changed HOME values
+  with live Herdr/task helpers. See [contributor rules](../AGENTS.md).
 
-## Account-bound agents and chat controls
+## Runtime organization
 
-- Support multiple named Codex profiles with independent logins and state.
-- The selected program/profile determines the agent when opening a regular chat.
-  For the space Assistant, choose the agent/profile in the space configuration.
-- Show the assigned agent/profile as a label, not another composer dropdown.
-- Provide Model, Thinking level and Permissions dropdowns. Their options must
-  reflect the assigned agent's actual capabilities, and selections must affect
-  the agent rather than merely change a displayed setting.
-- Preserve the assigned profile through launch, resume, fork, restart and model
-  changes. Workers inherit the Assistant profile unless explicitly overridden.
-- Switching between Chat and interactive Terminal must retain the same running
-  session. Keep thinking and tool activity collapsible.
-- Read profile commands and locations from configuration. Do not commit machine
-  paths, credentials, authentication files or personal account settings.
+Herdr App owns the native window and mods. herdr-core owns the long-lived agent
+processes. `mods/chat` reads exact agent logs and renders the conversation; it
+switches views without launching another account or claiming a companion's agent.
+`lib/` and `core/` hold shared modules, copied through `bin/sync-shared`.
+`herdr-task` maintains task records, ownership, scheduling and approval policy.
+The Bun service and React web app reuse shared logic, with explicit native/web
+boundaries documented in [parity scope](parity.md).
 
-## Files and a separate document pane
+Feature records have durable IDs independent of tabs and panes. Worker ownership
+is bound to those records; a working worker keeps the Feature active even when
+its coordinating conversation waits. Native terminal status is a word, unlike
+`hc get`'s status object, so state interpretation normalizes both forms.
 
-- Keep Files as a persistent tree. Selecting a file must not replace the tree.
-- Resolve the tree root from the selected space's project folder, independently
-  of the focused chat or document pane. Remember tree state per space.
-- Open files in a separate document pane, with an explicit action to open another
-  pane when needed.
-- Support ordinary text files and highlighted source. Language targets
-  include HTML, CSS, TypeScript, JavaScript, Java, SQL, Bash, XML, JSON, YAML,
-  Helm, Liquibase, Python and Terraform. Use a lexical Highlight view independently
-  of installed editor grammars; keep Edit available.
-- Markdown supports Source / Preview in the document pane.
-- CSV supports Source / Preview, with the preview displayed as a table and proper
-  handling of quoted fields, delimiters and multiline cells.
-- Keep source edits and previews consistent, and handle unsaved edits and external
-  file changes without silently overwriting content.
-- Provide bounded local DOCX content and Excel OOXML worksheet previews. Keep
-  these read-only and document cached-formula, layout and legacy-format limits.
-- Reference project files from Files, document toolbars and an `@` picker in Chat.
-  Preserve each target pane's draft, account and space, and never auto-send.
-
-## Side-by-side views and session history
-
-Implemented on `main`:
-
-- **Wide / Comfortable** controls Chat's reading width.
-- **Beside…** opens an extra view of the space Assistant or a running agent,
-  retaining its account and original tab. Extra views switch independently between
-  Chat and Terminal; closing one leaves the original agent running.
-- **Features / Sessions** sits below **Spaces**, with a draggable divider.
-  Both follow the selected space; Sessions uses its configured project folder.
-- Searchable **Closed / All** lists show saved local Codex conversations from the
-  primary home and named profiles. Clicking a row resumes or focuses its conversation;
-  **Open…** opens the read-only preview dialog with Resume/Beside actions.
-  Refresh uses an icon.
-- History checks for a running session before reopening it, focusing its existing
-  view or adding another view instead of launching a duplicate agent.
-
-- **Agents** opens a right-hand panel with Open/Beside actions for existing
-  Assistant and worker sessions, without changing Sessions below Spaces.
-
-General history indexing for other CLIs or remote logs remains outside the current
-implementation. Named Feature records also retain Claude sessions captured by a live view.
-
-The current development branch adds independent Feature Assistants with stable IDs,
-shared Worker/Reviewer settings, per-feature task ownership and the space
-Assistant's Codex account by default, with a selectable Feature role override. It also adds persistent per-space browser pages, web-chat
-shortcuts and **+ → Manage…** for agent/shortcut configuration. These are native
-local-space features; see [the workspace guide](workspace.md) for controls and limits.
-
-## Scoped approval handling
-
-Implemented: approval defaults and role overrides in Settings → Agents; Ask me,
-Approved rules, Assistant review and Codex Auto-review. Exact/prefix rules retain
-account, folder, scope and expiry, with history and revocation. Assistant review
-uses request-bound tickets and a configurable policy; native review starts with
-interactive Codex sandboxing. See [approval behavior and limits](approvals.md).
-Autopilot remains a separate scheduling feature.
+Codex can hold main and internal guardian/review rollouts simultaneously. Log
+selection and task resume indexing inspect session metadata and exclude internal
+subagent rollouts. Large externally delivered context messages bypass the
+composer's paste-to-file behavior, so they fold and expand as bounded rows.
+Native row measurement and linked-Markdown preparation are batched to stay within
+the host's render budget.
 
 ## Acceptance checks
 
-1. Configure two independently signed-in Codex profiles. Verify normal agent tabs
-   and the per-space Assistant select the intended account; model, thinking and
-   permission changes retain that account and conversation.
-2. Switch Chat / Terminal and Wide / Comfortable. Verify the same agent process
-   continues running and thinking/tool activity remains collapsible.
-3. Open the Assistant and another agent using **Beside…**. Switch each view's mode
-   and close an extra view; the original tabs and agent processes must survive.
-4. Use two spaces with different project roots. Verify Files stays a tree,
-   documents open separately, and Markdown/CSV Source / Preview, edits, external
-   changes and recovered drafts behave as documented.
-5. Verify Sessions follows the selected space and its folder override. Switch
-   spaces while loading history; late results must not replace the new list.
-   Search, filter and preview without starting an agent.
-6. Resume saved conversations from both Codex accounts in a new tab and beside an
-   existing pane. Verify the exact session/account and avoid duplicate processes
-   when the session is already running.
-7. Run applicable upstream checks and inspect the native UI before installation.
-   Do not run a settings-mod check that can synchronize real settings to other
-   machines. See [Contributing](../CONTRIBUTING.md) for the safe test workflow.
+1. Open two independently authenticated Codex profiles. Verify ordinary agents,
+   the space Assistant and Feature Assistant select the intended account. Keep it
+   through model/permission changes, resume, fork and restart.
+2. Switch Chat / Terminal and Wide / Comfortable. Keep the same agent process and
+   conversation. Open and close extra views without stopping the original agent.
+3. Start named features from + and from a response. Keep the space Assistant for
+   discussion, tasks owned by the intended feature, and worker activity visible.
+4. Switch between spaces with different roots. Keep Files as a tree; open/edit
+   documents separately. Check Markdown/CSV, source colors, Office content limits,
+   individual file close, drafts and external edits.
+5. Resume/focus sessions from the sidebar with the original account. Keep the
+   read-only history preview independent of agent launch.
+6. Append space instructions independently for every role. Keep global prompts
+   unchanged, exact space/account context intact and resumed context retained.
+7. Exercise approval policies with isolated fixtures. Keep rules account/folder/
+   scope-bound and never replay an old action when creating a rule from history.
+   Show how a decision was made; label a native handoff without inventing its result.
+8. Reconnect and resize browser pages without duplicate targets or uncontrolled
+   capture restarts. Retain profile isolation and document website verification limits.
+9. Replay long worker logs, including a process holding both main and guardian
+   files. Render the intended conversation without changing its process ID.
+10. Validate source, build and applicable tests, inspect native UI, then install.
+    Never check the settings mod through `herdr-app check`: initialization can sync
+    live settings to other machines.
 
-## Development validation
-
-The `main` branch implements named Codex profiles, account-preserving session
-commands, account-bound chat controls, a persistent Files tree, separate
-Markdown/CSV document panes, wide Chat, extra agent views and per-space Sessions.
-Native Linux checks verified account labels, Source / Preview beside the tree,
-space-scoped session lists and account-preserving history actions. Chat / Terminal
-switching and the sidebar installation retained existing agent processes. The
-development build is installed locally; there is no new release tag.
-
-The additional implementation adds file references, the Agents panel, lexical
-source highlighting, DOCX/Excel content previews, scoped approval handling and
-Chat measurement/scroll regression fixes. Native inspection verified colored
-source, DOCX tables, Excel sheets, the Agents panel and approval controls. Pure
-policy and hook tests use isolated requests and accounts; they do not approve
-real user tasks. Native hover reproduction and full Office layout fidelity are
-not claimed. See the workspace guide for remaining limitations.
+See [the workspace guide](workspace.md) for the user-facing controls and
+[development](develop.md) for commands and test conventions.

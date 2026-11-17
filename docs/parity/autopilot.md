@@ -1,5 +1,10 @@
 # Settings › Autopilot
 
+> **Scope:** retained Shepherdr comparison notes. Yurherdr's current native
+> extensions and limits are documented in [the workspace guide](../workspace.md)
+> and [the parity overview](../parity.md); inherited ticks are not new verification.
+
+
 Autopilot works like Tasks (docs/settings.md): Everywhere's heartbeat, schedule and events, and a space's own of any of
 them; what a space doesn't set is inherited from Everywhere. Settings › Autopilot has the level switch at its top and,
 in a space, "Inherited from Everywhere" or "Set for this space · Reset" under each row. There is no on/off switch and no

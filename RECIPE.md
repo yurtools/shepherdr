@@ -1,99 +1,116 @@
-# Shepherdr — yurtools development fork
+# Yurherdr
 
-> This recipe describes the inherited Shepherdr 3.1.35 layout, not completed fork
-> features. Read [the fork README](README.md) and [implementation plan](docs/fork-plan.md)
-> before installing. No fork-specific workspace release is available yet.
+An IDE-style workspace for coding agents in Herdr App: conversations and terminals in the middle,
+project files in separate panes, and named Feature Assistants coordinating their own workers.
+Yurherdr started as a fork of Elias Stravik's [Shepherdr](https://github.com/eliasstravik/shepherdr)
+3.1.35 and grew into yurtools' personal development environment. It keeps that foundation's
+orchestration, artifacts and optional web service, with explicit upstream credit and compatible
+runtime IDs. This is a native App layout, not a Herdr TUI plugin.
 
-Mission control for your coding agents inside Herdr: your spaces in a sidebar, each with its own Assistant you talk to
-as a chat, and a Tasks panel on the right that shows which task needs you, which is ready and which is still working.
-You tell the Assistant what needs doing; it turns it into tasks, each run by its own agent in its own git worktree,
-and asks you on a card when it needs a decision. Shepherdr 3.1.35, for herdr-app 0.1.12 and herdr-core 0.1.17 or newer.
-
-![Shepherdr](preview.png)
+![Yurherdr — native workspace with public demo data](preview.png)
 
 ## What you see
 
-Left to right, on the theme's `canvas` background, no title bar:
+The theme supplies the dark canvas, raised cards, borders and accent colors. Use the person's
+chosen theme rather than hard-coding a replacement. Read `layouts/shepherdr.json` for exact sizes.
 
-- **Sidebar** (391px, 44–480, the theme's `chrome`): Herdr's brand row on top (46px, the shipped `workspace-chrome`).
-  Then Spaces, grouped by machine ("This computer" first, then each connected machine with a load meter), Pinned and
-  sections of your own you can drag spaces into; each space is `#` or an emoji, bold when its Assistant has something
-  new, with a red count of what needs you and a green count of what's Ready. At the foot (97px): Settings (Herdr's
-  own), Shepherdr (its settings) and Add machine.
-- **Tab bar** (42px): the space's tabs, then on the right `+`, the side panels' buttons (Files, Changes, Tasks with its
-  red/green counts, Artifacts) and the layout switcher.
-- **Main** (the active tab): each pane has a 30px header (`pane-chat`): an Assistant's space name and folder
-  ("shop ~"), an Autopilot switch on an Assistant, and Chat | Terminal. Chat shows the agent's conversation as
-  bubbles with question, permission and secret cards in the timeline, a box with attach, model choice, dictation and
-  Send. Panes are 10px rounded with a 1px border, accent when focused, 8px apart.
-- **Side panel** (510px, 280–900): one of Files, Changes, Tasks or Artifacts. Tasks is one list grouped by status
-  (Needs you, Ready, Merging, Working, Queued, Scheduled, To do, Done), or by place, picked by one toggle under its search box; a working
-  task's dot fills like a pie with its % done, its second line is its ref, machine and space, and its third line, when
-  there is one, is what its agent is doing (at most 40 characters).
-  A task opens in place: a 127px head (‹ Tasks, base branch, Pin, Accept; the task and its status line; the switcher)
-  over its Chat, Terminal, Files, Changes, Pull request and Browser. Artifacts lists agents' reports and draft
-  screens; one opens in place under a 42px head.
-- **Status bar** (28px): the machine, and Ctrl+Shift+P Commands.
-- Floating: a call's error note at the top center, toasts at the bottom right. A call going on shows as the Talk to
-  Shepherdr card at the top of the sidebar.
+- **Left sidebar:** Herdr's brand and Spaces, with **Features / Sessions** below them and a draggable
+  divider. Features belong to the selected space and show combined Assistant/worker activity.
+  Sessions shows saved local conversations and their original accounts. The foot opens Herdr's
+  Settings, the workspace settings (legacy Shepherdr label) and Add machine.
+- **Tab bar:** conversations, features and browser pages; + opens agents, Start feature, a terminal,
+  the space Assistant, a browser URL or a configured chat shortcut. **Manage…** edits launchers.
+- **Main workspace:** one or several panes with slim headers. Agent panes have Chat / Terminal,
+  a width control and Beside. Keep model, thinking and permissions controls near the composer;
+  the assigned account is shown, with its login kept separate from other profiles.
+- **Files and document panes:** Files remains a project-rooted tree. A selected file opens in a
+  separate pane with its own tabs, source/editor/preview controls, path actions and close buttons.
+  Markdown renders as Markdown, CSV as a table, source in lexical colors. Office views show
+  bounded read-only DOCX content and Excel OOXML sheets.
+- **Right panel:** Agents, Changes, Tasks or Artifacts. Tasks opens a worker in place with a header,
+  Chat / Terminal and available artifact, pull-request and browser views. Reports and previews stay
+  close to the agent work rather than replacing the file tree.
+- **Status and overlays:** machine/status strip, notifications and dialogs. Anchor dropdowns to the
+  control pressed. Context menus offer normal clipboard actions where supported by the host.
 
 ## How it behaves
 
-- Agent status shows on the task dot and in the chat: working (amber pie with % and minutes left once real), needs
-  you (one red dot: a question, permission or plan card waits), ready (green: its agent said it's finished, with a
-  summary; Accept merges it and marks it done), done (grey check), queued and to do (outlines).
-- A question or permission prompt from Claude Code or Codex arrives as a card in the chat (the hooks the installer
-  adds); you answer with a click, also from the Assistant's chat. Secrets are typed into a masked card and never
-  shown.
-- Ctrl+K opens Jump (spaces, tasks, artifacts), Ctrl+Shift+? the keys list, Ctrl+Shift+D dictates, Ctrl+Shift+Space
-  calls the Assistant, Ctrl+F finds in the chat. Alt+1…9 pick a tab, Alt+Up/Down a space, Alt+Enter splits.
-- Shepherdr settings (the sidebar foot): Agents, Tasks, Autopilot, Notify, Secrets, Machines, Window and Web. Window
-  holds the look switches and the add-on switches: Artifacts, Voice and dictation, Reactions, Task browser, Autopilot,
-  Other machines, Web and Usage insights can be turned off; the rest is always on in 3.1.35. Web shows the web app's link and Serve
-  from, the machine that serves it.
-- The web app (`https://<this machine>/shepherdr/`, your tailnet only): the same spaces, Assistants, tasks, cards,
-  artifacts and settings on a phone, a tablet or another browser, on the same data.
+The daily workflow, in order of importance:
+
+1. **Work with agents.** Switch the same process between Chat and Terminal. Collapse thinking/tool
+   activity. Show an Assistant and workers beside each other without copying or restarting them.
+2. **Develop features independently.** Keep the space Assistant for discussion. Start named Feature
+   Assistants from + or a response action; they coordinate their own workers using shared Worker /
+   Reviewer settings. Working is amber, Needs you is attention-colored, idle/paused is subdued,
+   and explicit completion is a completed state. A waiting Assistant with an active worker still
+   shows Working with the worker count.
+3. **Choose the intended account.** Configure named Codex profiles in launchers and per-space roles.
+   Preserve their homes/logins through launch, resume, fork and restart. Bind model/thinking/
+   permissions and skill discovery to that account; do not copy credentials.
+4. **Inspect project files.** Root Files in the selected space. Keep its tree while documents open
+   elsewhere. Edit source or switch Markdown/CSV preview modes. File paths, @ references and
+   source links target the intended chat/document pane without auto-sending a message.
+5. **Handle approvals deliberately.** Offer once-only decisions, bounded saved rules and configured
+   review modes. History shows decision sources and creates future rules from saved context,
+   without rerunning old actions. Native Codex handoff is not falsely shown as a known allow/deny.
+6. **Resume work.** Sessions follows its space; a click resumes or focuses the exact conversation.
+   Open… provides preview and Beside actions. Role-specific space instructions append to global
+   prompts for fresh starts; existing/resumed contexts are retained.
+7. **Use websites when needed.** Browser tabs remember URLs and isolated/shared profiles as configured.
+   Web-chat pages use their own website account, not Codex's skills or credits. Keep a normal-browser
+   fallback because automated/headless verification can fail.
+
+Read the main Codex rollout, not whichever guardian/reviewer log has the first file descriptor.
+Fold oversized incoming context messages and render expanded content in bounded rows. Batch hidden
+measurements and link-view preparation so long conversations stay within the native render budget.
 
 ## Built from
 
-- `layouts/shepherdr.json`: root row → `sidebar` column (`brand` workspace-chrome, `spaces` spaces-chat,
-  `sidebar-footer` workspace-chrome-shepherdr `{footer: true}`) and `work` column (`tabs` tabs-tasks, `work-body` row
-  of `main` `{tab: "active"}` with the pane-chat header and `panel` column → `panel-body` stack of files, changes,
-  `tasks` stack (`tasks-list` tasks; `tasks-thread`: chat `{panel, head}`, then a stack of chat `{panel}`, a terminal
-  block, task-pr, task-browser) and `artifacts` stack; `status` workspace-status-chat).
-  Floating `chat-call` (top, center) and `toasts` (bottom, end).
-- 28 mods in `mods/` (lib/addons.json lists them by add-on), plus Herdr's shipped `files`, `changes` and
-  `workspace-chrome`. Shared modules have one source in `lib/` and are copied into each mod (`bin/sync-shared`).
-- Programs: `herdr-task` (mods/tasks/bin, Python: the tasks and their scheduler), `herdr-artifact`
-  (mods/artifacts/bin), `herdr-secret` and `herdr-browser` (bin/), linked into `~/.local/bin`; the role instructions
-  in `~/.config/herdr-core/templates` (assistant.md, worker.md, reviewer.md); `keys.json`.
-- The web app: `web/` (React), served with the background work by one always-on service (`service/`, Bun on
-  `127.0.0.1:7788`, systemd or launchd) and shared with `tailscale serve`; `core/` holds the logic it shares with the
-  mods. `./install.sh --web` installs it alone.
-- The mods run programs (`exec`: herdr-task, git, gh, hc, agent-browser, bun), read files outside their
-  folders (`~/.herdr`, the agents' logs, `~/.config/herdr-core/templates`) and reach the network through those
-  programs (GitHub, ElevenLabs for voice and dictation).
+- **Layout:** `layouts/shepherdr.json`, retaining its IDs and key contexts for compatibility. Root
+  splits `sidebar` and `work`; `work` contains the tab bar, active main tab, optional panel and status.
+  Sidebar contains Spaces and the workspace Sessions/Features mod. Main panes use `pane-chat` headers.
+- **Native mods:** the authoritative inventory is `lib/addons.json`. Workspace extensions include
+  `chat`, `workspace-sessions`, `workspace-agents`, `workspace-files`, `workspace-document`,
+  `workspace-launchers`, file reference/search/actions, approvals and clipboard support. Shared
+  modules come from `lib/` and `core/`, regenerated with `bin/sync-shared`.
+- **Helpers:** `herdr-task`, `herdr-artifact`, `herdr-secret`, `herdr-browser` and the `shepherdr`
+  installer. Role instructions are Assistant, Feature Assistant, Worker and Reviewer templates.
+- **Optional web service:** Bun service plus built React web app, served on the person's tailnet.
+  New native workspace extensions do not automatically have a matching web interface.
+- **State:** existing `shepherdr` paths, services, module IDs, layout keys and browser profiles remain
+  compatible. The public Yurherdr name does not migrate or duplicate a person's data.
 
-## Watch out
+## Dependencies and installation
 
-- Install it with `./install.sh` from this repo, not by copying the folders: the helpers in `bin/`, `lib/`, the
-  templates and the hooks are outside `mods/`, and the installer links them, merges `keys.json` (asking before it
-  replaces a key you use), backs up what it replaces and records what it put there (`shepherdr uninstall` takes it
-  back out). `./install.sh --dry-run` shows everything first.
-- Mod names are fixed (`chat`, `tasks`, …): their state in `data/<mod>` and pane names follow them. The installer
-  refuses a folder by the same name that isn't Shepherdr's.
-- Needs python3 3.8+ and git; bun and Tailscale for the web app; gh for pull requests, node for the task browser
-  (Shepherdr installs agent-browser 0.41.x and Chrome itself), bun and pw-record/pw-play (Linux) or Apple's command line tools (macOS) for voice and dictation,
-  an ElevenLabs key for calls and dictation. Claude Code or Codex as the agents.
-- Two blocks are rewritten while you use it (`tasks-thread-term` points at the shown task's terminal,
-  `artifacts-view-body` at the opened artifact): ship them blank.
+Use the repository's `./install.sh`, not a copy of mods alone. The installer builds the web bundle,
+backs up replaced files, merges keys and adds the required helpers and agent hooks. Start with
+`./install.sh --dry-run`; preserve personal keys and edited role prompts. Then run `shepherdr doctor`
+and select the **shepherdr** compatibility layout with Ctrl+Shift+L.
+
+The inherited minimums are herdr-app 0.1.12, herdr-core 0.1.17, Python 3.8+, Git and an installed,
+authenticated agent CLI. Current native validation used herdr-app 0.1.16 and herdr-core 0.1.21 on Linux.
+Bun builds the service/web app; Node supports browser viewing. Tailscale, GitHub CLI and voice tools
+are optional according to the enabled features. See [Install](docs/install.md).
+
+The mods execute helper programs, inspect project files and agent logs, and may reach GitHub,
+connected machines, websites or optional voice services through those programs. Review these
+capabilities before installation. Keep the sandbox, approval and login boundaries of each agent.
+DOCX/Excel previews do not promise full Office layout or formula recalculation.
 
 ## Done when
 
-- `shepherdr doctor` says "whole", and `bin/sync-shared --check` passes.
-- Ctrl+Shift+L shows the Shepherdr layout: the sidebar lists your spaces by machine, the tab bar has Tasks and
-  Artifacts, the status bar shows the machine.
-- A new space's Assistant opens as a chat; asking it for a task adds a row under Working in Tasks with a pie dot,
-  and the task's Ready row has Accept.
-- An agent's permission prompt shows as a card in its chat.
-- Turning Reactions off in Shepherdr settings › Window hides the smiley on messages; turning it on brings it back.
+- The installer and `shepherdr doctor` report a whole installation; `bin/sync-shared --check` passes.
+- Same-session Chat / Terminal, account controls and Beside work without replacing the agent.
+- Independent features own the intended workers and show their current activity.
+- Files stays a tree while documents open, edit, preview and close separately.
+- Session resume retains the original account; space instructions append without editing globals.
+- Approval history names its decision source and creates only future bounded rules.
+- The worker's main conversation renders, including long messages, without picking an internal review log.
+- Browser reconnects retain the page/profile and expose a normal-browser fallback when necessary.
+
+## Attribution and maintenance
+
+This is Yurherdr, maintained at [yurtools/shepherdr](https://github.com/yurtools/shepherdr),
+derived from Shepherdr by Elias Stravik. Preserve the MIT copyright/permission notice, the
+Herdr-related license and upstream history. There is no new Yurherdr release tag; 3.1.35 remains
+the inherited runtime version. [Origins](docs/upstream.md) explains the branding and compatible names.

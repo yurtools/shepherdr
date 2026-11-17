@@ -1,5 +1,10 @@
 # New space, Add machine, worktrees, rename dialogs
 
+> **Scope:** retained Shepherdr comparison notes. Yurherdr's current native
+> extensions and limits are documented in [the workspace guide](../workspace.md)
+> and [the parity overview](../parity.md); inherited ticks are not new verification.
+
+
 Made from the window's mods: `mods/newspace` (and its opener and sizes, `lib/coordinator.js` newSpace / NEWSPACE),
 `mods/machine-add-chat`, `mods/spaces-chat/rename.js` and `icon.js`, Herdr's own worktree dialog (`mods/worktree` in the
 Herdr home: Herdr ships it, Shepherdr opens it from `mods/spaces-chat/popups.js:80`), the Assistant's close dialog

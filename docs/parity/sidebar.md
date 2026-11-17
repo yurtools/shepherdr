@@ -1,5 +1,10 @@
 # Sidebar
 
+> **Scope:** retained Shepherdr comparison notes. Yurherdr's current native
+> extensions and limits are documented in [the workspace guide](../workspace.md)
+> and [the parity overview](../parity.md); inherited ticks are not new verification.
+
+
 Window: `mods/spaces-chat` (main.js the rows and headers, popups.js the menus, machine-popup.js, machines.js (from
 `lib/machines.js`), sections.js, unread.js, notify.js; rename.js and icon.js are on the [dialogs](dialogs.md) page) and
 `mods/workspace-chrome-shepherdr/main.js` (the brand row and the foot). Web: `web/plugins/places/client.tsx` (P),

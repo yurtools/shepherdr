@@ -1,7 +1,9 @@
-# Workspace UI development build
+# Yurherdr workspace guide
 
-This guide describes the current development checkout, based on upstream 3.1.35.
-There is no new tagged release. The additional source and Office previews are included.
+Yurherdr is an IDE-style development workspace derived from Shepherdr 3.1.35.
+This guide describes implemented behavior; there is no new tagged release. The
+repository is still `yurtools/shepherdr`. Commands, storage paths and some current
+UI labels retain Shepherdr names for compatibility; see [origins](upstream.md).
 
 ## Everyday workflow
 
@@ -42,7 +44,7 @@ Both use the shared Worker, Reviewer, review, worktree and task settings.
   as its objective and bounded supporting context up to that point. It starts
   the feature agent, which generates its title using the normal signed-in CLI;
   no API key is required. The original Fork action retains its existing behavior.
-- **Shepherdr settings → Agents → Feature Assistant** chooses its model,
+- **Yurherdr settings → Agents → Feature Assistant** chooses its model,
   thinking level, permissions and instructions; the space can override these.
   Features inherit the space Assistant’s account until you configure a Feature
   Assistant agent/account override. The account picker is available alongside its model.
@@ -73,7 +75,7 @@ using that browser's login; it does not share the workspace's isolated profile.
 Use System browser if a site repeatedly asks for human verification. The embedded
 viewer uses automated Chrome, which some sites' verification checks do not support;
 opening its Window is not guaranteed to resolve that limitation. Verification must
-be completed by you, and is not automatically solved by Shepherdr.
+be completed by you, and is not automatically solved by Yurherdr.
 Clipboard text uses the desktop clipboard;
 file selection in the viewer uses Zenity on Linux when installed (otherwise use Window).
 
@@ -128,7 +130,7 @@ When right-click belongs to a terminal program, **Shift+right-click** opens Herd
 
 ## Space-specific instructions
 
-In **Shepherdr settings → Agents**, choose a space in **Applies to**, then use
+In **Yurherdr settings → Agents**, choose a space in **Applies to**, then use
 **Space instructions** beside Assistant, Feature Assistant, Workers or Reviewer.
 The multiline field saves automatically, including when changing scope or closing
 Settings. **Clear** removes only that space’s addition for that role.
@@ -273,7 +275,7 @@ machine must first be copied to a location the target agent can access.
 
 ## Approval defaults and remembered decisions
 
-Open **Shepherdr settings → Agents** (or the same tab in Space settings) and scroll
+Open **Yurherdr settings → Agents** (or the same tab in Space settings) and scroll
 to **Approvals**. The default remains **Ask me**. Choose a default and optional
 Assistant, Workers and Reviewer overrides. These settings are separate from the
 chat composer's execution Permissions and from **Autopilot**. See
@@ -299,7 +301,7 @@ python3 bin/shepherdr doctor
 ```
 
 The explicit source selects this checkout. **--keys keep** preserves conflicting
-personal shortcuts. Pick **Shepherdr** in Herdr's layout selector if it is not
+personal shortcuts. Pick **shepherdr** (Yurherdr’s compatibility layout ID) in Herdr's layout selector if it is not
 already active. The installer backs up replaced files and keeps personally edited
 layouts, writing the incoming version beside them as `.new`; see the
 [installation guide](install.md) before resolving a layout conflict. Keep using

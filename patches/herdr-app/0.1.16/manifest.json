@@ -1,0 +1,56 @@
+{
+  "runtime": {
+    "version": "0.1.16",
+    "source": "https://github.com/herdrdev/herdr-app/tree/v0.1.16",
+    "archive_url": "https://codeload.github.com/herdrdev/herdr-app/tar.gz/refs/tags/v0.1.16",
+    "archive_sha256": "fea3d920607f2199ed330eb3cdcb1fa3626dcea5080c92a97a296d983d6bc681",
+    "files": {
+      "Cargo.toml": "a29c9a79e38861005cd9745f4daf97555e7ce4744d9204a290cf9903156b1680",
+      "Cargo.lock": "90a81788ce064ee938155b2e8c3028f4f93a9e633eb0831e8d06ae71185394da",
+      "src/settings.rs": "7345ede640a05b271c0f71f964c3dbd7fe4778249061e59b9803c5467a182762",
+      "src/window.rs": "cc580cdcd196fbf45e5540f8f3fa4b6d4c0fc37beb3123d6c82bd21d8f215945",
+      "src/mods.rs": "88550590ba0e5da40c8e56d57131c52616470e015586ab0ebce26dddc439806a",
+      "vendor/gpui-pre-wgpu/src/cosmic_text_system.rs": "6a747b57597513ef8551f18474ba075d04c0124bdcef78f9fffacffd3e712723",
+      "vendor/gpui-kit/crates/base/src/text/format/markdown.rs": "e8a8e11717e33e284e57091567ff9c0a1160c15c09bf99f0d0133c3806894ae9",
+      "vendor/gpui-kit/crates/base/src/text/inline.rs": "7f3e2218f1763c8e1e887983caa1b7ce517e67c2b6f6c97da3854cc2d96c8144",
+      "vendor/gpui-kit/crates/base/src/text/node.rs": "c3fba197c347c45e660d03151da2dd1a3f82ef33f06fc02c80d645d7466813b5",
+      "vendor/gpui-kit/crates/base/src/text/state.rs": "72ff94eb636a0ef0adddad32f3db2791f2c1f6292d0b8e5f1f003e0d1f151024",
+      "assets/fonts/Geist.ttf": "5c8968eafb98a4c4f47033daf29e38e284a6f2a82eb017d171ab040fe7c4b615",
+      "assets/fonts/OFL.txt": "e5e56b793839774266243b8dd89c618f2962f098a2076757a5f2839c27eaaabd"
+    }
+  },
+  "font_source": {
+    "project": "Vercel Geist",
+    "tag": "1.8.0",
+    "commit": "91158e012bdc4abd59fa066d0eae9fc11c2c9f24",
+    "license": "SIL Open Font License 1.1",
+    "license_file": "fonts/OFL.txt",
+    "license_sha256": "e5e56b793839774266243b8dd89c618f2962f098a2076757a5f2839c27eaaabd"
+  },
+  "assets": [
+    {
+      "file": "fonts/Geist-Bold.ttf",
+      "destination": "assets/fonts/Geist-Bold.ttf",
+      "sha256": "e6fd0e32993e9830a813e0c0083019ad7914cb45f3226328ea2b33750c12c1a4",
+      "source_url": "https://raw.githubusercontent.com/vercel/geist-font/91158e012bdc4abd59fa066d0eae9fc11c2c9f24/fonts/Geist/ttf/Geist-Bold.ttf",
+      "weight": 700,
+      "italic": false
+    },
+    {
+      "file": "fonts/Geist-Italic.ttf",
+      "destination": "assets/fonts/Geist-Italic.ttf",
+      "sha256": "0cf19ec6220127dcf6e0db6db852f0db32f287c6ce3cb4d470ef3773d8f65324",
+      "source_url": "https://raw.githubusercontent.com/vercel/geist-font/91158e012bdc4abd59fa066d0eae9fc11c2c9f24/fonts/Geist/ttf/Geist-Italic.ttf",
+      "weight": 400,
+      "italic": true
+    },
+    {
+      "file": "fonts/Geist-BoldItalic.ttf",
+      "destination": "assets/fonts/Geist-BoldItalic.ttf",
+      "sha256": "01475fb9fd1466c34db3dce4e8dd6bb782f0f6b78fb116b3a0c6d7beb1806ddc",
+      "source_url": "https://raw.githubusercontent.com/vercel/geist-font/91158e012bdc4abd59fa066d0eae9fc11c2c9f24/fonts/Geist/ttf/Geist-BoldItalic.ttf",
+      "weight": 700,
+      "italic": true
+    }
+  ]
+}

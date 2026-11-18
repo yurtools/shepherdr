@@ -1,12 +1,12 @@
 import { afterEach, beforeEach, expect, mock, test } from "bun:test";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fakeHerdr } from "./fake-herdr";
-import { fakeGpuiBase, fakeGpuiKit, built, dispatch } from "./fake-gpui";
-let root:string, disk:()=>Promise<string|null>, modelPanes:any[], viewProps:any, state:Map<string,any>, actions:any[];
-mock.module("herdr",()=>fakeHerdr({appHome:()=>root,theme:()=>new Proxy({},{get:()=>"#111111"}),settings:()=>({}),readTextFile:()=>disk(),panes:()=>modelPanes,props:()=>viewProps,shared:(k:string)=>state.get(k),setShared:(k:string,v:any)=>state.set(k,v),run:(name:string,args:any)=>actions.push([name,args])}));
-mock.module("gpui-kit",()=>fakeGpuiKit());mock.module("gpui-base",()=>fakeGpuiBase());
+import { fakeGpuiBase, fakeGpuiKit, built, dispatch, element, byId } from "./fake-gpui";
+let root:string, disk:()=>Promise<string|null>, modelPanes:any[], viewProps:any, state:Map<string,any>, actions:any[], writeDisk:(path:string,text:string,expected:string)=>Promise<void>;
+mock.module("herdr",()=>fakeHerdr({appHome:()=>root,theme:()=>new Proxy({},{get:()=>"#111111"}),settings:()=>({}),readTextFile:()=>disk(),writeTextFile:(path:string,text:string,expected:string)=>writeDisk(path,text,expected),panes:()=>modelPanes,props:()=>viewProps,shared:(k:string)=>state.get(k),setShared:(k:string,v:any)=>state.set(k,v),run:(name:string,args:any)=>actions.push([name,args])}));
+mock.module("gpui-kit",()=>fakeGpuiKit());mock.module("gpui-base",()=>fakeGpuiBase({TextView:{markdown:(id:string,text:string)=>element("TextView").id(id).child(text)}}));
 const { default: Document }=await import("../mods/workspace-document/main.js");
 let view:any, pending:Promise<any>[], released:string[], cx:any;
 const key=(name:string)=>`:/project/${name}`;
@@ -16,7 +16,7 @@ function add(name:string,text="saved",saved="saved") {
 }
 beforeEach(async()=>{
  modelPanes=[];viewProps={};state=new Map();actions=[];(globalThis as any).localStorage={getItem:()=>null,setItem(){},removeItem(){}};
- root=await mkdtemp(join(tmpdir(),"shepherdr-document-tabs-"));disk=async()=>"saved";released=[];pending=[];built.length=0;
+ root=await mkdtemp(join(tmpdir(),"shepherdr-document-tabs-"));disk=async()=>"saved";writeDisk=async()=>{throw Error("unexpected source write")};released=[];pending=[];built.length=0;
  view=Object.create(Document.prototype);view.docs=new Map();
  cx={notify(){},stop_propagation(){},timer:{after(){}},spawn(fn:any){const p=Promise.resolve(fn(cx));pending.push(p);return p;}};
 });
@@ -66,4 +66,39 @@ test("a failed final draft and a concurrently opened file both keep the pane",as
  modelPanes=[{pane:'own',mod:'workspace-document'}];add('draft.md','unsaved');view.active=key('draft.md');view.draft=async()=>{throw Error('disk full')};
  await view.closeFile(view.active,cx);expect(actions).toEqual([]);
  let complete:()=>void=()=>{};view.draft=()=>new Promise<void>(r=>{complete=r});const closing=view.closeFile(view.active,cx);add('new.ts');complete();await closing;expect(actions).toEqual([]);expect(view.docs.size).toBe(1);
+});
+
+// These test document state and real scratch-file bytes, not native glyphs.
+// The real renderer/font regressions live in patches/herdr-app/0.1.16/.
+test("Markdown Source/Preview toggles and drafts preserve all source bytes",async()=>{
+ const source="**alpha** __bravo__ *italic* ***both*** **outer *inner***\n\\**escaped\\** **[link](https://example.invalid)** **`code`** café Ελληνικά 日本語\n";
+ const path=join(root,"emphasis.md");await writeFile(path,source);
+ const doc=add("emphasis.md",source,source);doc.path=path;doc.kind="markdown";doc.preview=true;view.active=key("emphasis.md");
+ for(let i=0;i<2;i++) {
+  built.length=0;view.render(cx);dispatch(byId("mode-Source"),"on_click",cx);expect(doc.preview).toBe(false);
+  built.length=0;view.render(cx);dispatch(byId("mode-Preview"),"on_click",cx);expect(doc.preview).toBe(true);
+  expect(doc.text).toBe(source);expect(doc.saved).toBe(source);
+ }
+ const draft=source.replace("**alpha**","__alpha__");expect(draft.length).toBe(source.length);doc.text=draft;
+ await view.draft(doc);const kept=JSON.parse(await readFile(view.draftPath(doc),"utf8"));
+ expect(Buffer.from(kept.text)).toEqual(Buffer.from(draft));expect(kept.saved).toBe(source);
+ expect(await readFile(path)).toEqual(Buffer.from(source));
+ writeDisk=async(p,text,expected)=>{expect(p).toBe(path);expect(await readFile(p,"utf8")).toBe(expected);await writeFile(p,text);};
+ view.save(doc,cx);await Promise.all(pending);
+ expect(doc.saved).toBe(draft);expect(await readFile(path)).toEqual(Buffer.from(draft));
+ await expect(readFile(view.draftPath(doc))).rejects.toThrow();
+});
+test("same-length Markdown reloads replace clean text and retain a conflicting draft",async()=>{
+ const first="**alpha** café 日本語\n",second="__bravo__ café 日本語\n";
+ expect(first.length).toBe(second.length);
+ const path=join(root,"reload.md");await writeFile(path,first);disk=()=>readFile(path,"utf8");
+ const doc=add("reload.md",first,first);doc.path=path;doc.kind="markdown";doc.preview=true;view.active=key("reload.md");
+ await writeFile(path,second);view.check(cx);await Promise.all(pending);
+ expect(doc.text).toBe(second);expect(doc.saved).toBe(second);expect(doc.conflict).toBe(false);
+ doc.text=first;await view.draft(doc);await writeFile(path,second.replace("bravo","delta"));
+ view.check(cx);await Promise.all(pending);expect(doc.conflict).toBe(true);expect(doc.text).toBe(first);
+ expect(JSON.parse(await readFile(view.draftPath(doc),"utf8")).text).toBe(first);
+ view.reload(doc,cx);await Promise.all(pending);
+ expect(doc.text).toBe(await readFile(path,"utf8"));expect(doc.saved).toBe(doc.text);expect(doc.conflict).toBe(false);
+ expect(doc.preview).toBe(true);
 });

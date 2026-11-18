@@ -1,0 +1,41 @@
+--- a/src/settings.rs
++++ b/src/settings.rs
+@@ -886,6 +886,10 @@
+     include_bytes!("../assets/fonts/GeistMono-Variable.ttf"),
+     include_bytes!("../assets/fonts/GeistMono-Italic-Variable.ttf"),
+     include_bytes!("../assets/fonts/Geist.ttf"),
++    // Real faces: the Linux backend does not synthesize absent weight/style faces.
++    include_bytes!("../assets/fonts/Geist-Bold.ttf"),
++    include_bytes!("../assets/fonts/Geist-Italic.ttf"),
++    include_bytes!("../assets/fonts/Geist-BoldItalic.ttf"),
+     include_bytes!("../assets/fonts/JetBrainsMono-Variable.ttf"),
+     include_bytes!("../assets/fonts/JetBrainsMono-Italic-Variable.ttf"),
+     SYMBOLS_FONT_FILE,
+@@ -902,6 +906,27 @@
+ 
+ #[cfg(test)]
+ mod tests {
++    #[cfg(target_os = "linux")]
++    #[test]
++    fn bundled_ui_font_has_real_emphasis_faces() {
++        use gpui::{Font, FontStyle, FontWeight, PlatformTextSystem, font};
++        use std::borrow::Cow;
++        let system = gpui_wgpu::CosmicTextSystem::new_without_system_fonts("Geist");
++        system.add_fonts(super::BUNDLED_FONTS.iter().map(|bytes| Cow::Borrowed(*bytes)).collect()).unwrap();
++        let mut faces = Vec::new();
++        for (weight, style) in [
++            (FontWeight::NORMAL, FontStyle::Normal),
++            (FontWeight::BOLD, FontStyle::Normal),
++            (FontWeight::NORMAL, FontStyle::Italic),
++            (FontWeight::BOLD, FontStyle::Italic),
++        ] {
++            let id = system.font_id(&Font { weight, style, ..font("Geist") }).unwrap();
++            assert_eq!(system.font_weight_and_style(id).unwrap(), (weight, style));
++            assert!(!faces.contains(&id), "each emphasis style must select a distinct real face");
++            faces.push(id);
++        }
++    }
++
+     #[test]
+     fn terminal_ligatures_default_off_and_can_be_enabled() {
+         use super::*;

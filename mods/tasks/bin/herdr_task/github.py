@@ -323,8 +323,8 @@ def denied(err):
 
 def pr_view(task):
     """The pull request as GitHub has it (gh pr view's fields), or None when GitHub couldn't be asked. Its checks
-    (statusCheckRollup) unreadable here (SHEP-179): the rest still read, the checks asked another way (check_rows());
-    neither works: "checks_unknown" set, never a wait for checks nobody can see."""
+    (statusCheckRollup) empty or unreadable here (SHEP-179): the checks asked another way (check_rows()) at its
+    current head; neither works: "checks_unknown" set, never a wait for checks nobody can see."""
     pr = task["pr"]
     view = lambda fields: gh("pr", "view", str(pr["number"]), "--repo", pr["repo"], "--json", fields)
     ok, out, err = view(VIEW + ",statusCheckRollup")
@@ -337,7 +337,7 @@ def pr_view(task):
         return None
     if not isinstance(v, dict):
         return v
-    if rest:
+    if rest or not v.get("statusCheckRollup"):
         rows, whole = check_rows(pr["repo"], v.get("headRefOid"))
         v["statusCheckRollup"] = rows
         if not whole:

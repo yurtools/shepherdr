@@ -5905,6 +5905,259 @@ class ReadyMergeGit(unittest.TestCase):
         self.assertEqual(t["start"], self.git(self.main, "rev-parse", "main"))
 
 
+class EmptyCheckRollup(unittest.TestCase):
+    """SHEP-6: an empty successful GraphQL read is reconciled with REST at the PR's current head.
+    The acceptance/tick regression uses a real scratch repo, worktree and task store; only GitHub,
+    hc discovery and the clock are faked, with every data path confined to the scratch root."""
+    git, commit, patch = TaskFlow.git, TaskFlow.commit, TaskFlow.patch
+
+    def setUp(self):
+        from unittest import mock
+        import shutil
+        sys.path.insert(0, BIN)
+        from herdr_task import agents, commands, ghnews, github, store, tick
+        self.agents, self.commands, self.github, self.store_mod, self.tick = agents, commands, github, store, tick
+        self.mock = mock
+        self.root = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.root, True)
+        self.clock = 50_000_000
+        self.head = "a" * 40
+        self.view = {"state": "OPEN", "mergeable": "MERGEABLE", "mergeStateStatus": "CLEAN",
+                     "headRefOid": self.head, "statusCheckRollup": []}
+        self.task = {"pr": {"number": 7, "repo": "o/r"}, "head": "b" * 40}
+        self.runs, self.statuses, self.errors, self.calls = {}, {}, {}, []
+        self.run_states = []
+        for mod in (github, commands, ghnews):
+            self.patch(mod, "gh", self.gh)
+        for mod in (agents, commands, ghnews, github, tick):
+            self.patch(mod, "now", lambda: self.clock)
+        for mod in (commands, github, tick):
+            self.patch(mod, "live_agents", lambda key: [])
+        self.patch(github, "live_helpers", lambda key: [])
+
+    def gh(self, *args, **kw):
+        self.calls.append(args)
+        if args[:2] == ("pr", "view"):
+            return True, json.dumps(self.view), ""
+        if args[:2] == ("pr", "merge"):
+            if args[-2:] != ("--match-head-commit", self.view.get("headRefOid")):
+                return False, "", "head changed"
+            self.view.update(state="MERGED", mergeCommit={"oid": self.head})
+            return True, "", ""
+        if args[0] == "api":
+            path = args[1]
+            if path in self.errors:
+                return self.errors[path]
+            if path.startswith("repos/o/r/commits/"):
+                sha = path.split("/")[4]
+                if path.endswith("/check-runs?per_page=100"):
+                    return True, json.dumps({"check_runs": self.runs.get(sha, [])}), ""
+                if path.endswith("/status"):
+                    return True, json.dumps({"statuses": self.statuses.get(sha, [])}), ""
+            if path.startswith("repos/o/r/actions/runs?"):
+                return True, json.dumps(self.run_states), ""
+            if path == "--paginate":  # no comments or main-branch news in this fixture
+                return True, "[[]]", ""
+        raise AssertionError(f"unexpected gh call: {args}")
+
+    def check(self, conclusion="success", status="completed", at="2026-11-18T10:00:00Z"):
+        return {"name": "check", "status": status, "conclusion": conclusion, "started_at": at,
+                "app": {"slug": "github-actions"}, "head_sha": self.head}
+
+    def test_completed_rest_checks_and_statuses_count_after_empty_graphql(self):
+        self.runs[self.head] = [self.check()]
+        self.statuses[self.head] = [{"context": "external", "state": "success"}]
+        v = self.github.pr_view(self.task)
+        self.assertEqual([c.get("conclusion") or c.get("state") for c in v["statusCheckRollup"]], ["SUCCESS", "SUCCESS"])
+        self.assertNotIn("checks_unknown", v)
+        self.assertIsNone(self.github.checks_missing(v, self.clock, "yes"))
+        self.assertIsNone(self.github.pr_wait(v, self.clock, "yes"))
+
+    def test_pending_and_failed_rest_checks_or_statuses_still_block(self):
+        for kind in ("check", "status"):
+            for state, wait in (("pending", self.github.CHECKS_RUNNING), ("failure", self.github.BACK_TO_AGENT)):
+                with self.subTest(kind=kind, state=state):
+                    self.runs.clear()
+                    self.statuses.clear()
+                    if kind == "check":
+                        self.runs[self.head] = [self.check(None, "in_progress") if state == "pending" else self.check(state)]
+                    else:
+                        self.statuses[self.head] = [{"context": "external", "state": state}]
+                    v = self.github.pr_view(self.task)
+                    self.assertEqual(self.github.pr_wait(v, self.clock, "yes"), wait)
+                    self.assertEqual(self.github.pr_pending(v), state == "pending")
+                    self.assertEqual(bool(self.github.pr_problem(v)), state == "failure")
+
+    def test_genuinely_absent_rest_checks_keep_the_wait_and_timeout(self):
+        v = self.github.pr_view(self.task)
+        self.assertNotIn("checks_unknown", v)
+        self.assertEqual(self.github.checks_missing(v, self.clock, "yes"), "waiting")
+        self.assertEqual(self.github.checks_missing(v, self.clock - self.github.CHECKS_START_MS, "yes"), "never")
+        self.assertEqual(len([a for a in self.calls if "/commits/" in a[1]]), 2)
+
+    def test_partial_or_unreadable_rest_keeps_unknown_semantics(self):
+        for endpoint in ("check-runs?per_page=100", "status"):
+            for error in ((False, "", "HTTP 403"), (True, "not json", "")):
+                with self.subTest(endpoint=endpoint, error=error):
+                    self.errors = {f"repos/o/r/commits/{self.head}/{endpoint}": error}
+                    self.runs[self.head] = [self.check()]
+                    self.statuses[self.head] = [{"context": "external", "state": "pending"}]
+                    v = self.github.pr_view(self.task)
+                    self.assertTrue(v.get("checks_unknown"))
+                    self.assertEqual(len(v["statusCheckRollup"]), 1)  # the readable part is kept
+                    self.assertEqual(self.github.pr_pending(v), endpoint.startswith("check-runs"))
+        self.runs.clear()
+        self.statuses.clear()
+        self.view["mergeStateStatus"] = "BLOCKED"
+        self.errors = {f"repos/o/r/commits/{self.head}/{endpoint}": (False, "", "HTTP 403")
+                       for endpoint in ("check-runs?per_page=100", "status")}
+        v = self.github.pr_view(self.task)
+        self.assertTrue(v.get("checks_unknown"))
+        self.assertIsNone(self.github.checks_missing(v, self.clock - self.github.CHECKS_START_MS, "yes"))
+        self.assertEqual(self.github.pr_wait(v, self.clock - 60_000, "yes"), self.github.CHECKS_RUNNING)
+        self.assertIsNone(self.github.pr_wait(v, self.clock - self.github.UNKNOWN_CHECKS_MS, "yes"))
+
+    def test_rest_uses_the_existing_latest_check_normalization(self):
+        for old in (self.check("cancelled"), self.check("failure"), self.check(None, "in_progress")):
+            with self.subTest(old=old):
+                self.runs[self.head] = [self.check(at="2026-11-18T10:01:00Z"), old]  # newest first, as REST returns it
+                v = self.github.pr_view(self.task)
+                self.assertEqual(len(v["statusCheckRollup"]), 1)
+                self.assertIsNone(self.github.pr_wait(v, self.clock, "yes"))
+        self.runs[self.head] = [self.check("failure", at="2026-11-18T10:02:00Z"), self.check()]
+        self.assertEqual(self.github.pr_problem(self.github.pr_view(self.task)), "Checks failing: check.")
+
+    def test_new_head_cannot_reuse_old_head_success(self):
+        self.runs[self.head] = [self.check()]
+        self.assertIsNone(self.github.pr_wait(self.github.pr_view(self.task), self.clock, "yes"))
+        old = self.head
+        self.view["headRefOid"] = self.head = "c" * 40
+        self.task["pr"].update(head_sha=old, head_at=1)
+        self.task["ready_at"] = 1
+        s = Store([self.task])
+        v = self.github.pr_view(self.task)
+        since = self.github.checks_since(s, self.task, v)
+        self.assertEqual(since, self.clock)
+        self.assertEqual(self.github.checks_missing(v, since, "yes"), "waiting")
+        self.assertEqual([a[1] for a in self.calls if "/commits/" in a[1]][-2:],
+                         [f"repos/o/r/commits/{self.head}/check-runs?per_page=100", f"repos/o/r/commits/{self.head}/status"])
+
+    def test_missing_head_is_unknown_and_never_uses_task_head(self):
+        self.view.pop("headRefOid")
+        v = self.github.pr_view(self.task)
+        self.assertTrue(v.get("checks_unknown"))
+        self.assertEqual(v["statusCheckRollup"], [])
+        self.assertFalse(any("/commits/" in a[1] for a in self.calls))
+
+    def test_nonempty_graphql_keeps_its_checks_without_rest(self):
+        self.view["statusCheckRollup"] = [{"name": "check", "status": "IN_PROGRESS", "conclusion": ""}]
+        self.runs[self.head] = [self.check()]
+        self.assertTrue(self.github.pr_pending(self.github.pr_view(self.task)))
+        self.assertFalse(any("/commits/" in a[1] for a in self.calls))
+
+    def test_unfinished_workflow_still_blocks_after_rest_success(self):
+        self.runs[self.head] = [self.check()]
+        self.run_states = ["in_progress"]
+        v = self.github.pr_view(self.task)
+        self.assertEqual(self.github.pr_wait(v, self.clock, "yes"), self.github.CHECKS_RUNNING)
+        self.assertIn(("api", f"repos/o/r/actions/runs?head_sha={self.head}&per_page=50", "-q", "[.workflow_runs[].status]"), self.calls)
+
+    def flow(self):
+        """An isolated real store and repo with a PR workflow, no installed task CLI or live services."""
+        self.main, wt = os.path.join(self.root, "repo"), os.path.join(self.root, "wt")
+        self.git(self.root, "init", "-q", "-b", "main", self.main)
+        os.makedirs(os.path.join(self.main, ".github", "workflows"))
+        with open(os.path.join(self.main, ".github", "workflows", "check.yml"), "w") as f:
+            f.write("on: pull_request\n")
+        self.git(self.main, "add", ".")
+        start = self.commit(self.main, "base")
+        remote = os.path.join(self.root, "remote.git")
+        self.git(self.root, "init", "-q", "--bare", remote)
+        self.git(self.main, "remote", "add", "origin", remote)
+        self.git(self.main, "push", "-q", "origin", "main")
+        self.git(self.main, "worktree", "add", "-q", "-b", "task/1", wt, "HEAD")
+        self.view["headRefOid"] = self.head = self.commit(wt, "work", "a.txt")
+        self.git(wt, "push", "-q", "origin", "task/1")
+        self.patch(self.store_mod, "STORE", os.path.join(self.root, "tasks"))
+        self.loc = self.store_mod.locate(self.main)
+        with self.store_mod.Store(self.loc) as s:
+            s.data["tasks"] = [{"id": 1, "title": "Flow", "state": "ready", "mode": "worktree", "worktree": wt,
+                                "branch": "task/1", "base": "main", "head": self.head, "start": start,
+                                "agents": [], "ready_at": self.clock, "pr": dict(self.task["pr"])}]
+            s.dirty = True
+        return wt
+
+    def tick_once(self):
+        report = {"done": [], "attention": []}
+        with self.store_mod.Store(self.loc) as s:
+            self.tick.tick_store(s, report)
+        self.assertNotIn("github_error", report)
+        return report
+
+    def test_accepted_task_recovers_from_checks_never_via_real_tick_and_merge(self):
+        import argparse
+        import contextlib
+        import io
+        wt = self.flow()
+        self.runs[self.head] = [self.check(None, "in_progress")]
+        with contextlib.redirect_stdout(io.StringIO()) as out:
+            self.commands.cmd_accept(argparse.Namespace(id="1", folder=self.main, json=True))
+        accepted = json.loads(out.getvalue())
+        self.assertEqual((accepted["accepted"], accepted["state"], accepted["auto_merge"]), ("checks", "ready", "checks"))
+        accepted_at = accepted["accepted_at"]
+        self.runs.clear()
+        self.clock += 25 * 60000
+        self.assertEqual(self.tick_once()["attention"], [1])
+        self.clock += self.agents.GRACE_MS + 60_000
+        with self.store_mod.Store(self.loc, write=False) as s:
+            t = s.find("1")
+            self.assertEqual(t["attention"], self.github.CHECKS_NEVER)
+            self.assertEqual(self.agents.task_status(t, []), ("needs", "attention", self.github.CHECKS_NEVER))
+        self.runs[self.head] = [self.check()]
+        self.assertEqual(self.tick_once()["done"], [1])
+        with self.store_mod.Store(self.loc, write=False) as s:
+            t = s.find("1")
+            self.assertEqual((t["state"], t["merged"], t["accepted_at"]), ("done", True, accepted_at))
+            self.assertNotIn("attention", t)
+            self.assertEqual(self.agents.task_status(t, []), ("done", None, None))
+        self.assertFalse(os.path.exists(wt))  # real finish() tidies the scratch worktree
+        merges = [a for a in self.calls if a[:2] == ("pr", "merge")]
+        self.assertEqual(len(merges), 1)
+        self.assertEqual(merges[0][-2:], ("--match-head-commit", self.head))
+
+    def test_accepted_task_waits_for_new_head_checks_before_merging(self):
+        import argparse
+        import contextlib
+        import io
+        wt = self.flow()
+        self.runs[self.head] = [self.check(None, "in_progress")]
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.commands.cmd_accept(argparse.Namespace(id="1", folder=self.main, json=True))
+        self.assertEqual(self.tick_once()["done"], [])  # records the original head while its checks run
+        self.runs[self.head] = [self.check()]
+        self.view["headRefOid"] = self.head = self.commit(wt, "new work", "a.txt")
+        self.clock += 10 * 60000
+        self.assertEqual(self.tick_once()["done"], [])
+        with self.store_mod.Store(self.loc, write=False) as s:
+            t = s.find("1")
+            self.assertEqual((t["pr"]["head_sha"], t["pr"]["head_at"]), (self.head, self.clock))
+            self.assertEqual(self.agents.task_status(t, [])[0], "working")
+        for check, attention in ((self.check(None, "in_progress"), None),
+                                 (self.check("failure"), "Checks failing: check.")):
+            self.runs[self.head] = [check]
+            self.clock += 60_000
+            self.assertEqual(self.tick_once()["done"], [])
+            with self.store_mod.Store(self.loc, write=False) as s:
+                t = s.find("1")
+                self.assertEqual((t["state"], t.get("attention")), ("ready", attention))
+            self.assertFalse(any(a[:2] == ("pr", "merge") for a in self.calls))
+        self.runs[self.head] = [self.check()]
+        self.clock += 60_000
+        self.assertEqual(self.tick_once()["done"], [1])
+        self.assertEqual([a[-2:] for a in self.calls if a[:2] == ("pr", "merge")],
+                         [("--match-head-commit", self.head)])
+
+
 class ProcessTable(unittest.TestCase):
     """GitHub #1013: finding an agent's session walked its process tree with a `pgrep -P` per process (each one
     reading every process), per agent, per task, from every tracker and list. One read of the process table now

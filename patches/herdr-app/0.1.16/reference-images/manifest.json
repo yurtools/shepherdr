@@ -18,6 +18,21 @@
     "vendor/gpui-kit/crates/shell/src/capability.rs": "ab40969899c3420562a071e2a94d1f29380f886c2f99143260e86a3b418dd0f6",
     "vendor/gpui-kit/crates/shell/src/policy.rs": "3009c6412800f4b507e208145dba49570144a46c31695a64b5d95755490414b4",
     "vendor/gpui-pre/src/app.rs": "6dce65a9d45130a026efc8254db5ac96f1685abcab183e4b4b9bce538764ef2e",
-    "vendor/gpui-pre/src/window.rs": "3dd0902cb35c46e174643c92d41363f9fcb72c5edeb32eb7027a9bea48813039"
+    "vendor/gpui-pre/src/window.rs": "3dd0902cb35c46e174643c92d41363f9fcb72c5edeb32eb7027a9bea48813039",
+    "assets/fonts/Geist.ttf": "5c8968eafb98a4c4f47033daf29e38e284a6f2a82eb017d171ab040fe7c4b615",
+    "vendor/gpui-pre/src/assets.rs": "20fe041bc31162d44ede36ac2dd62a83d949e7c1ad3e723f0b98474133c8cf9d",
+    "vendor/gpui-pre/src/elements/img.rs": "da1aa359cc0f00658fdbd5ba470847f0fae95659db297e9e0b45e6279acb743b"
+  },
+  "harness_versions": {
+    "gpui-pre": "0.3.8",
+    "gpui-base": "0.7.1",
+    "markdown": "1.0.0",
+    "unicode-id": "0.3.6",
+    "url": "2.5.8",
+    "image": "0.25.10",
+    "usvg": "0.46.0",
+    "cosmic-text": "0.19.0",
+    "swash": "0.2.10",
+    "zed-font-kit": "0.14.1-zed"
   }
 }

@@ -1,0 +1,93 @@
+--- a/vendor/gpui-kit/crates/base/src/text/format/markdown.rs
++++ b/vendor/gpui-kit/crates/base/src/text/format/markdown.rs
+@@ -488 +488 @@
+-    // Only the final LF may absorb source-only text before it. Find the
++    // Only the final rendered LF may absorb source-only text before it. Find the
+@@ -491,2 +491,3 @@
+-        .strip_suffix('\n')
+-        .and_then(|prefix| prefix.rfind('\n'))
++        .strip_suffix("\r\n")
++        .or_else(|| raw.strip_suffix(['\r', '\n']))
++        .and_then(|prefix| prefix.rfind(['\r', '\n']))
+@@ -495,0 +497,18 @@
++        if !decode_entities
++            && !decode_escapes
++            && (rendered_start == 0 || rendered.as_bytes()[rendered_start - 1] == b'\n')
++        {
++            // The parser removed container prefixes and code indentation. Anchor
++            // a literal code row at its source suffix, so a leading `>` or space
++            // is not accidentally mapped to the quote/list prefix before it.
++            let raw_end = raw[raw_cursor..]
++                .find(['\r', '\n'])
++                .map_or(raw.len(), |end| raw_cursor + end);
++            let rendered_end = rendered[rendered_start..]
++                .find('\n')
++                .map_or(rendered.len(), |end| rendered_start + end);
++            let line = &rendered[rendered_start..rendered_end];
++            if !line.is_empty() && raw[raw_cursor..raw_end].ends_with(line) {
++                raw_cursor = raw_end - line.len();
++            }
++        }
+@@ -545 +564 @@
+-            && remainder.ends_with('\n')
++            && remainder.ends_with(['\r', '\n'])
+@@ -548,0 +568,15 @@
++        } else if rendered_char == '\n' && !decode_entities && !decode_escapes {
++            // Code presentation uses LF; one boundary maps atomically to the
++            // original CRLF pair or lone CR/LF, never to a later source row.
++            let Some(newline) = remainder.find(['\r', '\n']) else {
++                rendered_start = rendered_end;
++                continue;
++            };
++            (
++                newline,
++                if remainder[newline..].starts_with("\r\n") {
++                    2
++                } else {
++                    1
++                },
++            )
+@@ -684,2 +718,9 @@
+-        let start = raw.find('\n').map_or(raw.len(), |newline| newline + 1);
+-        let last_line = raw.rfind('\n').map_or(start, |newline| newline + 1);
++        let start = raw.find(['\r', '\n']).map_or(raw.len(), |newline| {
++            newline
++                + if raw[newline..].starts_with("\r\n") {
++                    2
++                } else {
++                    1
++                }
++        });
++        let last_line = raw.rfind(['\r', '\n']).map_or(start, |newline| newline + 1);
+@@ -1040 +1081,9 @@
+-            let segments = code_source_segments(source, &raw.value, span, cx.offset);
++            // Only the parsed presentation model changes. All code consumers
++            // (layout, highlighting and copy) use LF byte offsets; source
++            // segments still address the unchanged original document bytes.
++            let code = if raw.value.contains('\r') {
++                raw.value.replace("\r\n", "\n").replace('\r', "\n")
++            } else {
++                raw.value
++            };
++            let segments = code_source_segments(source, &code, span, cx.offset);
+@@ -1042 +1091 @@
+-                CodeBlock::new(raw.value.into(), raw.lang.map(Into::into), span)
++                CodeBlock::new(code.into(), raw.lang.map(Into::into), span)
+@@ -2534,0 +2584,4 @@
++
++#[cfg(test)]
++#[path = "code_line_endings_tests.rs"]
++mod code_line_endings_tests;
+--- a/vendor/gpui-kit/crates/base/src/text/node.rs
++++ b/vendor/gpui-kit/crates/base/src/text/node.rs
+@@ -2043 +2043,4 @@
+-        self.lang == other.lang && self.code() == other.code() && self.span == other.span
++        self.lang == other.lang
++            && self.code() == other.code()
++            && self.span == other.span
++            && self.source_segments == other.source_segments
+@@ -2053,0 +2057,4 @@
++    ///
++    /// Markdown-parsed code uses LF line endings for layout, highlighting and
++    /// code-only copy. Original-source ranges still address the input bytes.
++    /// [`Self::from_code`] retains the caller's text unchanged.

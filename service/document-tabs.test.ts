@@ -102,3 +102,46 @@ test("same-length Markdown reloads replace clean text and retain a conflicting d
  expect(doc.text).toBe(await readFile(path,"utf8"));expect(doc.saved).toBe(doc.text);expect(doc.conflict).toBe(false);
  expect(doc.preview).toBe(true);
 });
+
+for (const [name,eol] of [["LF","\n"],["CRLF","\r\n"],["CR","\r"],["mixed","\r\n"]]) {
+ test(`code Preview, drafts and guarded saves preserve ${name} source bytes`,async()=>{
+  const source=`Before café${eol}${eol}\`\`\`txt${eol}α${name==="mixed"?"\r":eol}β${eol}\`\`\`${eol}${eol}After 🦀`;
+  const path=join(root,"code.md");await writeFile(path,source);
+  const doc=add("code.md",source,source);doc.path=path;doc.kind="markdown";doc.preview=true;view.active=key("code.md");
+  built.length=0;view.render(cx);dispatch(byId("mode-Source"),"on_click",cx);
+  built.length=0;view.render(cx);dispatch(byId("mode-Preview"),"on_click",cx);
+  await view.draft(doc);await expect(readFile(view.draftPath(doc))).rejects.toThrow();
+  expect(Buffer.from(doc.saved)).toEqual(Buffer.from(source));expect(doc.text).toBe(source);
+  const edited=source.replace("β","γ");doc.text=edited;await view.draft(doc);
+  const draft=JSON.parse(await readFile(view.draftPath(doc),"utf8"));
+  expect(Buffer.from(draft.text)).toEqual(Buffer.from(edited));expect(draft.saved).toBe(source);
+  let writes=0;
+  writeDisk=async(p,text,expected)=>{
+   writes++;expect(expected).toBe(source);expect(Buffer.from(text)).toEqual(Buffer.from(edited));
+   if(await readFile(p,"utf8")!==expected)throw Error("File changed outside the editor");
+   await writeFile(p,text);
+  };
+  view.save(doc,cx);await Promise.all(pending);expect(writes).toBe(1);
+  expect(await readFile(path)).toEqual(Buffer.from(edited));expect(doc.saved).toBe(edited);
+ });
+}
+
+test("EOL-only edits stay dirty and EOL-only disk changes trigger the save guard",async()=>{
+ const source="```txt\r\na\r\nb\r\n```\r\n",edited=source.replaceAll("\r\n","\n");
+ const path=join(root,"eols.md");await writeFile(path,source);disk=()=>readFile(path,"utf8");
+ const doc=add("eols.md",edited,source);doc.path=path;doc.kind="markdown";doc.preview=true;view.active=key("eols.md");
+ await view.draft(doc);expect(JSON.parse(await readFile(view.draftPath(doc),"utf8")).text).toBe(edited);
+ // The external version renders identically but its bytes must still conflict.
+ const external=source.replaceAll("\r\n","\r");await writeFile(path,external);
+ writeDisk=async(p,text,expected)=>{
+  expect(expected).toBe(source);expect(text).toBe(edited);
+  if(await readFile(p,"utf8")!==expected)throw Error("File changed outside the editor");
+  throw Error("guard unexpectedly permitted a write");
+ };
+ view.save(doc,cx);await Promise.all(pending);expect(doc.conflict).toBe(true);expect(doc.saved).toBe(source);expect(doc.text).toBe(edited);
+ expect(await readFile(path)).toEqual(Buffer.from(external));
+ expect(JSON.parse(await readFile(view.draftPath(doc),"utf8")).text).toBe(edited);
+ view.check(cx);await Promise.all(pending);expect(doc.conflict).toBe(true);expect(doc.text).toBe(edited);
+ view.reload(doc,cx);await Promise.all(pending);expect(doc.text).toBe(external);expect(doc.saved).toBe(external);
+ expect(doc.conflict).toBe(false);await expect(readFile(view.draftPath(doc))).rejects.toThrow();
+});

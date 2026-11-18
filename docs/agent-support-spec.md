@@ -66,9 +66,11 @@ history, send/interrupt/restart/fork, readiness and failure recovery.
    account homes with synchronized role settings.
 8. **Permissions:** advertise actual engine/model capabilities. Keep execution
    permissions separate from Yurherdr approval policy and Autopilot. Do not map
-   similarly named “auto”, “plan” or “full” modes across engines. Changing engine
-   requires an explicit supported target permission choice; incompatible controls
-   explain why. No implicit YOLO/autoapprove, expanded directory grants, lost deny
+   similarly named “auto”, “plan” or “full” modes to or between the new engines.
+   Switching to or between new engines requires an explicit supported target
+   permission choice; incompatible controls explain why. Preserve existing
+   Codex/Claude mappings and behavior unless a separate change is authorized.
+   No implicit YOLO/autoapprove, expanded directory grants, lost deny
    rules or broad permission defaults on restart/resume. Reviewer eligibility
    requires a demonstrated restrictive execution policy, including shell/MCP/hooks;
    a planning prompt alone does not prove read-only operation.

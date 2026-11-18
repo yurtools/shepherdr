@@ -36,7 +36,10 @@ Sizes are relative scope: **S** bounded change, **M** one subsystem, **L** sever
 subsystems/fixtures, **XL** external host work with uncertain scope. They are not
 calendar estimates. P2–P4 are per-engine briefs, each to be applied separately to
 Kimi, Goose and OpenCode; one blocked engine need not stop another's validated
-work. Keep unproven capabilities disabled until their gate passes.
+work. These repeated briefs touch shared files: sequence conflicting integrations,
+or land shared groundwork before separate engine changes. Dependency independence
+does not establish that the edits can run in parallel. Keep unproven capabilities
+disabled until their gate passes.
 
 | Order | Proposed brief | Size | Depends on |
 | --- | --- | --- | --- |
@@ -57,6 +60,12 @@ support claim. Do not schedule a fixed completion date before P0 identifies host
 ownership and same-process transport feasibility.
 
 ## Proposed task briefs
+
+**Common constraints for every brief:** stay within this feature; do not merge,
+accept, mark done, release or start other agents. Preserve existing Codex/Claude
+permission mappings and behavior unless separately authorized. Shared-file edits
+must follow the integration order above. These are proposed briefs, not permission
+to create or start implementation tasks now.
 
 ### P0 — Establish the host contract before adding engine choices
 

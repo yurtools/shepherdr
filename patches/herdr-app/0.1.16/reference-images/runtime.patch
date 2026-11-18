@@ -1,0 +1,185 @@
+--- a/vendor/gpui-kit/crates/base/src/text/format/markdown.rs
++++ b/vendor/gpui-kit/crates/base/src/text/format/markdown.rs
+@@ -1,6 +1,10 @@
+ use std::{collections::BTreeMap, ops::Range, sync::Arc};
+ 
+ use gpui::SharedString;
++
++#[cfg(test)]
++#[path = "reference_images_tests.rs"]
++pub(crate) mod reference_images_tests;
+ use markdown::{
+     ParseOptions,
+     mdast::{self, Node},
+@@ -859,6 +863,20 @@
+                 ..Default::default()
+             });
+         }
++        Node::ImageReference(raw) => {
++            // markdown-rs emits a reference only when its definition exists.
++            // Identifiers are already normalized by the parser. Use the same
++            // whole-document definitions as links, then the ordinary image path.
++            if let Some(definition) = cx.link_refs.get(raw.identifier.as_str()) {
++                paragraph.push_image(ImageNode {
++                    url: definition.url.to_string().into(),
++                    title: definition.title.clone(),
++                    alt: Some(raw.alt.clone().into()),
++                    span: new_span(raw.position.clone(), cx),
++                    ..Default::default()
++                });
++            }
++        }
+         Node::Break(_) => {
+             // Hard line break (trailing two spaces / backslash). Mirror the
+             // inline-HTML <br> path: emit a newline inline node so the break
+@@ -922,11 +940,17 @@
+             )]));
+         }
+         Node::LinkReference(link) => {
+-            let link_mark = LinkMark {
+-                url: "".into(),
+-                title: link.label.clone().map(Into::into),
+-                identifier: Some(link.identifier.clone().into()),
+-            };
++            // Resolve now as well as at render time: an image nested in a
++            // reference link carries this mark on its own image element.
++            let link_mark = cx
++                .link_refs
++                .get(link.identifier.as_str())
++                .cloned()
++                .unwrap_or_else(|| LinkMark {
++                    url: "".into(),
++                    title: link.label.clone().map(Into::into),
++                    identifier: Some(link.identifier.clone().into()),
++                });
+ 
+             text = merge_children_with_mark(
+                 source,
+@@ -949,7 +973,29 @@
+     text
+ }
+ 
++fn collect_definitions(node: &Node, cx: &mut NodeContext) {
++    if let Node::Definition(def) = node {
++        cx.add_ref(
++            def.identifier.clone().into(),
++            LinkMark {
++                url: def.url.clone().into(),
++                identifier: Some(def.identifier.clone().into()),
++                title: def.title.clone().map(Into::into),
++            },
++        );
++    }
++    if let Some(children) = node.children() {
++        for child in children {
++            collect_definitions(child, cx);
++        }
++    }
++}
++
+ fn ast_to_document(source: &str, root: mdast::Node, cx: &mut NodeContext) -> ParsedDocument {
++    // Definitions apply to the entire document, including forward references
++    // and definitions nested in containers. Do this before converting inlines.
++    cx.link_refs.clear();
++    collect_definitions(&root, cx);
+     let root = match root {
+         Node::Root(r) => r,
+         _ => panic!("expected root node"),
+@@ -1138,23 +1184,12 @@
+             paragraph.span = new_span(def.position, cx);
+             BlockNode::Paragraph(paragraph)
+         }
+-        Node::Definition(def) => {
+-            cx.add_ref(
+-                def.identifier.clone().into(),
+-                LinkMark {
+-                    url: def.url.clone().into(),
+-                    identifier: Some(def.identifier.clone().into()),
+-                    title: def.title.clone().map(Into::into),
+-                },
+-            );
+-
+-            BlockNode::Definition {
+-                identifier: def.identifier.clone().into(),
+-                url: def.url.clone().into(),
+-                title: def.title.clone().map(|s| s.into()),
+-                span: new_span(def.position, cx),
+-            }
+-        }
++        Node::Definition(def) => BlockNode::Definition {
++            identifier: def.identifier.clone().into(),
++            url: def.url.clone().into(),
++            title: def.title.clone().map(|s| s.into()),
++            span: new_span(def.position, cx),
++        },
+         _ => {
+             if cfg!(debug_assertions) {
+                 tracing::warn!("unsupported node: {:#?}", value);
+--- a/vendor/gpui-kit/crates/base/src/text/node.rs
++++ b/vendor/gpui-kit/crates/base/src/text/node.rs
+@@ -2351,7 +2351,8 @@
+     }
+ 
+     pub(super) fn add_ref(&mut self, identifier: SharedString, link: LinkMark) {
+-        self.link_refs.insert(identifier, link);
++        // CommonMark resolves duplicate labels to the first definition.
++        self.link_refs.entry(identifier).or_insert(link);
+     }
+ 
+     /// The fade ranges of the text leaf `key`, in its rendered byte space.
+--- a/vendor/gpui-kit/crates/base/src/text/state.rs
++++ b/vendor/gpui-kit/crates/base/src/text/state.rs
+@@ -1206,7 +1206,9 @@
+                     }
+                     _ = self.tx_result.try_send(ParsedUpdate {
+                         revision: options.revision,
+-                        full_parse: !options.append,
++                        full_parse: !options.append
++                            || (self.format == TextViewFormat::Markdown
++                                && !self.content.node_cx.link_refs.is_empty()),
+                         selection_compatible: options.mode == ParseMode::Compatible,
+                         baseline_ack: options.mode == ParseMode::BaselineAck,
+                         result: res,
+@@ -1317,12 +1319,24 @@
+         source.push_str(&options.pending_text);
+     }
+ 
+-    let new_document = match format {
++    let mut new_document = match format {
+         TextViewFormat::Markdown => format::markdown::parse(&source, &mut node_cx),
+         TextViewFormat::Html => format::html::parse(&source, &mut node_cx),
+     }?;
+ 
+-    if options.append {
++    // A definition can resolve a reference in any retained block, and a new
++    // reference can use an earlier definition. The suffix parser cannot see
++    // those relationships. Reparse the whole Markdown only for documents with
++    // definitions; keep the existing incremental path for ordinary streams.
++    if options.append
++        && format == TextViewFormat::Markdown
++        && (!content.node_cx.link_refs.is_empty() || !node_cx.link_refs.is_empty())
++    {
++        source = format!("{}{}", content.document.source, options.pending_text);
++        node_cx.offset = 0;
++        new_document = format::markdown::parse(&source, &mut node_cx)?;
++        content.document = new_document;
++    } else if options.append {
+         content.document.source =
+             format!("{}{}", content.document.source, options.pending_text).into();
+         Arc::make_mut(&mut content.document.blocks)
+@@ -1330,6 +1344,7 @@
+     } else {
+         content.document = new_document;
+     }
++    content.node_cx = node_cx;
+ 
+     Ok(content)
+ }
+@@ -3662,3 +3677,7 @@
+         }
+     }
+ }
++
++#[cfg(test)]
++#[path = "reference_images_state_tests.rs"]
++mod reference_images_state_tests;

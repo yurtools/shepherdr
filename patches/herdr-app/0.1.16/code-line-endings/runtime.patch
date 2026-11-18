@@ -1,0 +1,137 @@
+--- a/vendor/gpui-kit/crates/base/src/text/format/markdown.rs
++++ b/vendor/gpui-kit/crates/base/src/text/format/markdown.rs
+@@ -485,14 +485,33 @@
+     let mut source_positions = None;
+     let mut entity_cursor = None;
+     let mut entity = None;
+-    // Only the final LF may absorb source-only text before it. Find the
++    // Only the final rendered LF may absorb source-only text before it. Find the
+     // preceding line boundary once instead of recounting the suffix per LF.
+     let final_line_start = raw
+-        .strip_suffix('\n')
+-        .and_then(|prefix| prefix.rfind('\n'))
++        .strip_suffix("\r\n")
++        .or_else(|| raw.strip_suffix(['\r', '\n']))
++        .and_then(|prefix| prefix.rfind(['\r', '\n']))
+         .map_or(0, |newline| newline + 1);
+ 
+     while rendered_start < rendered.len() {
++        if !decode_entities
++            && !decode_escapes
++            && (rendered_start == 0 || rendered.as_bytes()[rendered_start - 1] == b'\n')
++        {
++            // The parser removed container prefixes and code indentation. Anchor
++            // a literal code row at its source suffix, so a leading `>` or space
++            // is not accidentally mapped to the quote/list prefix before it.
++            let raw_end = raw[raw_cursor..]
++                .find(['\r', '\n'])
++                .map_or(raw.len(), |end| raw_cursor + end);
++            let rendered_end = rendered[rendered_start..]
++                .find('\n')
++                .map_or(rendered.len(), |end| rendered_start + end);
++            let line = &rendered[rendered_start..rendered_end];
++            if !line.is_empty() && raw[raw_cursor..raw_end].ends_with(line) {
++                raw_cursor = raw_end - line.len();
++            }
++        }
+         if decode_entities && entity_cursor != Some(raw_cursor) {
+             entity = decoded_entity(&raw[raw_cursor..]);
+             entity_cursor = Some(raw_cursor);
+@@ -542,10 +561,25 @@
+             };
+             (whitespace_end - raw_cursor, newline_len)
+         } else if rendered_char == '\n'
+-            && remainder.ends_with('\n')
++            && remainder.ends_with(['\r', '\n'])
+             && raw_cursor >= final_line_start
+         {
+             (0, remainder.len())
++        } else if rendered_char == '\n' && !decode_entities && !decode_escapes {
++            // Code presentation uses LF; one boundary maps atomically to the
++            // original CRLF pair or lone CR/LF, never to a later source row.
++            let Some(newline) = remainder.find(['\r', '\n']) else {
++                rendered_start = rendered_end;
++                continue;
++            };
++            (
++                newline,
++                if remainder[newline..].starts_with("\r\n") {
++                    2
++                } else {
++                    1
++                },
++            )
+         } else if decode_escapes
+             && let Some(escaped) = remainder.strip_prefix('\\')
+             && escaped.starts_with(rendered_char)
+@@ -681,8 +715,15 @@
+         })
+         .filter(|(_, len)| *len >= 3);
+     let (body_start, body_end) = if let Some((fence, fence_len)) = fence {
+-        let start = raw.find('\n').map_or(raw.len(), |newline| newline + 1);
+-        let last_line = raw.rfind('\n').map_or(start, |newline| newline + 1);
++        let start = raw.find(['\r', '\n']).map_or(raw.len(), |newline| {
++            newline
++                + if raw[newline..].starts_with("\r\n") {
++                    2
++                } else {
++                    1
++                }
++        });
++        let last_line = raw.rfind(['\r', '\n']).map_or(start, |newline| newline + 1);
+         let closing = raw[last_line..].trim();
+         let is_closing = closing.chars().count() >= fence_len
+             && closing.chars().all(|character| character == fence);
+@@ -1037,9 +1078,17 @@
+         },
+         Node::Code(raw) => {
+             let span = new_span(raw.position, cx);
+-            let segments = code_source_segments(source, &raw.value, span, cx.offset);
++            // Only the parsed presentation model changes. All code consumers
++            // (layout, highlighting and copy) use LF byte offsets; source
++            // segments still address the unchanged original document bytes.
++            let code = if raw.value.contains('\r') {
++                raw.value.replace("\r\n", "\n").replace('\r', "\n")
++            } else {
++                raw.value
++            };
++            let segments = code_source_segments(source, &code, span, cx.offset);
+             BlockNode::CodeBlock(
+-                CodeBlock::new(raw.value.into(), raw.lang.map(Into::into), span)
++                CodeBlock::new(code.into(), raw.lang.map(Into::into), span)
+                     .source_segments(segments),
+             )
+         }
+@@ -2532,3 +2581,7 @@
+         );
+     }
+ }
++
++#[cfg(test)]
++#[path = "code_line_endings_tests.rs"]
++mod code_line_endings_tests;
+--- a/vendor/gpui-kit/crates/base/src/text/node.rs
++++ b/vendor/gpui-kit/crates/base/src/text/node.rs
+@@ -2040,7 +2040,10 @@
+ 
+ impl PartialEq for CodeBlock {
+     fn eq(&self, other: &Self) -> bool {
+-        self.lang == other.lang && self.code() == other.code() && self.span == other.span
++        self.lang == other.lang
++            && self.code() == other.code()
++            && self.span == other.span
++            && self.source_segments == other.source_segments
+     }
+ }
+ 
+@@ -2051,6 +2054,10 @@
+     }
+ 
+     /// Get the code content of the code block.
++    ///
++    /// Markdown-parsed code uses LF line endings for layout, highlighting and
++    /// code-only copy. Original-source ranges still address the input bytes.
++    /// [`Self::from_code`] retains the caller's text unchanged.
+     pub fn code(&self) -> SharedString {
+         self.state
+             .lock()

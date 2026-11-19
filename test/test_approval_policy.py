@@ -207,6 +207,62 @@ class ApprovalLifecycle(unittest.TestCase):
   with mock.patch.object(A,'answer_once',side_effect=person_wins):
    with self.assertRaisesRegex(ValueError,'already been answered'):ui.main(args)
   self.assertEqual(A.history_rows(),[])
+class AssistantReviewRegression(unittest.TestCase):
+ setUp=ApprovalPolicy.setUp
+ mode=ApprovalPolicy.mode
+ def ui(self,*args):
+  import importlib.util
+  spec=importlib.util.spec_from_file_location('approval_ui',ROOT/'mods/chat/approval-policy.py');ui=importlib.util.module_from_spec(spec);spec.loader.exec_module(ui)
+  return ui.main(ui.parser().parse_args(list(args)))
+ def delegate(self,mode='rules',during=None):
+  self.mode(mode);req,ctx=A.request_context(self.path)
+  original=A.hc_get.side_effect
+  def lookup(terminal):
+   if during:during()
+   return {'state':'live','labels':{'herdr.role':'coordinator','herdr.coordinator.space':'space'},'argv':['claude']}
+  A.hc_get.side_effect=lookup
+  try:
+   with mock.patch.object(A.subprocess,'run',return_value=mock.Mock(returncode=0,stdout='{}')) as send:
+    out=self.ui('review','--request',str(self.path),'--terminal','worker')
+   return out,A.read(A.store()/'pending'/self.path.name),send
+  finally:A.hc_get.side_effect=original
+ def test_poll_during_explicit_review_lookup_does_not_restore_no_rule(self):
+  observed=[]
+  def poll():
+   # No recursive reviewer lookup: the ticket must describe processing already.
+   with mock.patch.object(A,'hc_get',return_value={'state':'live'}):A.evaluate(self.path)
+   observed.append(A.read(self.path.with_suffix('.status'))['state'])
+  self.delegate(during=poll)
+  self.assertTrue(observed);self.assertNotIn('person',observed)
+ def test_uncertain_review_publishes_its_specific_reason_on_the_card(self):
+  _,ticket,_=self.delegate()
+  A.decide(ticket['id'],ticket['token'],'ask','The destination is outside the project. Please choose.',terminal='assistant')
+  A.evaluate(self.path)
+  status=A.read(self.path.with_suffix('.status'))
+  self.assertEqual(status['reason'],'assistant-asked');self.assertIn('outside the project',status.get('review_reason',''))
+  self.assertFalse((self.path.parent.parent/'ans'/self.path.name).exists())
+ def test_allow_writes_an_assistant_outcome_for_only_the_original_hook(self):
+  _,ticket,send=self.delegate('manual')
+  A.decide(ticket['id'],ticket['token'],'allow','Read-only inspection needed for this task.',terminal='assistant')
+  end=self.path.parent.parent/'end'/self.path.stem
+  self.assertTrue(end.exists(),'Assistant decisions must publish an outcome for the card')
+  self.assertIn('Allowed by Assistant',end.read_text());self.assertIn('Read-only inspection',end.read_text())
+  self.assertEqual(len(list((self.path.parent.parent/'ans').glob('*'))),1)
+  self.assertEqual(A.history_rows()[-1]['source'],'assistant')
+  self.assertEqual(send.call_count,1);self.assertEqual(send.call_args.args[0][:3],['hc','send','assistant'])
+ def test_review_prompt_demands_independent_judgment_and_complete_submission(self):
+  self.req['tool_input']['command']='git status | wc -l';A.write(self.path,self.req)
+  _,ticket,send=self.delegate()
+  prompt=send.call_args.args[0][-1]
+  self.assertIn('No saved allow rule is required',prompt)
+  self.assertIn('every pipeline stage',prompt);self.assertIn('before going quiet',prompt)
+  self.assertIn(json.dumps(self.req,ensure_ascii=False),prompt)
+  self.assertEqual(ticket['context']['task'],'TASK-1')
+ def test_explicit_review_does_not_delegate_around_an_unreadable_policy(self):
+  self.mode('manual');(self.base/'settings.json').write_text('{broken')
+  with mock.patch.object(A.subprocess,'run',side_effect=AssertionError('must not delegate')):
+   self.ui('review','--request',str(self.path),'--terminal','worker')
+  self.assertEqual(A.read(self.path.with_suffix('.status'))['reason'],'policy-error')
 class FeatureNaming(unittest.TestCase):
  def test_only_the_feature_owner_can_name_its_own_record(self):
   helper=str(A.app_home()/'mods/workspace-launchers/bin/workspace-state')

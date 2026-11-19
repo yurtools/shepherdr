@@ -1,0 +1,547 @@
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -21,6 +21,7 @@
+ gpui_platform = { package = "gpui-pre-platform", version = "=0.3.8", features = ["font-kit", "x11", "wayland", "runtime_shaders"] }
+ gpui-shell = { path = "vendor/gpui-kit/crates/shell" }
+ gpui-base = { path = "vendor/gpui-kit/crates/base" }
++reqwest_client = { package = "gpui-pre-reqwest-client", version = "=0.3.8" }
+ anyhow = "1"
+ async-channel = "2"
+ base64 = "0.22"
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -620,6 +620,29 @@
+ ]
+ 
+ [[package]]
++name = "aws-lc-rs"
++version = "1.19.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "048006790404103c488e6c5616b3e7e702a71292aadda08e8f7698a9e0d2eb53"
++dependencies = [
++ "aws-lc-sys",
++ "zeroize",
++]
++
++[[package]]
++name = "aws-lc-sys"
++version = "0.47.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "8bfbe32ac36b3c428696ce315464181bc4029d689fd58e3f2a4e58c252242f52"
++dependencies = [
++ "cc",
++ "cmake",
++ "dunce",
++ "fs_extra",
++ "pkg-config",
++]
++
++[[package]]
+ name = "backtrace"
+ version = "0.3.76"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+@@ -1179,6 +1202,15 @@
+ checksum = "1c133bc6a41be0d194c306b5506d15e6feeea7b1d6604bd3f8310dfb2ca96486"
+ 
+ [[package]]
++name = "cmake"
++version = "0.1.58"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "c0f78a02292a74a88ac736019ab962ece0bc380e3f977bf72e376c5d78ff0678"
++dependencies = [
++ "cc",
++]
++
++[[package]]
+ name = "cmov"
+ version = "0.5.4"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+@@ -1276,6 +1308,16 @@
+ checksum = "1d07550c9036bf2ae0c684c4297d503f838287c83c53686d05370d0e139ae570"
+ 
+ [[package]]
++name = "combine"
++version = "4.6.9"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "4356eba6976435498d05a311ee9fc486da3bc81c200d3f0d7dd9703b41913f92"
++dependencies = [
++ "bytes",
++ "memchr",
++]
++
++[[package]]
+ name = "compression-codecs"
+ version = "0.4.39"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+@@ -2567,6 +2609,12 @@
+ ]
+ 
+ [[package]]
++name = "fs_extra"
++version = "1.3.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "42703706b716c37f96a77aea830392ad231f44c9e9a67872fa5548707e11b11c"
++
++[[package]]
+ name = "fsevent-sys"
+ version = "4.1.0"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+@@ -3151,6 +3199,18 @@
+ ]
+ 
+ [[package]]
++name = "gpui-pre-http-client-tls"
++version = "0.3.8"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "9bbac58d44e80c2bfdd736cacd334e5c9446d5847cd584193ee3c8634c729c2b"
++dependencies = [
++ "log",
++ "rustls",
++ "rustls-platform-verifier",
++ "webpki-roots 1.0.10",
++]
++
++[[package]]
+ name = "gpui-pre-linux"
+ version = "0.3.8"
+ dependencies = [
+@@ -3339,6 +3399,24 @@
+ ]
+ 
+ [[package]]
++name = "gpui-pre-reqwest-client"
++version = "0.3.8"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "894b8d8618c92cbd4da28a04dd3fcf3c0e0607074fa99416a864ac9b63b18aae"
++dependencies = [
++ "anyhow",
++ "bytes",
++ "futures",
++ "gpui-pre-http-client",
++ "gpui-pre-http-client-tls",
++ "gpui-pre-reqwest",
++ "gpui-pre-util",
++ "log",
++ "regex",
++ "tokio",
++]
++
++[[package]]
+ name = "gpui-pre-scheduler"
+ version = "0.3.8"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+@@ -3708,6 +3786,7 @@
+  "gpui-pre-linux",
+  "gpui-pre-macos",
+  "gpui-pre-platform",
++ "gpui-pre-reqwest-client",
+  "gpui-pre-wgpu",
+  "gpui-pre-windows",
+  "gpui-shell",
+@@ -4272,6 +4351,36 @@
+ checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
+ 
+ [[package]]
++name = "jni"
++version = "0.22.4"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "5efd9a482cf3a427f00d6b35f14332adc7902ce91efb778580e180ff90fa3498"
++dependencies = [
++ "cfg-if",
++ "combine",
++ "jni-macros",
++ "jni-sys 0.4.1",
++ "log",
++ "simd_cesu8",
++ "thiserror 2.0.20",
++ "walkdir",
++ "windows-link 0.2.1",
++]
++
++[[package]]
++name = "jni-macros"
++version = "0.22.4"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "a00109accc170f0bdb141fed3e393c565b6f5e072365c3bd58f5b062591560a3"
++dependencies = [
++ "proc-macro2",
++ "quote",
++ "rustc_version",
++ "simd_cesu8",
++ "syn 2.0.119",
++]
++
++[[package]]
+ name = "jni-sys"
+ version = "0.3.1"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+@@ -7081,6 +7190,8 @@
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "0283386ce02abc0151e1761d08802dfe86c173b0b494af5cbc086574e453da06"
+ dependencies = [
++ "aws-lc-rs",
++ "log",
+  "once_cell",
+  "ring",
+  "rustls-pki-types",
+@@ -7121,11 +7232,39 @@
+ ]
+ 
+ [[package]]
++name = "rustls-platform-verifier"
++version = "0.7.1"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "1167586491e2b18b8bfbb293e8180ec17c201c4f076d7cb3070ca964e7598f98"
++dependencies = [
++ "core-foundation 0.10.1",
++ "core-foundation-sys",
++ "jni",
++ "log",
++ "once_cell",
++ "rustls",
++ "rustls-native-certs",
++ "rustls-platform-verifier-android",
++ "rustls-webpki",
++ "security-framework",
++ "security-framework-sys",
++ "webpki-root-certs",
++ "windows-sys 0.61.2",
++]
++
++[[package]]
++name = "rustls-platform-verifier-android"
++version = "0.2.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "eec689c0bc40ff2458a5977b6619cb718087084a18e02a131c599b62d05e1a5f"
++
++[[package]]
+ name = "rustls-webpki"
+ version = "0.103.15"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "f3c3cf1d8b1e7d4927e2d154c3fcb02979afb9939629c62cd9048d4f07b60ac2"
+ dependencies = [
++ "aws-lc-rs",
+  "ring",
+  "rustls-pki-types",
+  "untrusted",
+@@ -7559,6 +7698,16 @@
+ ]
+ 
+ [[package]]
++name = "simd_cesu8"
++version = "1.2.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "11031e251abf8611c80f460e19dbdeb54a66db918e49c65a7065b46ac7aec520"
++dependencies = [
++ "rustc_version",
++ "simdutf8",
++]
++
++[[package]]
+ name = "simd_helpers"
+ version = "0.1.0"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+@@ -9051,6 +9200,15 @@
+ ]
+ 
+ [[package]]
++name = "webpki-root-certs"
++version = "1.0.12"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "293198dcebfb821155b5092ab94b5a82ff180eddd7241df3bd6e66a4ffd1a585"
++dependencies = [
++ "rustls-pki-types",
++]
++
++[[package]]
+ name = "webpki-roots"
+ version = "0.26.11"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+--- a/src/main.rs
++++ b/src/main.rs
+@@ -5,6 +5,7 @@
+ mod bench;
+ mod commands;
+ mod control;
++mod document_http;
+ mod core_bin;
+ mod files;
+ mod hc;
+@@ -162,6 +163,7 @@
+     }
+ 
+     gpui_platform::application()
++        .with_http_client(document_http::client())
+         // Mods run programs already; the user's own links (dotfiles, Nix) may point out.
+         .with_assets(gpui_shell::AppAssets::new(mods::app_dir()).following_links())
+         .run(move |cx| {
+--- /dev/null
++++ b/src/document_http.rs
+@@ -0,0 +1,5 @@
++//! The native application's GPUI transport. Document URL authorization, redirects,
++//! body limits, timeout and view ownership remain in gpui-shell's image loader.
++pub fn client() -> std::sync::Arc<dyn gpui::http_client::HttpClient> {
++    std::sync::Arc::new(reqwest_client::ReqwestClient::new())
++}
+--- a/THIRD-PARTY-NOTICES
++++ b/THIRD-PARTY-NOTICES
+@@ -2,8 +2,8 @@
+ =========================
+ Regenerate with just notices. See licenses/README.md.
+ 
+-Input-SHA256: 6a3b4177337bfb82680d2992e24b5f948c0c4ce524bafa5b1c8cf8090f45adba Cargo.lock
+-Input-SHA256: f3a083f960c5b2778ddb4b40d9fd2e6c9e29ede57f2f28a46b48d99f0dd485e1 Cargo.toml
++Input-SHA256: fb418ee1f5c549113c1ada869e12f07f067a5ec4633d743fe6653a528da4a3ed Cargo.lock
++Input-SHA256: 6c24433f1150bbefa7fb7e271154475cce59dc6827f9ae60774c3e350214839d Cargo.toml
+ Input-SHA256: c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4 LICENSE
+ Input-SHA256: e58cb0de2dde300bcda769ca993fde2737f42c0274082f038621ab22975a49e2 about.toml
+ Input-SHA256: 84a7a98c82140fb12c37fe42b93805baa16024cb3e5acc599b7ffe612c55d847 assets/fonts/LICENSE-SymbolsNerdFont.txt
+@@ -2753,7 +2753,8 @@
+ 
+ ----------------------------------------------------------------------
+ Apache License 2.0 (Apache-2.0)
+-  herdr-app 0.1.15
++  herdr-app 0.1.16
++  herdr-app 0.1.16
+ 
+                                  Apache License
+                            Version 2.0, January 2004
+@@ -2959,9 +2960,10 @@
+ 
+ ----------------------------------------------------------------------
+ Apache License 2.0 (Apache-2.0)
+-  herdr-app 0.1.15
++  herdr-app 0.1.16
+   codespan-reporting 0.13.1 — https://github.com/brendanzab/codespan
+   crypto-primes 0.7.2 — https://github.com/entropyxyz/crypto-primes
++  rustls-platform-verifier 0.7.1 — https://github.com/rustls/rustls-platform-verifier
+   self_cell 1.3.0 — https://github.com/Voultapher/self_cell
+   sys-locale 0.3.2 — https://github.com/1Password/sys-locale
+   unarray 0.1.4 — https://github.com/cameron1024/unarray
+@@ -7374,6 +7376,7 @@
+   cexpr 0.6.0 — https://github.com/jethrogb/rust-cexpr
+   cfg-if 1.0.4 — https://github.com/rust-lang/cfg-if
+   cgl 0.3.2 — https://github.com/servo/cgl-rs
++  cmake 0.1.58 — https://github.com/rust-lang/cmake-rs
+   cocoa-foundation 0.2.1 — https://github.com/servo/core-foundation-rs
+   cocoa 0.26.0 — https://github.com/servo/core-foundation-rs
+   compression-codecs 0.4.39 — https://github.com/Nullus157/async-compression
+@@ -7504,6 +7507,7 @@
+   security-framework 3.7.0 — https://github.com/kornelski/rust-security-framework
+   serde_fmt 1.1.0 — https://github.com/KodrAus/serde_fmt.git
+   signal-hook-registry 1.4.8 — https://github.com/vorner/signal-hook
++  simd_cesu8 1.2.0 — https://github.com/seancroach/simd_cesu8
+   simplecss 0.2.2 — https://github.com/linebender/simplecss
+   smallvec 1.15.2 — https://github.com/servo/rust-smallvec
+   smol 2.0.2 — https://github.com/smol-rs/smol
+@@ -11806,6 +11810,7 @@
+   android_system_properties 0.1.6 — https://github.com/nical/android_system_properties
+   anyhow 1.0.104 — https://github.com/dtolnay/anyhow
+   async-trait 0.1.92 — https://github.com/dtolnay/async-trait
++  aws-lc-sys 0.47.0 — https://github.com/aws/aws-lc-rs
+   cranelift-bitset 0.116.1 — https://github.com/bytecodealliance/wasmtime
+   cranelift-isle 0.116.1 — https://github.com/bytecodealliance/wasmtime/tree/main/cranelift/isle
+   crc32c 0.6.8 — https://github.com/zowens/crc32c
+@@ -11829,7 +11834,9 @@
+   image 0.25.10 — https://github.com/image-rs/image
+   inventory 0.3.24 — https://github.com/dtolnay/inventory
+   itoa 1.0.18 — https://github.com/dtolnay/itoa
++  jni-macros 0.22.4 — https://github.com/jni-rs/jni-rs
+   jni-sys-macros 0.4.1 — https://github.com/jni-rs/jni-sys
++  jni 0.22.4 — https://github.com/jni-rs/jni-rs
+   khronos_api 3.1.0 — https://github.com/brendanzab/gl-rs/
+   leak 0.1.2 — https://github.com/jmesmon/leak.git
+   leaky-cow 0.1.1 — https://github.com/notriddle/rust-leaky-cow
+@@ -11890,6 +11897,7 @@
+   ref-cast 1.0.27 — https://github.com/dtolnay/ref-cast
+   resvg 0.46.0 — https://github.com/linebender/resvg
+   rustc-hash 2.1.3 — https://github.com/rust-lang/rustc-hash
++  rustls-platform-verifier-android 0.2.0 — https://github.com/rustls/rustls-platform-verifier
+   rustversion 1.0.23 — https://github.com/dtolnay/rustversion
+   ryu 1.0.23 — https://github.com/dtolnay/ryu
+   semver 1.0.28 — https://github.com/dtolnay/semver
+@@ -12015,12 +12023,12 @@
+ 
+ ----------------------------------------------------------------------
+ Apache License 2.0 (Apache-2.0)
+-  herdr-app 0.1.15
+-  herdr-app 0.1.15
+-  herdr-app 0.1.15
+-  herdr-app 0.1.15
+-  herdr-app 0.1.15
+-  herdr-app 0.1.15
++  herdr-app 0.1.16
++  herdr-app 0.1.16
++  herdr-app 0.1.16
++  herdr-app 0.1.16
++  herdr-app 0.1.16
++  herdr-app 0.1.16
+   gpui-pre 0.3.8 — https://github.com/zed-industries/zed
+   gpui-pre-apple 0.3.8 — https://github.com/zed-industries/zed
+   gpui-pre-linux 0.3.8 — https://github.com/zed-industries/zed
+@@ -12029,11 +12037,13 @@
+   gpui-pre-windows 0.3.8 — https://github.com/zed-industries/zed
+   gpui-pre-collections 0.3.8 — https://github.com/zed-industries/zed
+   gpui-pre-derive-refineable 0.3.8 — https://github.com/zed-industries/zed
++  gpui-pre-http-client-tls 0.3.8 — https://github.com/zed-industries/zed
+   gpui-pre-http-client 0.3.8 — https://github.com/zed-industries/zed
+   gpui-pre-macros 0.3.8 — https://github.com/zed-industries/zed
+   gpui-pre-perf 0.3.8 — https://github.com/zed-industries/zed
+   gpui-pre-platform 0.3.8 — https://github.com/zed-industries/zed
+   gpui-pre-refineable 0.3.8 — https://github.com/zed-industries/zed
++  gpui-pre-reqwest-client 0.3.8 — https://github.com/zed-industries/zed
+   gpui-pre-scheduler 0.3.8 — https://github.com/zed-industries/zed
+   gpui-pre-shared-string 0.3.8 — https://github.com/zed-industries/zed
+   gpui-pre-sum-tree 0.3.8 — https://github.com/zed-industries/zed
+@@ -12270,8 +12280,8 @@
+ 
+ ----------------------------------------------------------------------
+ Apache License 2.0 (Apache-2.0)
+-  herdr-app 0.1.15
+-  herdr-app 0.1.15
++  herdr-app 0.1.16
++  herdr-app 0.1.16
+   gpui-base 0.7.1 — https://github.com/longbridge/gpui-kit
+ 
+ Copyright 2024 - 2026 Longbridge <https://longbridge.com>
+@@ -13103,6 +13113,7 @@
+ ----------------------------------------------------------------------
+ BSD 3-Clause &quot;New&quot; or &quot;Revised&quot; License (BSD-3-Clause)
+   alloc-stdlib 0.2.4 — https://github.com/dropbox/rust-alloc-no-stdlib
++  aws-lc-sys 0.47.0 — https://github.com/aws/aws-lc-rs
+   exr 1.74.2 — https://github.com/johannesvollmer/exrs
+   sha1_smol 1.0.1 — https://github.com/mitsuhiko/sha1-smol
+ 
+@@ -13327,6 +13338,7 @@
+ 
+ ----------------------------------------------------------------------
+ Community Data License Agreement Permissive 2.0 (CDLA-Permissive-2.0)
++  webpki-root-certs 1.0.12 — https://github.com/rustls/webpki-roots
+   webpki-roots 0.26.11 — https://github.com/rustls/webpki-roots
+   webpki-roots 1.0.10 — https://github.com/rustls/webpki-roots
+ 
+@@ -14152,6 +14164,20 @@
+ 
+ 
+ ----------------------------------------------------------------------
++ISC License (ISC)
++  aws-lc-rs 1.19.0 — https://github.com/aws/aws-lc-rs
++  aws-lc-sys 0.47.0 — https://github.com/aws/aws-lc-rs
++
++ISC License
++
++Copyright <year> <owner> 
++
++Permission to use, copy, modify, and/or distribute this software for any purpose with or without fee is hereby granted, provided that the above copyright notice and this permission notice appear in all copies.
++
++THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
++
++
++----------------------------------------------------------------------
+ MIT License (MIT)
+   rustybuzz 0.20.1 — https://github.com/harfbuzz/rustybuzz
+ 
+@@ -15749,6 +15775,33 @@
+ 
+ ----------------------------------------------------------------------
+ MIT License (MIT)
++  fs_extra 1.3.0 — https://github.com/webdesus/fs_extra
++
++MIT License
++
++Copyright (c) 2017 Denis Kurilenko
++
++Permission is hereby granted, free of charge, to any person obtaining a copy
++of this software and associated documentation files (the "Software"), to deal
++in the Software without restriction, including without limitation the rights
++to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
++copies of the Software, and to permit persons to whom the Software is
++furnished to do so, subject to the following conditions:
++
++The above copyright notice and this permission notice shall be included in all
++copies or substantial portions of the Software.
++
++THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
++IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
++FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
++AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
++LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
++OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
++SOFTWARE.
++
++
++----------------------------------------------------------------------
++MIT License (MIT)
+   precomputed-hash 0.1.1 — https://github.com/emilio/precomputed-hash
+ 
+ MIT License
+@@ -16971,6 +17024,34 @@
+ 
+ ----------------------------------------------------------------------
+ MIT License (MIT)
++  combine 4.6.9 — https://github.com/Marwes/combine
++
++The MIT License (MIT)
++
++Copyright (c) 2015 Markus Westerlind
++
++Permission is hereby granted, free of charge, to any person obtaining a copy
++of this software and associated documentation files (the "Software"), to deal
++in the Software without restriction, including without limitation the rights
++to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
++copies of the Software, and to permit persons to whom the Software is
++furnished to do so, subject to the following conditions:
++
++The above copyright notice and this permission notice shall be included in
++all copies or substantial portions of the Software.
++
++THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
++IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
++FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
++AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
++LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
++OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
++THE SOFTWARE.
++
++
++
++----------------------------------------------------------------------
++MIT License (MIT)
+   fsevent-sys 4.1.0 — https://github.com/octplane/fsevent-rust/tree/master/fsevent-sys
+ 
+ The MIT License (MIT)
+@@ -17008,6 +17089,34 @@
+ 
+ Permission is hereby granted, free of charge, to any person obtaining a copy
+ of this software and associated documentation files (the "Software"), to deal
++in the Software without restriction, including without limitation the rights
++to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
++copies of the Software, and to permit persons to whom the Software is
++furnished to do so, subject to the following conditions:
++
++The above copyright notice and this permission notice shall be included in all
++copies or substantial portions of the Software.
++
++THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
++IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
++FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
++AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
++LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
++OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
++SOFTWARE.
++
++
++----------------------------------------------------------------------
++MIT License (MIT)
++  aws-lc-sys 0.47.0 — https://github.com/aws/aws-lc-rs
++
++The MIT License (MIT)
++
++Copyright (c) 2015-2020 the fiat-crypto authors (see
++https://github.com/mit-plv/fiat-crypto/blob/master/AUTHORS).
++
++Permission is hereby granted, free of charge, to any person obtaining a copy
++of this software and associated documentation files (the "Software"), to deal
+ in the Software without restriction, including without limitation the rights
+ to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ copies of the Software, and to permit persons to whom the Software is

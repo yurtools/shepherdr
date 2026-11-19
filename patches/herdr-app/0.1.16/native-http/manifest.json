@@ -1,0 +1,36 @@
+{
+  "runtime": "Herdr App v0.1.16 plus accepted emphasis, EOL and reference-image patches",
+  "source_archive_sha256": "fea3d920607f2199ed330eb3cdcb1fa3626dcea5080c92a97a296d983d6bc681",
+  "files": {
+    "Cargo.toml": {
+      "before": "a29c9a79e38861005cd9745f4daf97555e7ce4744d9204a290cf9903156b1680",
+      "after": "7b496cb1d2e9cb9d09c2c6a116dd1cf8b2ed0ab22756a51719b39936e555ed9e"
+    },
+    "Cargo.lock": {
+      "before": "90a81788ce064ee938155b2e8c3028f4f93a9e633eb0831e8d06ae71185394da",
+      "after": "091f6472107a7e66f422805f830240e6d19c0a0cc9ea0a5c49c13375f2f89e7e"
+    },
+    "src/main.rs": {
+      "before": "8d29d2563d9eaf79367a839e64543d1f7844e2b66ceeef2b3ea829163d96a1b2",
+      "after": "2a87cb4c7ed2bc09e2abaa32a875e3afe537eaf8ad4373d29b03f42bf7b3746a"
+    },
+    "src/document_http.rs": {
+      "before": null,
+      "after": "5360292c60fc0f0edc7b74144bc4c300a5312bf261d0c5765a290463b11a6168"
+    },
+    "THIRD-PARTY-NOTICES": {
+      "before": "5df6bc3f39c1d08b3a593164f3b2434b6510c85726ba8a94007cfbc5783cbcfb",
+      "after": "6d3203afe480da86a23b4b785e267bf8db6613a09595c5979e905bb712aa82fa"
+    },
+    "licenses/inventory.json": {
+      "before": "3d021fc839b8da87824d5ae085e1c3723d59223a5d7b80bd92f8ef3ed6c4ede4",
+      "after": "3d021fc839b8da87824d5ae085e1c3723d59223a5d7b80bd92f8ef3ed6c4ede4"
+    }
+  },
+  "dependency": {
+    "num": "0.3.8",
+    "checksum": "894b8d8618c92cbd4da28a04dd3fcf3c0e0607074fa99416a864ac9b63b18aae",
+    "license": "Apache-2.0",
+    "dl_path": "/api/v1/crates/gpui-pre-reqwest-client/0.3.8/download"
+  }
+}

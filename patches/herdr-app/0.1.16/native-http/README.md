@@ -16,7 +16,7 @@ endpoint reproduced this gap during the combined installation work.
 
 `runtime.patch` adds one application startup hookup and a small `document_http`
 factory (`client.rs`). It uses the matching published
-`gpui-pre-reqwest-client` **0.3.8**, from the GPUI snapshot of
+[gpui-pre-reqwest-client 0.3.8](https://docs.rs/crate/gpui-pre-reqwest-client/0.3.8/source/src/reqwest_client.rs), from the GPUI snapshot of
 Zed `279fe070bb389b79652e52065b2f001edcc0b11b`. Its immutable crate checksum is
 `894b8d8618c92cbd4da28a04dd3fcf3c0e0607074fa99416a864ac9b63b18aae`.
 The patch includes the resolved host lockfile and regenerated third-party
@@ -87,13 +87,15 @@ Rust 1.95.0, Zig 0.16.0 and Ghostty commit
 ```bash
 export CARGO_BUILD_JOBS=2
 cargo build --release --locked -j 2
-cargo test --release --locked -j 2 --bins \
+cargo test --locked -j 2 --config 'profile.dev.package."*".opt-level=0' --bins \
   --test skill --test notices --test colrv1 --test shot_pixels -- --test-threads=2
 ```
 
 The omitted `commands` integration test invokes an app command with an alternate
-app home; it is unsuitable for this person's installation constraints. The
-selected Linux pixel tests use a headless renderer. Use the host's documented
+app home; leave it out when following this repository's rule against running app
+commands with a changed app home. The selected Linux pixel tests use a headless
+renderer. Use the documented debug/CI test profile: layout selector assertions
+are unavailable in an optimized release test build. Run the host's documented
 JavaScript tests too. A completed build/test exit and binary checksum are required;
 an interrupted run is incomplete evidence. Run a final production build after
 tests before selecting the executable to install.

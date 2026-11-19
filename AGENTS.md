@@ -28,6 +28,8 @@ How to run, build and lay out the code: [docs/develop.md](docs/develop.md).
   refusal: `sudo sysctl user.max_user_namespaces=0`, then restore the old value.
 - Read-only sandbox check: `chmod 555` a scratch dir, run herdr-task with `HERDR_TASK_STORE=<dir>`; a read must not
   need the lock file to be writable.
+- Approval helper list adds inherited display metadata; use a locked raw `rules.json` read for full ID/content
+  equality and compare list rows only by policy fields.
 - Never run herdr-app or herdr-task with a changed `HOME` or `HERDR_APP_HOME`, never start a second herdr-app window,
   and never install into the real `~/.config/herdr-app` for a try: use `./install.sh --root <scratch>`. A window or
   scheduler on another home can overwrite every machine's spaces.

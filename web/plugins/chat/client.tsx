@@ -27,7 +27,7 @@ import { answeredBy, cancelReply, canReply, isArtifact, jumpTo, startReply } fro
 import { typing, working } from './typing.ts'
 import { suggestionOf, suggestionsOn } from './suggest.ts'
 import { JobsSheet, JobsTag, NeedsYou, openSubagent, TurnLine, useSubagent, WorkingLine } from './activity.tsx'
-import { ClockIcon } from '@heroicons/react/16/solid'
+import { ClockIcon, CpuChipIcon, ExclamationTriangleIcon } from '@heroicons/react/16/solid'
 import { AskedRow, Band, BriefRow, Chips, EndedRow, ErrorRow, NoteRow, Notice, HeadRow, ImagesLine, NewsRow, onTerminal, PilotRow, PublishingRow, questionsBelow, ReplyLine, Thumbs, WORDS } from './rows.tsx'
 import { AgentLine, openModelMenu, openRestart, RestartSheet } from '@client/restart.tsx'
 import { Sheet, SheetClose } from '@client/Stack.tsx'
@@ -1332,7 +1332,7 @@ const Messages = memo(function Messages({ chat, from }: { chat: Chat; from: stri
  *  question mark, or a list for a plan. The title wraps onto as many lines as it needs, the mark on its first line */
 type CardSource = { id: string; title?: string }
 
-export function CardShell({ title, plan, icon, action, source, head, children }: { title: string; plan?: boolean; icon?: ComponentType<{ className?: string }>; action?: ReactNode; source?: CardSource; head?: { who: string; links: { label: string; fn: () => void }[]; dismiss?: () => void }; children: ReactNode }) {
+export function CardShell({ title, plan, icon, action, source, head, neutral, children }: { title: string; plan?: boolean; icon?: ComponentType<{ className?: string }>; action?: ReactNode; source?: CardSource; head?: { who: string; links: { label: string; fn: () => void }[]; dismiss?: () => void }; neutral?: boolean; children: ReactNode }) {
   const Icon = icon ?? (plan ? PlanIcon : QuestionIcon)
   // Esc while the card has the focus (a press on it) dismisses it, as Esc in the CLI's own prompt; not while typing in it
   const esc = head?.dismiss
@@ -1348,7 +1348,7 @@ export function CardShell({ title, plan, icon, action, source, head, children }:
       {/* the window's card header: a red dot, "Claude asks", quiet links at the right */}
       {head ? (
         <div data-card-head className="flex items-center gap-2 px-3 pt-2 text-[0.75rem] phone:text-[0.8125rem]">
-          <span aria-hidden className="size-1.5 shrink-0 rounded-full bg-need" />
+          {neutral ? null : <span aria-hidden className="size-1.5 shrink-0 rounded-full bg-need" />}
           <span className="min-w-0 flex-1 truncate font-medium text-fg2">{`${head.who} asks`}</span>
           {head.links.map((l) => (
             <button key={l.label} type="button" onClick={l.fn} className="relative shrink-0 text-fg3 hover:text-fg hover:underline">
@@ -1613,7 +1613,8 @@ function OneQuestionCard({ q, chat, msg, from, source, steady }: { q: Question; 
     if (composing) noteRef.current?.focus()
   }, [composing])
   return (
-    <CardShell title={q.title} plan={q.kind === 'Plan'} source={source} head={sent ? undefined : askHead(q, chat)}>
+    <CardShell title={q.title} plan={q.kind === 'Plan'} source={source} neutral={!!q.approval} head={sent ? undefined : askHead(q, chat)}>
+      {q.approval && !sent ? <PermissionStatus status={q.approval} /> : null}
       {q.screen ? <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-words text-xs text-fg2">{q.press ? q.screen.split(/(https?:\/\/\S+)/).map((part, j) => j % 2 ? <a key={j} href={part} target="_blank" rel="noreferrer" className="text-accent">{part}</a> : part) : q.screen}</pre> : null}
       {q.terminal && !sent && has('terminal') ? <button type="button" className="text-left text-accent" onClick={() => openTerminal(chat.key)}>{WORDS.openTerminal}</button> : null}
       {q.evidence ? <Evidence e={q.evidence} open={!sent} /> : null}
@@ -1723,6 +1724,17 @@ function OneQuestionCard({ q, chat, msg, from, source, steady }: { q: Question; 
       )}
     </CardShell>
   )
+}
+
+export function PermissionStatus({ status }: { status: NonNullable<Question['approval']> }) {
+  const Icon = status.attention ? ExclamationTriangleIcon : status.state === 'assistant' ? CpuChipIcon : ClockIcon
+  return <div role="status" aria-live="polite" aria-atomic="true" className="flex flex-col gap-1 text-[0.8125rem] text-fg2">
+    <div className="flex items-start gap-2 font-medium">
+      <Icon aria-hidden="true" className={clsx('mt-0.5 size-4 shrink-0', status.attention ? 'text-work' : 'text-fg3')} />
+      <span>{status.text}</span>
+    </div>
+    {status.detail ? <p className="text-pretty">{status.detail}</p> : null}
+  </div>
 }
 
 /* ---------- a secret an agent asked for ---------- */

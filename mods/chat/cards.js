@@ -1,4 +1,4 @@
-import { rememberedControls, recordPermission } from "./approval-cards.js";
+import { rememberedControls } from "./approval-cards.js";
 // The card that answers what Claude asks through the PermissionRequest hook (asks.js): a
 // permission or a plan (Allow / Deny), or questions (AskUserQuestion: steps, options, "Other…",
 // "Chat about this", one Submit). The chat shows it in the conversation where it was asked, as
@@ -12,11 +12,11 @@ import { rememberedControls, recordPermission } from "./approval-cards.js";
 
 import { div } from "gpui-kit";
 import { InputState } from "gpui-base";
-import { allow, deny, answer, answers, annotationsOf, chatAbout, dismiss, release } from "./core/asks.js";
+import { permissionStatus, allow, deny, answer, answers, annotationsOf, chatAbout, dismiss, release } from "./core/asks.js";
 
 // A card's first strip. opts: { who ("Claude", "HERD-12"), asks (false: what follows `who`
 // instead, e.g. "Kept"), dot (its color; default red), links ([ctl] at the right) }.
-export const headStrip = (opts) => ({ key: "head", kind: "head", who: opts.asks === false ? opts.who : `${opts.who ?? "Claude"} asks`, dot: opts.dot, links: opts.links ?? [] });
+export const headStrip = (opts) => ({ key: "head", kind: "head", who: opts.asks === false ? opts.who : `${opts.who ?? "Claude"} asks`, dot: opts.dot, neutral: opts.neutral, links: opts.links ?? [] });
 
 // A quiet link of a card's header (strips.js ctl).
 export const linkCtl = (id, label, fn) => ({ id, label, look: "link", fn });
@@ -50,7 +50,12 @@ export class AskCards {
     const links = [...(opts.links ?? []),
       ...(long ? [linkCtl(`ask-all-${id}`, open ? "Show less" : "Show all", () => { if (open) this.open.delete(id); else this.open.add(id); })] : []),
       ...(opts.terminal !== false ? [this.terminalLink(ask)] : []), this.dismissLink(ask)];
-    const out = [headStrip({ who: opts.who, links }), { key: "title", kind: "title", text: w.title }];
+    const status = w.kind === "permission" ? ask.approval ?? permissionStatus(ask.req ?? {tool_name:'unknown'}, undefined) : null;
+    const out = [headStrip({ who: opts.who, links, ...(status ? { neutral: true } : {}) }), { key: "title", kind: "title", text: w.title }];
+    if (status) {
+      out.push({ key: "status", kind: "status", text: status.text, state: status.state, attention: status.attention });
+      if (status.detail) out.push({ key: "status-detail", kind: "text", tone: "muted", text: status.detail });
+    }
     if (w.detail) out.push({ key: "detail", kind: "detail", lines: w.detail.split("\n"), clip: long && !open ? SHORT : null });
     if (w.cut) out.push({ key: "cut", kind: "text", tone: "dim", text: "Some of it is too long for the chat; the terminal shows it all." });
     if (w.kind === "question") {
@@ -60,9 +65,9 @@ export class AskCards {
     } else {
       const ctls = [];
       // Always answerable here; only a request the chat couldn't read at all goes to the terminal.
-      if (!w.unread) ctls.push({ id: `ask-allow-${id}`, label: w.kind === "plan" ? "Approve" : "Allow once", look: "primary", fn: (cx) => { const text=allow(); recordPermission(ask,text,this.host,cx); this.host.reply(ask,text,cx); } });
+      if (!w.unread) ctls.push({ id: `ask-allow-${id}`, label: w.kind === "plan" ? "Approve" : "Allow once", look: "primary", fn: (cx) => this.host.reply(ask,allow(),cx) });
       ctls.push({ id: `ask-deny-${id}`, label: w.kind === "plan" ? "Keep planning" : "Deny", look: "secondary",
-        fn: (cx) => { const text=w.kind === "plan" ? deny("The person didn't approve this plan yet. Ask them what to change.") : deny(); recordPermission(ask,text,this.host,cx);this.host.reply(ask,text,cx); } });
+        fn: (cx) => this.host.reply(ask,w.kind === "plan" ? deny("The person didn't approve this plan yet. Ask them what to change.") : deny(),cx) });
       out.push({ key: "actions", kind: "controls", align: "start", ctls });
       const remembered=rememberedControls(ask,this.host);
       if(remembered.length){out.push({key:"rule-actions",kind:"controls",align:"start",ctls:remembered.slice(0,2)});out.push({key:"review-action",kind:"controls",align:"start",ctls:remembered.slice(2)});}

@@ -16,7 +16,7 @@ const { senderName, briefLabel, firstUser, firstKeys, newsTimeline, resolveArtif
 import { mentionedIn } from "../core/send.js";
 import * as MEc from "../core/mentions.js";
 import * as SCc from "../core/screens.js";
-import { codexChoice } from "../core/asks.js";
+import { codexChoice, permissionStatus } from "../core/asks.js";
 const { SCREEN } = SCc as any;
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -282,7 +282,7 @@ export class Compat {
     const detail = w.detail ? `${fence}text\n${w.detail}\n${fence}${w.cut ? cut : ""}` : undefined;
     return w.kind === "plan"
       ? { id: a.id, title: w.title, kind: "Plan", to: key, plan: `${w.detail ?? ""}${w.cut ? cut : ""}`, choices: [{ label: "Approve" }, { label: "Keep planning" }], noteRequiredFor: 1 }
-      : { id: a.id, title: w.title, kind: "Question", to: key, ...(detail ? { plan: detail } : {}), choices: [{ label: "Allow" }, { label: "Deny" }] };
+      : { id: a.id, title: w.title, kind: "Question", to: key, approval: a.approval ?? permissionStatus(a.req, undefined), ...(detail ? { plan: detail } : {}), choices: [{ label: "Allow" }, { label: "Deny" }] };
   }
   last: Snapshot | null = null;
   /** chat key -> the files its messages show (a chat's images): the only ones /api/file serves for it */
@@ -415,9 +415,11 @@ export class Compat {
 
     // hook asks waiting on the person: each a Need with its card
     const keyOf = new Map([...chats].map(([k, a]) => [a, k]));
+    const processing = new Set<string>();
     for (const a of this.asks?.open.values() ?? []) {
       const key = keyOf.get(a.terminal);
       if (!key) continue;
+      if (a.approval?.attention === false) { processing.add(key); continue; }
       const task = key.endsWith("/worker") ? key.slice(0, -7) : undefined;
       const place = task ? tasks.find((x) => x.id === task)?.place ?? "" : places.find((p) => p.chat === key)?.id ?? "";
       needs.push({ id: a.id, chat: key, place, ...(task ? { task } : {}), at: a.at, question: this.question(a, key) });
@@ -434,7 +436,7 @@ export class Compat {
     // 'attention' is an agent waiting with no card: one whose chat has a card (its question, a secret) needs you once,
     // not twice (one toast, one alert, one in the counts)
     const carded = new Set(needs.filter((x) => x.id !== "attention").map((x) => x.chat));
-    for (let i = needs.length - 1; i >= 0; i--) if (needs[i].id === "attention" && carded.has(needs[i].chat)) needs.splice(i, 1);
+    for (let i = needs.length - 1; i >= 0; i--) if (needs[i].id === "attention" && (carded.has(needs[i].chat) || processing.has(needs[i].chat))) needs.splice(i, 1);
 
     const pinned = spaces.filter((s) => s.pinned).map((s) => s.id);
     const sections: Section[] = [

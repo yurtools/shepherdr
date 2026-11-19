@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { requestHash } from "../core/asks.js";
 
 // a throwaway app home: never the real data/chat-asks
 const home = mkdtempSync(join(tmpdir(), "shep-asks-"));
@@ -12,6 +13,25 @@ const { Asks } = await import("./asks.ts");
 const { Compat } = await import("./compat.ts");
 
 const put = (id: string, req: unknown) => writeFileSync(join(dir, "req", `${id}.json`), JSON.stringify(req));
+
+test("an already visible permission learns who is reviewing it, then why it needs the person", () => {
+  const id = "status.1700000000.1", req = { tool_input: { command: "git status" }, tool_name: "Bash" };
+  put(id, req);
+  const asks = new Asks(), compat = new Compat();
+  let changes = 0; asks.on(() => changes++);
+  const status = (state: string, reason = "", reviewer = "") => writeFileSync(join(dir, "req", `${id}.status`), JSON.stringify({
+    version: 1, request_hash: requestHash(req), state, reason, reviewer,
+  }));
+  status("checking"); (asks as any).read();
+  expect((compat.question(asks.of("status")[0], "test") as any).approval?.text).toBe("Checking saved rules…");
+  status("assistant", "", "feature"); (asks as any).read();
+  expect((compat.question(asks.of("status")[0], "test") as any).approval?.text).toBe("Waiting for Feature Assistant review");
+  status("person", "assistant-asked"); (asks as any).read();
+  expect((compat.question(asks.of("status")[0], "test") as any).approval).toMatchObject({ text: "Waiting for your decision", detail: "Assistant asked you to decide." });
+  expect(changes).toBe(3);
+  writeFileSync(join(dir, "ans", `${id}.json`), "{}"); (asks as any).read();
+  expect(asks.of("status")).toEqual([]);
+});
 
 test("a permission becomes a card, and Allow answers the hook as the window's card does", () => {
   put("t5.100.1", { tool_name: "Bash", tool_input: { command: "npm test", description: "Run the tests" }, cwd: "/x" });
@@ -102,6 +122,11 @@ test("another machine's ask: a card here, answered there", async () => {
   const [a] = asks.of("m3/t12");
   expect(a).toMatchObject({ id: "m3/t12.1700000000.7", machine: "m3", local: "t12.1700000000.7" });
   expect(a.req.tool_input.command).toBe("npm\ttest");
+  expect(a.approval.state).toBe('unknown');
+  let updates=0;asks.on(()=>updates++);
+  writeFileSync(join(td,'req','t12.1700000000.7.status'),JSON.stringify({version:1,request_hash:requestHash(a.req),state:'assistant',reviewer:'space',token:'must-not-travel'}));
+  await (asks as any).poll();expect(asks.of('m3/t12')[0].approval.text).toBe('Waiting for Space Assistant review');expect(updates).toBe(1);
+  expect(JSON.stringify(new Compat().question(asks.of('m3/t12')[0],'remote'))).not.toContain('must-not-travel');
   expect(calls[0]).toMatchObject({ method: "machine.exec", on: "m3" });
   // what is open here stays across a read of this machine's own
   (asks as any).read();
@@ -111,6 +136,14 @@ test("another machine's ask: a card here, answered there", async () => {
   expect(readFileSync(join(td, "end", "t12.1700000000.7"), "utf8")).toBe("Allowed on the web\n");
   expect(asks.of("m3/t12").length).toBe(0);
   expect(asks.endsOf("m3/t12")[0]).toMatchObject({ how: "Allowed on the web" });
+});
+
+test('a stale or answered permission cannot overwrite another decision',async()=>{
+ const id='race.1700000000.1',req={tool_name:'Bash',tool_input:{command:'git status'}};put(id,req);
+ const asks=new Asks();(asks as any).read();put(id,{...req,tool_input:{command:'git push'}});
+ await expect(asks.answer(id,{choice:0})).rejects.toThrow('changed or closed');expect(existsSync(join(dir,'ans',id+'.json'))).toBe(false);
+ put(id,req);(asks as any).read();writeFileSync(join(dir,'ans',id+'.json'),JSON.stringify({hookSpecificOutput:{decision:{behavior:'deny'}}}));
+ await expect(asks.answer(id,{choice:0})).rejects.toThrow();expect(JSON.parse(readFileSync(join(dir,'ans',id+'.json'),'utf8')).hookSpecificOutput.decision.behavior).toBe('deny');
 });
 
 test("another machine's ask answered there first: it closes here with how", async () => {

@@ -59,6 +59,17 @@ Execution permission cards provide:
   account-in-this-folder scope, expiration, and allow or deny.
 - **Ask Assistant**: delegate this request once, without changing global defaults.
 
+Execution cards show who is handling the request: **Checking saved rules…**,
+**Requesting Assistant review…**, **Waiting for Assistant review**, or
+**Waiting for your decision**. A known owning reviewer is labeled Feature
+Assistant or Space Assistant. A yellow warning sign marks a decision for you;
+checking and review have quiet clock and Assistant icons. The text stays visible.
+The card briefly explains manual mode, an unmatched rule, an Assistant asking
+you, or unavailable/expired review when known. You can still take over manually.
+Older machines without status metadata say **Approval status unavailable**.
+Native Codex handoffs close with **Sent to Codex Auto-review · final result not
+reported**; they do not claim Codex allowed or denied the action.
+
 Prefixes match parsed argument tokens. For example, `git status` matches
 `git status --short`, not `git statusx`. Compound shell commands, substitutions,
 redirections and broad shell/interpreter prefixes cannot be remembered through

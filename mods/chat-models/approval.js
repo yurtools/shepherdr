@@ -5,6 +5,11 @@ export async function approvalCall(command,args=[],on=null){
  let out;try{out=JSON.parse(r.stdout);}catch{throw new Error(r.stderr||'Approval settings could not be read.');}
  if(r.code!==0||out.error)throw new Error(out.error||r.stderr||'Approval operation failed.');return out;
 }
+// The same exclusive answer claim as the hook/reviewer. Never replace an answer from
+// another card, the terminal, or a native handoff while this card was being pressed.
+export async function answerPermission(request,hash,text,reason){
+ return approvalCall('answer',['--request',request,'--hash',hash,'--answer',text,'--reason',reason??'']);
+}
 export function approvalDialog(mode,ask=null,space=null){openOverlay({mod:'workspace-approvals',kind:'dialog',frame:'none',width:900,height:0.82,props:{mode,id:ask?.id,terminal:ask?.terminal,space}});}
 export async function approvalArgv(argv,space,role,cwd,on=null){
  const args=['--argv',JSON.stringify(argv),'--space',String(space??'').split('/').pop(),'--role',role??'agent','--cwd',cwd??''];

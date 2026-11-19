@@ -126,8 +126,20 @@ def unsafe_prefix(pattern):
  at=prefix_command_at(pattern);effective=pattern[at:]
  return (len(pattern)<2 or not effective or
          any(w.split('/')[-1]=='timeout' for w in pattern[:at]) and len(effective)<2 or
-         effective[0].split('/')[-1] in ('sh','bash','zsh','env') or
-         effective[0].split('/')[-1] in ('python','python3','node','ruby','perl') and (len(effective)<2 or effective[1].startswith('-')))
+         effective[0].split('/')[-1] in ('sh','bash','zsh','dash','ksh','fish','env','sudo','command','exec','eval','nohup','nice','stdbuf','xargs') or
+         (re.fullmatch(r'python(?:[23](?:\.\d+)*)?',effective[0].split('/')[-1]) or effective[0].split('/')[-1] in ('node','nodejs','ruby','perl','php','lua','pwsh','powershell')) and (len(effective)<2 or effective[1].startswith('-')))
+
+def wrapped_pipeline(words,depth):
+ at=command_at(words)
+ if at==len(words):return False
+ name=words[at].split('/')[-1]
+ if name in ('sh','bash','zsh'):
+  return any(pipeline_syntax(w,depth+1) for w in words[at+1:])
+ if name in ('env','sudo','command','exec','nohup','nice','timeout','stdbuf'):
+  # These wrappers are not expanded into new grants. Recognize a shell behind
+  # them only to reject a hidden whole-pipeline payload conservatively.
+  return any(w.split('/')[-1] in ('sh','bash','zsh') and any(pipeline_syntax(arg,depth+1) for arg in words[i+1:]) for i,w in enumerate(words[at+1:],at+1))
+ return False
 
 def pipeline_syntax(value,depth=0):
  """Detect even malformed pipeline syntax before considering legacy payload grants.
@@ -137,9 +149,7 @@ def pipeline_syntax(value,depth=0):
  if depth>8:return True
  if isinstance(value,list):
   if not all(isinstance(w,str) for w in value):return False
-  at=prefix_command_at(value)
-  if at<len(value) and value[at].split('/')[-1] in ('sh','bash','zsh'):return any(pipeline_syntax(w,depth+1) for w in value[at+1:])
-  return False
+  return wrapped_pipeline(value,depth)
  if not isinstance(value,str):return False
  quote=None;escaped=False
  for i,c in enumerate(value):
@@ -157,11 +167,7 @@ def pipeline_syntax(value,depth=0):
   if c in ("'",'"'):quote=c
   elif c=='|':return True
  try:
-  words=shlex.split(value);at=prefix_command_at(words)
-  if at<len(words) and words[at].split('/')[-1] in ('sh','bash','zsh'):
-   # Be conservative for unsupported shell flags, too: never treat a hidden
-   # script pipeline as one legacy payload when a wrapper couldn't be parsed.
-   return any(pipeline_syntax(w,depth+1) for w in words[at+1:])
+  return wrapped_pipeline(shlex.split(value),depth)
  except ValueError:pass
  return False
 

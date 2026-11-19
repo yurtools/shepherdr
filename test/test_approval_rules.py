@@ -222,10 +222,10 @@ class PipelineRules(unittest.TestCase):
     with self.assertRaisesRegex(ValueError,'arbitrary'):A.grant(self.path,match='prefix',prefix=prefix)
   self.command('GIT_TERMINAL_PROMPT=0 git status')
   self.assertEqual(self.cli('inspect','--request',str(self.path))['suggested_prefix'],'GIT_TERMINAL_PROMPT=0 git status')
-  for command,prefix in [('timeout 50s bash -c true','timeout 50s bash'),('X=1 timeout 50s python3 -c pass','X=1 timeout 50s python3 -c'),("bash -lc 'timeout 50s node -e 0'",'timeout 50s node -e')]:
+  for command,prefix in [('timeout 50s bash -c true','timeout 50s bash'),('X=1 timeout 50s python3 -c pass','X=1 timeout 50s python3 -c'),("bash -lc 'timeout 50s node -e 0'",'timeout 50s node -e'),('timeout 50s sudo sh -c true','timeout 50s sudo sh'),('X=1 python3.12 -c pass','X=1 python3.12 -c')]:
    self.command(command)
    with self.assertRaisesRegex(ValueError,'arbitrary'):A.grant(self.path,match='prefix',prefix=prefix)
-  for command in ("timeout 50s bash -lc 'git status | wc -l'",['timeout','50s','sh','-c','git status | wc -l']):
+  for command in ("timeout 50s bash -lc 'git status | wc -l'",['timeout','50s','sh','-c','git status | wc -l'],"env sh -c 'git status | wc -l'",['env','sh','-c','git status | wc -l'],"timeout --signal=KILL 50s sh -c 'git status | wc -l'"):
    req=self.command(command)
    with self.assertRaisesRegex(ValueError,'unsupported'):A.grant(self.path)
    ctx=A.request_context(self.path)[1]

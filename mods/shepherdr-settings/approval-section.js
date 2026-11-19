@@ -20,7 +20,7 @@ export function approvalsSection(view,t,cx){
   .child(h_flex().gap(8).py(10)
     .child(button('approval-rules','Manage rules…',{onClick:()=>approvalDialog('rules',null,view.scope)}))
     .child(button('approval-history','Approval history…',{onClick:()=>approvalDialog('history',null,view.scope)})))
-  .child(div().text_size(11).text_color(t.dim).child('Rules and history are local to this computer and keep account identity. The Assistant reviews other agents, never itself. Codex Auto-review uses an interactive sandbox on new or restarted Codex agents and keeps read-only restrictions. Autopilot is independent.'));
+  .child(div().text_size(11).text_color(t.dim).child('Rules and history are local to this computer. Global / Everywhere rules cross accounts and folders; other scopes keep those boundaries. The Assistant reviews other agents, never itself. Codex Auto-review uses an interactive sandbox on new or restarted Codex agents and keeps read-only restrictions. Autopilot is independent.'));
 }
 
 export function approvalsFlush(view){

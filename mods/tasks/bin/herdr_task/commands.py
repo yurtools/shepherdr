@@ -1253,6 +1253,9 @@ def cmd_accept(args):
         before = None
         receipt = t.get("accept_receipt")
         if expected and receipt and receipt.get("token") == expected:
+            if t["state"] != "done" and (t["state"] != "ready" or not t.get("accepted_at") or
+                    receipt.get("ready_at", t.get("ready_at")) != t.get("ready_at")):
+                raise Fail("The previous acceptance was recorded, but this task resumed. Refresh and review its new work.")
             say(args, {**view(s, t), "accepted": receipt["accepted"], "replayed": True}, f"{s.ref(t)}: acceptance already recorded.")
             return
         if t.get("accepted_at") and (t.get("merge_requested") or t.get("auto_merge") or t.get("merge_queued")):
@@ -1330,7 +1333,7 @@ def cmd_accept(args):
                 after = decision(s, t)["decision_basis"] if how in ("merged", "github") else before
             except (Fail, OSError, ValueError):
                 after = None
-            t["accept_receipt"] = {"token": expected, "accepted": how, "at": now(), "before": before, "after": after}
+            t["accept_receipt"] = {"token": expected, "accepted": how, "at": now(), "ready_at": t.get("ready_at"), "before": before, "after": after}
         v = view(s, t)
     if error:
         say(args, {**v, "error": error}, None) if args.json else print(f"herdr-task: {error}", file=sys.stderr)

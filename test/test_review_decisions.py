@@ -243,3 +243,14 @@ class ReviewDecisions(unittest.TestCase):
         self.assertFalse(os.path.exists(t['worktree']))
         self.assertEqual(self.git(self.folder, 'branch', '--list', t['branch']), '')
         self.assertEqual(self.git(self.folder, 'rev-parse', 'main'), t['head'])
+
+    def test_retry_of_old_receipt_cannot_approve_a_resumed_cycle(self):
+        self.no_live(); n = self.ready(mode='here'); token = self.evidence(n)['decision_token']
+        self.accept(n, token)
+        with self.store_mod.Store(self.store_mod.locate(self.folder)) as s:
+            t = s.find(n); t['state'] = 'running'; s.dirty = True
+        with self.assertRaisesRegex(self.Fail, 'task resumed'): self.accept(n, token)
+        with self.store_mod.Store(self.store_mod.locate(self.folder)) as s:
+            t = s.find(n); t.update(state='ready', ready_at=200); s.dirty = True
+        with self.assertRaisesRegex(self.Fail, 'task resumed'): self.accept(n, token)
+        self.assertEqual(self.task(n)['state'], 'ready')

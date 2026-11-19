@@ -103,6 +103,16 @@ class ExecutionRules(unittest.TestCase):
   (A.store()/'rules.json').write_text('{invalid')
   with self.assertRaises(ValueError):A.grant(self.path)
   self.assertEqual((A.store()/'rules.json').read_text(),'{invalid')
+ @unittest.skipIf(os.geteuid()==0,'root can write to chmod read-only folders')
+ def test_real_readonly_directory_needs_no_writable_lock_for_rule_reads(self):
+  valid=A.grant(self.path);dead={**valid,'id':'dead','expires':time.time()-1}
+  A.write(A.store()/'rules.json',[dead,valid]);before=(A.store()/'rules.json').read_bytes()
+  os.chmod(A.store(),0o555)
+  try:
+   self.assertEqual(A.rules(),[dead,valid]);self.assertEqual((A.store()/'rules.json').read_bytes(),before)
+   self.assertFalse((A.store()/'.lock').exists())
+   self.assertEqual(self.cli('list')['rows'][0]['id'],valid['id'])
+  finally:os.chmod(A.store(),0o700)
  def test_named_tool_any_arguments_is_explicit_exact_identity_and_coexists_with_exact_payload(self):
   tool='mcp__openmemory__openmemory_store_project'
   req={**self.req,'tool_name':tool,'tool_input':{'command':'not a shell command','content':'one'}};A.write(self.path,req)
@@ -261,5 +271,14 @@ class PipelineRules(unittest.TestCase):
   self.assertTrue(all(r['scope']=='task' and 86390<r['expires']-before<86410 for r in saved))
   self.assertEqual(A.read(self.path.parent.parent/'ans'/self.path.name)['hookSpecificOutput']['decision']['behavior'],'allow')
   self.assertEqual(A.read(self.path),req)
+ def test_task_quick_grant_keeps_the_original_stages_when_request_changes_during_save(self):
+  req=self.command('git status | wc -l');original=A.save_rule;calls=[]
+  def save(*args,**kwargs):
+   calls.append(args[2]);result=original(*args,**kwargs)
+   self.command('git push | head -5');return result
+  with mock.patch.object(A,'save_rule',side_effect=save):
+   with self.assertRaisesRegex(ValueError,'closed or changed'):self.cli('grant','--request',str(self.path),'--task-grant','--respond')
+  self.assertEqual(calls,[['git','status'],['wc','-l']])
+  self.assertFalse((self.path.parent.parent/'ans'/self.path.name).exists())
 
 if __name__=='__main__':unittest.main()

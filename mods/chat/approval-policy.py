@@ -53,9 +53,7 @@ def main(a):
   req,ctx=A.request_context(a.request,a.terminal)
   stages=A.request_stages(req)
   if a.task_grant:
-   if A.pipeline_syntax(A.shell_value(req)) and not stages:raise ValueError('This pipeline contains unsupported shell syntax. Use Allow once or Ask Assistant.')
-   created=[A.grant(a.request,a.terminal,'task','exact',None,24,'allow',i if stages and len(stages)>1 else None) for i in range(len(stages) if stages else 1)]
-   rule=created[-1]
+   rule=A.grant_task(a.request,a.terminal)
   else:rule=A.grant(a.request,a.terminal,a.scope,a.match,a.prefix,a.hours,a.decision,a.stage)
   pipeline=bool(stages and len(stages)>1)
   result,_=A.matching_decision(A.rules() or [],req,ctx) if pipeline else (None,None)

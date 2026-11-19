@@ -53,10 +53,10 @@ a running Codex process.
 Execution permission cards provide:
 
 - **Allow once / Deny**: answer just this request.
-- **Allow for this task**: remember the exact plain command for this task/session
-  for 24 hours and answer it now.
-- **Create rule…**: choose Exact command or Starting with…, task/session, space or
-  account-in-this-folder scope, expiration, and allow or deny.
+- **Allow for this task**: remember the exact command (each stage of a supported
+  pipeline) for this task/session for 24 hours and answer when covered.
+- **Create rule…**: choose a command/stage or a named tool, match, scope, lifetime,
+  and allow or deny. **Forever** follows **1 year** in the lifetime choices.
 - **Ask Assistant**: delegate this request once, without changing global defaults.
 
 Execution cards show who is handling the request: **Checking saved rules…**,
@@ -71,17 +71,74 @@ Native Codex handoffs close with **Sent to Codex Auto-review · final result not
 reported**; they do not claim Codex allowed or denied the action.
 
 Prefixes match parsed argument tokens. For example, `git status` matches
-`git status --short`, not `git statusx`. Compound shell commands, substitutions,
-redirections and broad shell/interpreter prefixes cannot be remembered through
-this UI. Use Allow once or review each such request. Matching deny rules take
-precedence over allow rules. Plans and product-choice questions never receive
-execution grants and still need their own answer.
+`git status --short`, not `git statusx`. Literal assignments stay part of the
+prefix: `GIT_TERMINAL_PROMPT=0 git` does not match a different value or bare `git`.
+Suggestions retain the executable/subcommand behind assignments and literal
+timeouts, such as `timeout 50s hc wait`. A timeout-only prefix, or a prefix that
+grants arbitrary shell/interpreter execution behind a wrapper, is refused.
+Matching deny rules take precedence over allow rules. Plans and product-choice
+questions never receive execution grants and still need their own answer.
 
-Every rule keeps its account identity and working-folder boundary. Space/task
-rules also keep their space and task/session identity. Rules created for one
-Codex login do not apply to the other login. Remembering a rule enables Approved
-rules only for the current task/session until its expiry; it does not change the
-global or space default. New sessions use their configured mode.
+| Scope | Boundary |
+| --- | --- |
+| This task/session | Original account, working folder and descendants, space, and task or session |
+| This space | Original account, working folder and descendants, and space |
+| Account in this folder | Original account and working folder and descendants |
+| Global / Everywhere | All local accounts, folders, spaces, tasks and sessions, for the exact original tool identity |
+
+Per-space managers label Global rules as **inherited in this space**. These are
+single rules, not copies; **Revoke everywhere** removes the shared rule. A scoped
+deny still outranks a Global allow. Global does not cross machines, change an
+approval mode, or bypass sandbox or managed policy. Existing rules keep their
+stored scope; installation never promotes them automatically.
+
+Remembering a rule activates Approved rules only for the original task/session
+for at most 24 hours, or the rule's shorter lifetime. A **Forever** rule persists
+with JSON `expires: 0`; its task/session activation still expires. Global, space
+and role modes remain unchanged. After activation expires, **Ask me** pauses all
+saved rules, including Global rules. New sessions use their configured mode.
+
+Ordinary evaluation and rule-manager reads physically prune expired saved rules
+with an atomic write after re-reading under the writers' lock. Expired temporary
+mode overrides are pruned during policy reads as well. Valid rules, unexpired
+overrides and audit history are retained. Busy or read-only stores keep their
+files intact; expired records still cannot match. An unreadable rule/settings
+store leaves the request with the person and a policy-error explanation, rather
+than delegating around potentially unseen denies.
+
+## Pipelines
+
+For an ordinary `|` pipeline, every stage needs an applicable allow before the
+request can be approved automatically. A deny on any stage wins, even when an
+earlier stage has no match. Otherwise unmatched stages use the configured
+manual, Assistant or native-review fallback. The card identifies the first
+unmatched stage; **Create rule…** selects a stage and saves only its command or
+prefix. Saving one stage leaves the request waiting if another is uncovered.
+Allow once and explicit Assistant decisions can answer the complete request.
+
+Quoted and escaped pipes inside arguments are literal. Supported `sh`, `bash`
+and `zsh` `-c`/`-lc` wrappers are parsed without running them. Empty/malformed
+stages, `||`, `&&`, `;`, substitutions, redirections, expansions and other
+unsupported syntax cannot become stage-prefix grants. Pipelines containing
+such syntax require Allow once or review. A legacy exact payload for a whole
+pipeline cannot bypass stage checks. Unrelated exact non-pipeline payload rules
+(for example a specific test command with output redirection) retain their
+narrow match. Derived arguments are used only for matching; request payloads,
+keys, review tickets and the exclusive answer claim retain the original request.
+
+## Named tools
+
+Non-shell execution tools also offer **Create rule…**, including
+`mcp__openmemory__openmemory_store_project`. Choose **This tool · any arguments**
+explicitly to allow or deny every input variant of that exact tool identity,
+then select any scope and lifetime, including Global and Forever. The form shows
+both its readable name and full namespace-qualified identity. Other names and
+namespaces do not match. A non-shell tool's `input.command` field is never treated
+as Bash. Shell tools cannot receive a tool-wide grant.
+
+**Exact payload for this task** remains the separate narrow choice: it hashes the
+tool and complete input, retains the original task/session/account/folder, and
+does not allow argument variants.
 
 Use **Manage rules…** in Agents settings to inspect and revoke saved rules.
 **Approval history…** shows recent local decisions, their source and rationale;
@@ -122,9 +179,10 @@ Allow for this task remembers a simple command as before. For a script, compound
 command or non-shell execution request it can instead remember a hash of the exact
 tool and complete input payload, scoped to the original task/session, account and
 folder. A different payload is a new request. This does not grant arbitrary scripts.
-Create rule remains disabled when no single plain command can be extracted; prefix
-rules never broaden to shell scripts. Quoted literal punctuation in a plain command
-is accepted, while shell chaining, redirection and expansion remain excluded.
+Create rule offers the exact task payload for non-pipeline scripts and the
+explicit named-tool option for non-shell tools. Prefix rules never broaden to
+shell scripts. Unsupported pipeline syntax disables saving a rule; decide once
+or ask for review instead.
 
 Ask Assistant reviews the complete request independently of whether it can become
 a command-prefix rule. Workers belonging to a named feature route that review to
@@ -139,10 +197,29 @@ shown as **Sent for review**, with **final result not reported**; it is not reco
 as an allow or deny because Codex owns that final decision.
 
 Use **Create rule…** beside a history entry to review its command, original account
-and folder, then choose an exact/prefix match, scope, expiry and allow/deny decision.
+and folder, then choose a command/stage or named-tool match, scope, lifetime and
+allow/deny decision.
 **Save rule for future requests** creates only a future rule. It never replays or
-answers the old request. Scripts and non-command actions can only match the exact
-payload in the original task/session. Redacted entries and older entries without
+answers the old request. Exact script/payload matches keep the original
+task/session. Explicit named-tool matches can use broader selected scopes.
+Redacted entries and older entries without
 their original request context cannot be converted; create a rule from a new
 approval instead. Newly recorded entries retain bounded rule context after their
 requests close, without storing full tool-input payloads.
+
+## Installation and a later migration
+
+The policy helper, task package, native controls and shared status readers must
+be installed together from a compatible build. Old scoped records and dated
+expiries remain readable. Older builds do not understand the new Global and
+tool-wide match kinds; do not apply them with a mixed-version installation.
+The web chat reads stage status but rule creation/management remains in the
+native Approvals dialog. Linked machines keep their own local rules and hooks.
+
+An explicit inventory migration is separate from installation. Before running
+this build's pruning-capable helpers against an existing inventory, preserve a
+private byte-identical snapshot, including expired records. Use matching expired
+records from that frozen snapshot as inputs before deleting originals. Selected
+Global grants must explicitly use Forever, retain their tool identity, and have
+duplicate Space grants removed. This implementation does not perform that live
+migration or change any saved approval modes.

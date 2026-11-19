@@ -344,7 +344,6 @@ def matches(rule,req,ctx,words=None,pipeline=False):
  if rule.get('match')=='tool':return req.get('tool_name') not in SHELL_TOOLS
  if rule.get('match')=='request':
   # A legacy whole-pipeline payload cannot stand in for stage grants.
-  stages=request_stages(req)
   return not pipeline and not pipeline_syntax(shell_value(req)) and rule.get('action_key')==action_key(req)
  if words is None:
   stages=request_stages(req)
@@ -399,6 +398,17 @@ def grant(path, terminal=None, scope='task', match='exact', prefix=None, hours=1
  rule=save_rule(ctx,req['tool_name'],words,action_key(req),summary(req),scope,match,prefix,hours,decision)
  audit(req,ctx,decision,'Saved '+scope+' '+match+' rule','user-rule')
  return rule
+
+def grant_task(path,terminal=None):
+ # Freeze one request/context for all exact stage rules. Never re-read a changed
+ # request between stages and accidentally remember parts of its replacement.
+ req,ctx=request_context(path,terminal)
+ if not is_permission(req):raise ValueError('Plans and questions cannot receive execution approval rules.')
+ stages=request_stages(req)
+ if not stages and pipeline_syntax(shell_value(req)):raise ValueError('This pipeline contains unsupported shell syntax. Use Allow once or Ask Assistant.')
+ created=[save_rule(ctx,req['tool_name'],words,action_key(req),summary(req),'task','exact',None,24,'allow') for words in stages or [None]]
+ audit(req,ctx,'allow','Saved exact rules for this task/session','user-rule')
+ return created[-1]
 
 def save_rule(ctx,tool,words,action,command,scope='task',match='exact',prefix=None,hours=1,decision='allow'):
  if not execution_tool(tool):raise ValueError('Plans and questions cannot receive execution approval rules.')
@@ -573,11 +583,9 @@ def _evaluate(path, terminal=None):
  if own_feature_name(req,ctx):return response('allow','Feature Assistant may name its own feature.','feature-name')
  if own_review_command(req,ctx):return response('allow','Designated Assistant may submit this exact review decision.','review-control')
  saved=rules();opts=settings(ctx);missing=None
- rules_read_error=False
  if opts.get('_read_error') or saved is None:
   return waiting(path,req,'policy-error','Approval policy could not be read. You can decide here.')
  if opts['mode']!='manual':
-  rules_read_error=saved is None and (store()/'rules.json').exists()
   result,missing=matching_decision(saved or [],req,ctx)
   if result:return result
  if opts['mode']=='assistant':return review_ticket(path,req,ctx)
@@ -589,7 +597,7 @@ def _evaluate(path, terminal=None):
  existing=review_status(path,req)
  if existing:return existing
  if opts['mode']=='codex-review':return waiting(path,req,'native-unavailable','Native Auto-review requires a new or restarted Codex agent. Other agents use manual approval.')
- return waiting(path,req,'policy-error' if opts.get('_read_error') or rules_read_error else 'manual' if opts['mode']=='manual' else 'pipeline-stage' if missing is not None else 'no-rule','Waiting for your decision.',stage=missing)
+ return waiting(path,req,'manual' if opts['mode']=='manual' else 'pipeline-stage' if missing is not None else 'no-rule','Waiting for your decision.',stage=missing)
 
 
 def launch_argv(argv, space='', role='worker', cwd='', mode=None):

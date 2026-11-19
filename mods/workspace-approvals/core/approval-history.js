@@ -4,7 +4,7 @@ export function approvalOrigin(row) {
     'feature-name':'Feature naming permission'}[row.source]??'Unknown approval source';
 }
 export function approvalDecision(row) {
-  return {allow:'Allowed',deny:'Denied',delegated:'Sent for review',ask:'Asked you'}[row.decision]??row.decision??'Unknown decision';
+  return {allow:'Allowed',deny:'Denied',saved:'Rule saved',delegated:'Sent for review',ask:'Asked you'}[row.decision]??row.decision??'Unknown decision';
 }
 
 export const RULE_SCOPES=[['task','This task/session'],['space','This space'],['account','Account in this folder'],['global','Global / Everywhere']];

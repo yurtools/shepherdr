@@ -246,10 +246,11 @@ class PipelineRules(unittest.TestCase):
   with self.assertRaisesRegex(ValueError,'stage'):A.grant(self.path)
   with self.assertRaisesRegex(ValueError,'stage'):A.grant(self.path,stage=3)
   out=self.cli('grant','--request',str(self.path),'--stage','0','--scope','global','--hours','0','--respond')
-  self.assertTrue(out['pending_stages']);self.assertEqual(out['pattern'],['git','status'])
+  self.assertTrue(out['pending_stages']);self.assertEqual(out['action'],'wait');self.assertEqual(out['rule']['pattern'],['git','status'])
   self.assertFalse((self.path.parent.parent/'ans'/self.path.name).exists())
   info=self.cli('inspect','--request',str(self.path));self.assertEqual(info['stage'],1);self.assertEqual(info['words'],['wc','-l'])
   row=A.history_rows()[-1]
+  self.assertEqual(row['decision'],'saved');self.assertFalse(any(r['decision'] in ('allow','deny') for r in A.history_rows()))
   rule=self.cli('history-grant','--id',row['id'],'--stage','1','--scope','global','--hours','0')['rule']
   self.assertEqual(rule['pattern'],['wc','-l']);self.assertEqual(rule['expires'],0)
   self.assertFalse((self.path.parent.parent/'ans'/self.path.name).exists())
@@ -267,6 +268,7 @@ class PipelineRules(unittest.TestCase):
   req=self.command('git status | wc -l');before=time.time()
   out=self.cli('grant','--request',str(self.path),'--task-grant','--respond')
   self.assertFalse(out['pending_stages'])
+  self.assertEqual(out['action'],'allow');self.assertEqual([r['decision'] for r in A.history_rows()],['saved','allow'])
   saved=A.rules();self.assertEqual([r['pattern'] for r in saved],[['git','status'],['wc','-l']])
   self.assertTrue(all(r['scope']=='task' and 86390<r['expires']-before<86410 for r in saved))
   self.assertEqual(A.read(self.path.parent.parent/'ans'/self.path.name)['hookSpecificOutput']['decision']['behavior'],'allow')
@@ -280,5 +282,21 @@ class PipelineRules(unittest.TestCase):
    with self.assertRaisesRegex(ValueError,'closed or changed'):self.cli('grant','--request',str(self.path),'--task-grant','--respond')
   self.assertEqual(calls,[['git','status'],['wc','-l']])
   self.assertFalse((self.path.parent.parent/'ans'/self.path.name).exists())
+  self.assertEqual([r['decision'] for r in A.history_rows()],['saved'])
+ def test_task_grant_reports_actual_pipeline_deny_after_winning_answer(self):
+  self.seed('wc -l',scope='space',decision='deny');self.command('git status | wc -l')
+  out=self.cli('grant','--request',str(self.path),'--task-grant','--respond')
+  self.assertEqual(out['action'],'deny');self.assertIn('denied',out['reason'])
+  self.assertEqual(A.read(self.path.parent.parent/'ans'/self.path.name)['hookSpecificOutput']['decision']['behavior'],'deny')
+  rows=[r for r in A.history_rows() if r['key']==A.request_key(A.read(self.path))]
+  self.assertEqual([r['decision'] for r in rows],['saved','deny']);self.assertEqual(rows[-1]['source'],'rule')
+ def test_stage_grant_losing_answer_race_only_logs_saved_event(self):
+  self.seed('wc -l');self.command('git status | wc -l');original=A.answer_once
+  def person_wins(path,value):
+   original(path,A.response('deny','Person decided')['response']);original(path,value)
+  with mock.patch.object(A,'answer_once',side_effect=person_wins):
+   with self.assertRaisesRegex(ValueError,'already been answered'):self.cli('grant','--request',str(self.path),'--stage','0','--respond')
+  rows=[r for r in A.history_rows() if r['key']==A.request_key(A.read(self.path))]
+  self.assertEqual([r['decision'] for r in rows],['saved'])
 
 if __name__=='__main__':unittest.main()

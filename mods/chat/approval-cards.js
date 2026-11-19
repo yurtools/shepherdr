@@ -5,7 +5,7 @@ const args=ask=>['--request',`${appHome()}/data/chat-asks/req/${ask.id}.json`,..
 export function rememberedControls(ask,host){
  if(ask.words?.kind!=='permission'||ask.words?.unread)return[];
  const bound={...ask,terminal:ask.terminal??host.terminal?.(),machine:ask.machine??host.machine?.()};
- const action=(command,extra,title,cx)=>cx.spawn(async cx=>{try{const out=await approvalCall(command,[...args(bound),...extra]);toast({title,body:out.reason??''});}catch(e){toast({title:'Approval was not changed',body:plainError(e),level:'error'});}cx.notify();});
+ const action=(command,extra,title,cx)=>cx.spawn(async cx=>{try{const out=await approvalCall(command,[...args(bound),...extra]);toast({title:command==='grant'&&out.action==='deny'?'Request denied by a saved rule':command==='grant'&&out.action==='wait'?'Rules saved · request still waiting':command==='grant'&&out.action==='saved'?'Rules saved for future requests':title,body:out.reason??''});}catch(e){toast({title:'Approval was not changed',body:plainError(e),level:'error'});}cx.notify();});
  return [
   {id:`ask-task-${ask.id}`,label:'Allow for this task',look:'secondary',disabled:Boolean(bound.machine),fn:cx=>action('grant',['--task-grant','--respond'],'Allowed for this task/session',cx)},
   // The authoritative inspector chooses shell stages, exact payload, or an

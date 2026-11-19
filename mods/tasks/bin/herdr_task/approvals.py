@@ -402,7 +402,7 @@ def grant(path, terminal=None, scope='task', match='exact', prefix=None, hours=1
  if stage is not None and (not stages or not 0<=stage<len(stages)):raise ValueError('Invalid pipeline stage.')
  words=stages[stage or 0] if stages else None
  rule=save_rule(ctx,req['tool_name'],words,action_key(req),summary(req),scope,match,prefix,hours,decision)
- audit(req,ctx,decision,'Saved '+scope+' '+match+' rule','user-rule')
+ audit(req,ctx,'saved' if stages and len(stages)>1 else decision,('Saved stage '+str((stage or 0)+1)+' ' if stages and len(stages)>1 else 'Saved ')+scope+' '+match+' rule','user-rule')
  return rule
 
 def grant_task(path,terminal=None):
@@ -413,7 +413,7 @@ def grant_task(path,terminal=None):
  stages=request_stages(req)
  if not stages and pipeline_syntax(shell_value(req)):raise ValueError('This pipeline contains unsupported shell syntax. Use Allow once or Ask Assistant.')
  created=[save_rule(ctx,req['tool_name'],words,action_key(req),summary(req),'task','exact',None,24,'allow') for words in stages or [None]]
- audit(req,ctx,'allow','Saved exact rules for this task/session','user-rule')
+ audit(req,ctx,'saved' if stages and len(stages)>1 else 'allow','Saved exact rules for this task/session','user-rule')
  return created[-1]
 
 def save_rule(ctx,tool,words,action,command,scope='task',match='exact',prefix=None,hours=1,decision='allow'):

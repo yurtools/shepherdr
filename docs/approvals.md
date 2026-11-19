@@ -115,6 +115,9 @@ manual, Assistant or native-review fallback. The card identifies the first
 unmatched stage; **Create rule…** selects a stage and saves only its command or
 prefix. Saving one stage leaves the request waiting if another is uncovered.
 Allow once and explicit Assistant decisions can answer the complete request.
+History records stage creation as **Rule saved**. The complete request gets an
+allow/deny entry only after that answer wins the exclusive claim. A task grant
+that encounters a matching deny reports the denial rather than an allowed toast.
 
 Quoted and escaped pipes inside arguments are literal. Supported `sh`, `bash`
 and `zsh` `-c`/`-lc` wrappers are parsed without running them. Empty/malformed

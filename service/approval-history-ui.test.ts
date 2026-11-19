@@ -23,6 +23,7 @@ test('a history rule uses the historic ID and never sends an answer to the old a
 test('history shows readable sources and a create-rule action beside each row',()=>{
  const {v,cx,buttons}=fixture();v.rows=[{id:'old',source:'rule',decision:'allow',command:'git status',reason:'task exact rule abc'}];v.render(cx);
  expect(buttons.find(b=>b.id==='history-rule-0').label).toBe('Create rule…');
+ expect(ruleUI.approvalDecision({decision:'saved'})).toBe('Rule saved');
 });
 test('Global and Forever are explicit, with Forever immediately after one year',async()=>{
  const f=fixture();f.v.chooseHistory({id:'old'},f.cx);await f.wait();f.v.grantForm({},f.cx);

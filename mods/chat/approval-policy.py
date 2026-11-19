@@ -57,6 +57,7 @@ def main(a):
   else:rule=A.grant(a.request,a.terminal,a.scope,a.match,a.prefix,a.hours,a.decision,a.stage)
   pipeline=bool(stages and len(stages)>1)
   result,_=A.matching_decision(A.rules() or [],req,ctx) if pipeline else (None,None)
+  answered=False
   # Saving one stage never answers for an unmatched stage, including legacy
   # whole-request rules. The original payload/hash and answer claim stay intact.
   if a.respond:
@@ -65,9 +66,19 @@ def main(a):
    if not pipeline or result:
     answer=A.app_home()/'data/chat-asks/ans'/(Path(a.request).stem+'.json')
     A.answer_once(answer,result['response'] if pipeline else A.response(a.decision,'Saved '+a.scope+' '+a.match+' rule','user-rule')['response'])
+    answered=True
+    if pipeline:
+     # A saved stage is not an answer. Record the complete request's actual
+     # outcome only after winning the same exclusive claim as the hook/person.
+     try:A.audit_result(req,ctx,result)
+     except (OSError,ValueError):pass
    else:
     A.evaluate(a.request,a.terminal,audit_decision=False)
-  return {**rule,'pending_stages':pipeline and not result,'reason':'Stage rule saved. Other stages still need approval.' if pipeline and not result else ''}
+  if pipeline:
+   action=result['action'] if answered else 'wait' if not result else 'saved'
+   reason='Stage rule saved. Other stages still need approval.' if not result else 'Rules saved. This request was denied by a matching rule.' if answered and action=='deny' else 'All pipeline stages are allowed for this request.' if answered else 'Stage rule saved for future requests.'
+   return {'rule':rule,'action':action,'pending_stages':not result,'reason':reason}
+  return {**rule,'pending_stages':False,'reason':''}
  if a.command=='record':
   req,ctx=A.request_context(a.request,a.terminal);A.audit(req,ctx,a.decision,a.reason,'user');return {'ok':True}
  if a.command=='review':

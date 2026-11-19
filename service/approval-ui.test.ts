@@ -1,8 +1,8 @@
 import { beforeEach, expect, mock, test } from 'bun:test';
 import { fakeHerdr } from './fake-herdr';
 import { fakeGpuiBase, fakeGpuiKit, element, built, byId, handler } from './fake-gpui';
-const state=new Map();let writes:any[]=[];
-mock.module('herdr',()=>fakeHerdr({theme:()=>new Proxy({},{get:()=> '#111111'}),settings:()=>({}),shared:(k:string)=>state.get(k),setShared:(k:string,v:any)=>state.set(k,v),props:()=>({}),appHome:()=>'/test-app',exec:async()=>({code:0,stdout:'{"rows":[]}',stderr:''})}));
+const state=new Map();let writes:any[]=[],notices:any[]=[],approvalResult:any={rows:[]};
+mock.module('herdr',()=>fakeHerdr({theme:()=>new Proxy({},{get:()=> '#111111'}),settings:()=>({}),shared:(k:string)=>state.get(k),setShared:(k:string,v:any)=>state.set(k,v),props:()=>({}),appHome:()=>'/test-app',notify:(n:any)=>notices.push(n),exec:async()=>({code:0,stdout:JSON.stringify(approvalResult),stderr:''})}));
 mock.module('gpui-kit',()=>fakeGpuiKit());mock.module('gpui-base',()=>fakeGpuiBase());
 const { approvalsInit, approvalsSection, approvalsFlush }=await import('../mods/shepherdr-settings/approval-section.js');
 const { rememberedControls }=await import('../mods/chat/approval-cards.js');
@@ -10,7 +10,7 @@ const { AskCards }=await import('../mods/chat/cards.js');
 const { words, permissionStatus, requestHash }=await import('../core/asks.js');
 const { strip }=await import('../mods/chat/strips.js');
 const { default: Approvals }=await import('../mods/workspace-approvals/main.js');
-beforeEach(()=>{state.clear();writes=[];built.length=0;});
+beforeEach(()=>{state.clear();writes=[];notices=[];approvalResult={rows:[]};built.length=0;});
 test('Agents exposes a manual default plus role overrides without changing settings on render',()=>{
  const cx:any={timer:{after(){}}};const view:any={scope:null,chain(_section:string,key:string){return[{value:key==='mode'?'manual':key==='policy'?'':undefined}]},scoped(){return{}},set(...args:any[]){writes.push(args)},row(_t:any,title:string,_about:any,control:any,_scope:any,below:any){return element().child(title).when(Boolean(control),(e:any)=>e.child(control)).when(Boolean(below),(e:any)=>e.child(below))}};
  approvalsInit(view,cx);approvalsSection(view,{dim:'#111'},cx);expect(writes).toEqual([]);
@@ -45,6 +45,15 @@ test('native permission strips keep visible status, distinct icons and manual ke
 });
 test('the approval manager holds and releases dialog keyboard ownership',()=>{
  const c:any=new Approvals(),cx:any={focus_handle:()=>({focus(){}}),spawn(){},timer:{every(){}}};c.init({},cx);expect(state.get('keyboard.holder').who).toContain('dialog:approvals:');c.close();expect(state.get('keyboard.holder').who).toBeNull();
+});
+test('task pipeline grants toast the returned deny or pending outcome, never an invented allow',async()=>{
+ for(const action of ['deny','wait','allow']){
+  notices=[];approvalResult={action,reason:'Actual pipeline result'};
+  const controls=rememberedControls({id:'fixture',words:{kind:'permission'},req:{tool_name:'Bash',tool_input:{command:'git status | wc -l'}}},{terminal:()=> 'fixture'});
+  await controls[0].fn({spawn:async(fn:any)=>fn({notify(){}})});
+  expect(notices[0].title).toBe(action==='deny'?'Request denied by a saved rule':action==='wait'?'Rules saved · request still waiting':'Allowed for this task/session');
+  expect(notices[0].body).toBe('Actual pipeline result');
+ }
 });
 
 test('closing immediately saves review policy to its captured space, without saving stale scope text',async()=>{

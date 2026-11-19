@@ -25,6 +25,8 @@ test('remembered execution grants are absent for plans/questions and bind the re
  const controls=rememberedControls({id:'id',words:{kind:'permission'},req:{tool_input:{command:'git status'}}},host);
  expect(controls.map((x:any)=>x.label)).toEqual(['Allow for this task','Create rule…','Ask Assistant']);
  const remote=rememberedControls({id:'id',machine:'remote',words:{kind:'permission'}},host);expect(remote.every((x:any)=>x.disabled)).toBe(true);
+ const named=rememberedControls({id:'id',words:{kind:'permission'},req:{tool_name:'mcp__openmemory__openmemory_store_project',tool_input:{content:'test'}}},host);
+ expect(named.find((c:any)=>c.label==='Create rule…')?.disabled).toBe(false);
 });
 
 test('native permission strips keep visible status, distinct icons and manual keyboard actions',()=>{

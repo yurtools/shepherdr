@@ -218,3 +218,28 @@ class ReviewDecisions(unittest.TestCase):
             t = s.find(n); t['summary'] = 'A revised completed report'; self.commands.finalize(s, t)
         self.assertFalse(decisions.deferred(self.task(n)))
         self.assertEqual(self.task(n)['state'], 'ready')
+
+    def test_worker_changes_during_pr_discovery_cannot_merge_through_local_path(self):
+        self.no_live(); n = self.ready(**self.branch(1)); token = self.evidence(n)['decision_token']
+        original = self.git(self.folder, 'rev-parse', 'main')
+        def discovery(s, t):
+            self.git(t['worktree'], '-c', 'user.name=T', '-c', 'user.email=t@example.com', 'commit', '-q', '--allow-empty', '-m', 'resumed during discovery')
+            return None
+        self.patch(self.commands, 'own_open_pr', discovery)
+        with self.assertRaisesRegex(self.Fail, 'branch changed'): self.accept(n, token)
+        self.assertEqual(self.git(self.folder, 'rev-parse', 'main'), original)
+        self.assertEqual(self.task(n)['state'], 'ready'); self.assertNotIn('accepted_at', self.task(n))
+
+    def test_lost_follow_up_read_preserves_success_receipt_and_normal_cleanup(self):
+        self.no_live(); self.patch(self.commands, 'own_open_pr', lambda *a: None)
+        n = self.ready(**self.branch(1)); t = self.task(n); token = self.evidence(n)['decision_token']
+        real = decisions.decision
+        def read(s, task):
+            if task['state'] == 'done': raise self.Fail('Follow-up read unavailable')
+            return real(s, task)
+        self.patch(decisions, 'decision', read)
+        result = self.accept(n, token)
+        self.assertEqual(result['state'], 'done'); self.assertTrue(self.accept(n, token)['replayed'])
+        self.assertFalse(os.path.exists(t['worktree']))
+        self.assertEqual(self.git(self.folder, 'branch', '--list', t['branch']), '')
+        self.assertEqual(self.git(self.folder, 'rev-parse', 'main'), t['head'])

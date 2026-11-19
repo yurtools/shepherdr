@@ -48,6 +48,8 @@ test('native scoped list selects active work only and preserves the exact select
   expect(calls.filter(x => x[0] === 'accept').map(x => x[1])).toEqual(['APP-1', 'APP-2']);
   expect(calls.filter(x => x[0] === 'accept')[1]).toContain('--after-accept');
   expect(card.results.map((r: any) => r.state)).toEqual(['success', 'refused']);
+  handler(byId('review-all')!, 'on_click')!({}, cx);
+  expect([...card.selected]).toEqual([reviewKey(card.items[1])]);
   card.readBatch(cx); await settle();
   expect(card.items.map((x: any) => x.ref)).toContain('APP-6');
   expect(card.selected.size).toBe(0);

@@ -372,7 +372,7 @@ export default class Tasks extends View {
         const mine = [...needRows, ...tasksOf.ready.map((p) => this.row(p, t))];
         if (mine.length) body.push(this.group("you", "For you", mine, t, { open, top: true }));
         // Pinned: the rest of them, in status order; every one shows (Done ones too).
-        const pins = pinned.filter((p) => placed.includes(p) && p.section !== "ready");
+        const pins = pinned.filter((p) => placed.includes(p) && p.section !== "ready" && p.section !== "deferred");
         if (pins.length) body.push(this.group("pinned", "Pinned", sorted(pins).map((p) => this.row(p, t)), t, { open }));
         // Each space's other work, in status order, under its name: the machine only when two machines have a space
         // of that name.

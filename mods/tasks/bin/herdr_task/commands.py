@@ -1286,12 +1286,20 @@ def cmd_accept(args):
             raise Fail(f"{s.ref(t)} isn't ready ({t['state']}); only a Ready task can be accepted.")
         t.pop("attention", None)
         wt = t.get("worktree") if t.get("mode") == "worktree" else None
+        # Discovering a PR may take time. Check the exact branch and worker again afterwards,
+        # including the local completion/fast-forward paths, before recording any approval.
+        if wt and not t.get("pr"):
+            own_open_pr(s, t)
+            if expected:
+                before = validate(s, t, expected, preceding)["decision_basis"]
+                if task_status(t, [detail(k) for k in live_agents(s.key(t))])[0] not in ("ready", "deferred"):
+                    raise Fail("The worker resumed; refresh its review.")
         t["accepted_at"] = now()
         s.dirty = True
         if not wt:
             # Worked in the folder itself: nothing to merge.
             finish(s, t)
-        elif t.get("pr") or own_open_pr(s, t):
+        elif t.get("pr"):
             if expected: validate(s, t, expected, preceding)
             how = "github"
             error = merge_now(s, t, expected=expected, preceding=preceding) if expected else merge_now(s, t)
@@ -1316,7 +1324,12 @@ def cmd_accept(args):
             sent, started = tell(s, t, local_merge_msg(s, t), args)
         if expected and not error:
             from .decisions import decision
-            after = decision(s, t)["decision_basis"] if how in ("merged", "github") else before
+            # The merge/completion already happened. A lost follow-up read must not roll back
+            # its durable receipt; without a proven advance, later selections simply refresh.
+            try:
+                after = decision(s, t)["decision_basis"] if how in ("merged", "github") else before
+            except (Fail, OSError, ValueError):
+                after = None
             t["accept_receipt"] = {"token": expected, "accepted": how, "at": now(), "before": before, "after": after}
         v = view(s, t)
     if error:

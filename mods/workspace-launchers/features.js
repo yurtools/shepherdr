@@ -3,7 +3,7 @@ import {projectFolder} from './project-folder.js';
 import { appHome, exec, hc, run, shared, setShared, openOverlay } from 'herdr';
 import { spaces, panes, terminals } from './live.js';
 import { readShepherdr, shepherdrFor } from './coordinator.js';
-import { chatLabel, chatPane } from './core/spaces.js';
+import { chatLabel, featureViews, isFeatureAssistant } from './core/spaces.js';
 import { workspaceCall } from './workspace-store.js';
 export { workspaceCall } from './workspace-store.js';
 export function featureSettings(cfg) {
@@ -14,6 +14,22 @@ export function featureSettings(cfg) {
  return pick;
 }
 export const featureRecords = () => shared('workspace.features') ?? [];
+export function featureViewState(features = featureRecords()) {
+ return {features,spaces:spaces(),panes:panes(),terminals:terminals(),slots:shared('coordinator.slots')??{},companions:shared('workspace.companions')??{}};
+}
+function reconcileNames(snapshot, attempted = new Map(), only = null) {
+ const names=featureViews(snapshot).byTab, tabs=new Map(snapshot.spaces.flatMap(s=>s.tabs.map(t=>[t.id,t])));
+ for(const id of attempted.keys())if(!names.has(id))attempted.delete(id);
+ for(const [id,rec] of names){
+  if(only&&rec.id!==only)continue;
+  const tab=tabs.get(id);
+  if(tab.name===rec.name&&tab.named){attempted.delete(id);continue;}
+  // A delayed host update must not generate a rename on every poll.
+  const key=JSON.stringify([rec.id,rec.name,tab.name,tab.named]);
+  if(attempted.get(id)===key)continue;
+  run('tab.rename',{id,name:rec.name});attempted.set(id,key);
+ }
+}
 export function featureRequest(id) { setShared('workspace.feature.request', { id, at: Date.now(), nonce: Math.random() }); }
 export function startFeature(space = spaces().find(s=>s.active), context = '', source = null) {
  if(!space) return;
@@ -28,11 +44,13 @@ export async function openFeature(record) {
  const space=spaces().find(s=>s.id===record.space);
  if(!space)throw new Error('The feature’s space is not open.');
  if(space.machine)throw new Error('Feature Assistants currently run in local spaces.');
- const candidates=terminals().filter(k=>k.state==='live'&&k.labels?.['herdr.feature']===record.id&&k.labels?.['herdr.role']==='feature');
+ const snapshot=featureViewState([...featureRecords().filter(r=>r.id!==record.id),record]);
+ const candidates=snapshot.terminals.filter(k=>isFeatureAssistant(k)&&k.labels['herdr.feature']===record.id);
  const live=candidates.find(k=>['codex','claude-code'].includes(k.status?.app)||['codex','claude','claude-code'].includes(k.foreground?.name)||k.program?.agent);
- const pane=live&&panes().find(p=>p.terminal===live.address||p.pane===chatPane(live));
- if(pane){run('space.select',{id:space.id});run('tab.select',{id:pane.tab});run('pane.focus',{pane:pane.pane});return;}
- const existing=panes().find(p=>p.pane===record.pane&&p.mod==='chat'&&space.tabs.some(t=>t.id===p.tab));
+ const views=featureViews(snapshot);
+ const extras=new Set(Object.values(snapshot.companions).map(r=>r.pane));
+ const existing=snapshot.panes.find(p=>views.byPane.get(p.pane)?.id===record.id&&!extras.has(p.pane));
+ reconcileNames(snapshot,new Map(),record.id);
  if(existing){if(!live&&record.session)setShared('workspace.feature.resume',{record,at:Date.now(),nonce:Math.random()});run('space.select',{id:space.id});run('tab.select',{id:existing.tab});run('pane.focus',{pane:existing.pane});return;}
  const slot=`feature-${record.id}`;
  const out=await app('tab.new',{space:space.id,name:record.name,mod:'chat',props:{role:'feature',template:'feature',space:space.id,folder:record.folder,slot,feature:record.id,settings:record.settings,featureRecord:record}});
@@ -42,11 +60,13 @@ export async function openFeature(record) {
 }
 export function watchFeatures(cx,onError) {
  let seen=shared('workspace.feature.request')?.nonce,busy=false,reading=false;
+ const attempted=new Map();
  const refresh=async()=>{if(reading)return;reading=true;try{const out=await workspaceCall('features'),old=featureRecords();
  if(JSON.stringify(out.features)!==JSON.stringify(old)){
-  for(const rec of out.features){const before=old.find(x=>x.id===rec.id);if(before&&before.name!==rec.name&&rec.tab&&spaces().some(s=>s.tabs.some(t=>t.id===rec.tab)))run('tab.rename',{id:rec.tab,name:rec.name});}
   setShared('workspace.features',out.features);
- }}finally{reading=false;}};
+ }
+ reconcileNames(featureViewState(out.features),attempted);
+ }finally{reading=false;}};
  cx.spawn(async()=>{try{await refresh();}catch(e){onError(e);}});
  cx.timer.every(2000,cx=>{cx.spawn(async()=>{try{await refresh();}catch{};});});
  cx.timer.every(150,cx=>{
@@ -54,7 +74,10 @@ export function watchFeatures(cx,onError) {
   if(Date.now()-req.at>15000)return;busy=true;
   cx.spawn(async cx=>{try{
    let rec;
-   if(req.create){
+   if(req.rename){
+    const name=req.rename.name?.trim();if(!name)throw new Error('Enter a feature name.');
+    await workspaceCall('feature-update',{id:req.rename.id,name});await refresh();return;
+   }else if(req.create){
     const cfg=shepherdrFor(await readShepherdr(),req.create.space),pick=featureSettings(cfg);
     const space=spaces().find(s=>s.id===req.create.space);
     if(!space)throw new Error('The feature’s space is no longer available.');

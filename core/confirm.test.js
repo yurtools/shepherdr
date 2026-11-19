@@ -13,7 +13,7 @@ test("the window's askers say what core/confirm.js says, and the web reads it fr
     expect(src).toContain(`verb: "${CLOSE_SPACE.verb}"`);
   }
   expect(coord).toContain('"Close this space?"');
-  expect(coord).toContain(`title: "${RENAME_TAB.title}"`);
+  expect(coord).toContain(`"${RENAME_TAB.title}"`);
   expect(CLOSE_SPACE.title("gtm")).toBe("Close “gtm”?");
   expect(CLOSE_SPACE.title("~")).toBe("Close this space?");
   const confirm = read("mods/confirm-chat/main.js"), prompt = read("mods/prompt-chat/main.js");

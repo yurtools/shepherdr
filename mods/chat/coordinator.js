@@ -14,7 +14,7 @@ import { appHome, exec, hc, run, openOverlay, shared, setShared, home, machines,
 import { dirs } from "./dirs.js";
 import { isWorktreePath } from "./core/paths.js";
 import { terminals, panes, spaces as allSpaces } from "./live.js";
-import { chatPane, chatLabel } from "./core/spaces.js";
+import { chatPane, chatLabel, featureViews } from "./core/spaces.js";
 import { logSpace } from "./spacelog.js";
 import { toast, plainError } from "./ui.js";
 
@@ -500,8 +500,9 @@ export function closeTab(tabId) {
 // Rename a tab: our prompt (mods/prompt-chat, the app's one dialog footer), its field holding the
 // name given (empty when nobody named it: it keeps its number).
 export function renameTab(tab) {
-  openOverlay({ mod: "prompt-chat", kind: "dialog", width: 400, height: 196, props: { title: "Rename tab",
-    value: tab?.named ? tab.name : "", placeholder: tab?.name ?? "", command: { name: "tab.rename", args: { id: tab?.id } } } });
+  const feature = featureViews({features:shared('workspace.features')??[],spaces:allSpaces(),panes:panes(),terminals:terminals(),slots:shared('coordinator.slots')??{},companions:shared('workspace.companions')??{}}).byTab.get(tab?.id);
+  openOverlay({ mod: "prompt-chat", kind: "dialog", width: 400, height: 196, props: { title: feature ? "Rename feature" : "Rename tab",
+    feature: feature?.id, value: feature?.name ?? (tab?.named ? tab.name : ""), placeholder: tab?.name ?? "", command: { name: "tab.rename", args: { id: tab?.id } } } });
 }
 
 // A space's Rename and Close, as its sidebar menu does them (mods/spaces-chat): the Rename dialog

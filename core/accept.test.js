@@ -30,9 +30,9 @@ test("the card's words", () => {
 
 // SHEP-225 (#1046): the button says what pressing it does
 test("Accept says whether it merges", () => {
-  expect(acceptLabel({ merges: true })).toBe("Accept and merge");
-  expect(acceptLabel({ merges: false })).toBe("Accept");
-  expect(acceptLabel(undefined)).toBe("Accept"); // still being read
+  expect(acceptLabel({ merges: true })).toBe("Accept & merge");
+  expect(acceptLabel({ merges: false })).toBe("Mark done");
+  expect(acceptLabel(undefined)).toBe("Mark done"); // still being read
   const mod = read("mods/accept-card/main.js"), web = read("web/src/screens/Accept.tsx");
   expect(mod).toContain("acceptLabel(e)");
   expect(web).toContain("A.acceptLabel(e)");

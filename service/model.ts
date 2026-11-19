@@ -269,6 +269,7 @@ export class Model {
         said: w?.text ? { text: w.text, done: w.done ?? null, left: w.left ?? null, paused: !!w.paused } : null,
         machine: list.machine, folder: list.folder, slug: list.slug, id: task.id, list: list.name,
         // the space whose Assistant started it (herdr-task keeps it): the window counts and lists it there
+        feature: task.feature ?? null,
         space: task.space ? (list.machine ? `${list.machine}/${task.space}` : task.space) : null,
         worker, archived: !!task.archived, pinned: pins.has(taskKey(list, task)),
         scheduled_for: task.state === "scheduled" ? task.scheduled_for ?? null : null,

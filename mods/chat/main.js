@@ -1,3 +1,4 @@
+import { inReviewScope } from "./core/review.js";
 import {projectFolder} from './project-folder.js';
 import {appendInstructions,spaceInstructions} from './core/instructions.js';
 import {readShepherdr} from './coordinator.js';
@@ -2098,6 +2099,23 @@ export default class Chat extends View {
     return out;
   }
 
+  reviewReady(t) {
+    if (this.thread || !["feature", "coordinator"].includes(this.role)) return null;
+    const space = this.assistant() ?? props()?.space;
+    if (!space) return null;
+    const saved = spaces().find(s => s.id === space || s.id === `${this.machine}/${space}`);
+    const scope = { kind: this.role === "feature" ? "feature" : "space", feature: this.feature, space,
+      folder: this.featureRecord?.folder ?? shared("workspace.roots")?.[space] ?? saved?.folder ?? props()?.folder,
+      machine: this.machine ?? null, name: this.role === "feature" ? this.featureRecord?.name : saved?.name };
+    const items = (this.spaceTasks ?? []).map(x => ({ ...x, machine: this.machine ?? null })).filter(x =>
+      ["ready", "deferred"].includes(x.status) && !x.archived && inReviewScope(scope, x));
+    const active = items.filter(x => x.status === "ready").length, later = items.filter(x => x.status === "deferred").length;
+    if (!active && !later) return null;
+    return h_flex().flex_none().px(18).py(6).gap(10).items_center()
+      .child(button("review-ready", `Review ready (${active})`, { onClick: () => openOverlay({ mod: "accept-card", kind: "dialog", modal: true, width: 680, height: 700, props: { scope, items } }) }))
+      .when(later > 0, el => el.child(div().text_color(t.muted).child(`Deferred ${later}`)));
+  }
+
   // ---- tasks (#4) -----------------------------------------------------------------------------
 
   // This folder's tasks, where the agent works (herdr-task; on its machine for a remote agent).
@@ -2148,7 +2166,7 @@ export default class Chat extends View {
   // Every folder's tasks on its machine (herdr-task list --all): a space's tasks can be in any
   // folder, not only where its Assistant runs.
   async loadSpaceTasks() {
-    const r = await exec("herdr-task", [...(this.machine ? ["--on", this.machine] : []), "list", "--all", "--json"]).catch(() => null);
+    const r = await exec("herdr-task", [...(this.machine ? ["--on", this.machine] : []), "list", "--all", "--read-only", "--json"]).catch(() => null);
     try { const d = JSON.parse(r?.stdout ?? "null"); if (Array.isArray(d)) this.spaceTasks = d.flatMap((g) => (g.tasks ?? []).map((x) => ({ ...x, folder: g.folder }))).filter(x => !this.feature || x.feature === this.feature); } catch {}
   }
 
@@ -4820,6 +4838,9 @@ export default class Chat extends View {
       .on_mouse_up("left", () => { this.pressing = false; })
       // Files dropped anywhere on the chat go with the next message.
       .on_drop((e, cx) => { this.addFiles(attach.paths(e.paths ?? [])); this.saveSoon(cx); this.box.focus(); cx.notify(); });
+
+    const review = this.reviewReady(t);
+    if (review) root.child(review);
 
     // Starting (or the new agent's log not there yet): the person's message shows at once.
     const starting = (this.phase === "starting" || (this.phase === "finding" && this.role && !this.path)) && this.pending.length > 0;

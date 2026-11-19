@@ -17,7 +17,9 @@ import { appHome, closeOverlay, exec, notify, openOverlay, props, shared, setSha
 import { note } from "./usage.js";
 import { dialogFooter, green, red, amber, H, RADIUS, TEXT } from "./ui.js";
 // The card's words, the summary cut and the details as bullets: core/accept.js, shared with the web app's card.
-import { ACCEPT, acceptLabel, words, readable, commitsLine, filesLine, moreLine, proofTitle, whereNow } from "./core/accept.js";
+import { ACCEPT, acceptLabel, consequence, words, readable, commitsLine, filesLine, moreLine, proofTitle, whereNow } from "./core/accept.js";
+import { inReviewScope, reviewBatch, reviewKey, reviewLabel, reviewEligible, activeReviewSelection } from "./core/review.js";
+import { button } from "./ui.js";
 import { settle } from "./core/pending.js";
 
 export { words, readable };
@@ -132,6 +134,9 @@ export default class AcceptCard extends View {
     this.opening = false; // pulling the proof
     this.details = false; // Details unfolded
     const p = props() ?? {};
+    this.scope = p.scope ?? null;
+    this.items = []; this.selected = new Set(); this.results = [];
+    if (this.scope) { this.readBatch(cx); return; }
     // Opened without a task (the palette's mod.open, say): nothing to approve, so it goes.
     if (!p.ref || !p.folder) {
       this.error = ACCEPT.noTask;
@@ -151,7 +156,7 @@ export default class AcceptCard extends View {
   }
 
   accept(cx) {
-    if (this.busy || !this.t || this.t.state !== "ready") return;
+    if (this.busy || !this.t || this.t.state !== "ready" || !this.t.evidence?.decision_token || this.t.evidence?.decision_error) return;
     const p = props() ?? {};
     note("act", { type: "accept", task: p.ref });
     this.busy = true;
@@ -167,7 +172,7 @@ export default class AcceptCard extends View {
     cx.spawn(async (cx) => {
       // Before close(): closing the card ends its tasks.
       try {
-        await task(p, ["accept", p.ref]);
+        await task(p, ["accept", p.ref, "--expect", this.t.evidence.decision_token]);
         mark(false);
         this.close();
       } catch (e) {
@@ -183,6 +188,84 @@ export default class AcceptCard extends View {
       }
       cx.notify();
     });
+  }
+
+
+  later(cx, restore = false, p = props() ?? {}) {
+    if (this.busy) return;
+    this.busy = true;
+    cx.spawn(async cx => {
+      try { await task(p, ["later", p.ref, ...(restore ? ["--restore"] : [])]); if (this.scope) { this.busy = false; this.readBatch(cx); } else this.close(); }
+      catch (e) { this.error = String(e?.message ?? e); }
+      finally { this.busy = false; cx.notify(); }
+    });
+  }
+
+  readBatch(cx) {
+    if (this.busy) return;
+    this.loading = true; this.selected.clear(); this.results = []; this.error = null;
+    cx.spawn(async cx => {
+      let candidates;
+      try {
+        const groups = await task({ machine: this.scope.machine, folder: this.scope.folder }, ["list", "--all", "--read-only"]);
+        candidates = groups.flatMap(g => (g.tasks ?? []).map(x => ({ ...x, folder: g.folder, machine: this.scope.machine })))
+          .filter(x => !x.archived && ["ready", "deferred"].includes(x.status) && inReviewScope(this.scope, x));
+      } catch (e) { this.error = String(e?.message ?? e); this.loading = false; cx.notify(); return; }
+      this.items = await Promise.all(candidates.map(async p => {
+        try { const x = await task(p, ["show", p.ref, "--evidence"]); return { ...p, ...x, deferred: x.status === "deferred" }; }
+        catch (e) { return { ...p, error: String(e?.message ?? e) }; }
+      }));
+      this.loading = false; cx.notify();
+    });
+  }
+
+  eligible(x) {
+    return reviewEligible(x);
+  }
+
+  acceptBatch(cx) {
+    if (this.busy) return;
+    const chosen = this.items.filter(x => this.selected.has(reviewKey(x)));
+    if (!chosen.length) return;
+    this.busy = true;
+    cx.spawn(async cx => {
+      await reviewBatch(chosen, (x, preceding) => task(x, ["accept", x.ref, "--expect", x.evidence.decision_token, ...preceding.flatMap(token => ["--after-accept", token])]), results => { this.results = results; cx.notify(); });
+      this.busy = false; this.selected.clear(); cx.notify();
+    });
+  }
+
+  renderBatch(t) {
+    const chosen = this.items.filter(x => this.selected.has(reviewKey(x)));
+    const row = x => {
+      const key = reviewKey(x), result = this.results.find(r => r.key === key);
+      const eligible = this.eligible(x) && (!result || result.state === "refused");
+      return v_flex().w_full().gap(6).p(12).border_1().border_color(t.border).rounded(8)
+        .child(h_flex().gap(8).items_start()
+          .child(button(`select-${key}`, this.selected.has(key) ? "☑" : "☐", { disabled: this.busy || !eligible, onClick: (_e, cx) => { this.selected.has(key) ? this.selected.delete(key) : this.selected.add(key); cx.notify(); } }))
+          .child(v_flex().flex_1().min_w(0).gap(4)
+            .child(div().font_medium().child(`${x.ref} · ${x.title}`))
+            .child(div().child(`${acceptLabel(x.evidence)}${x.evidence?.merges ? ` → ${x.evidence.destination}` : " · record completed output"}`))
+            .child(div().text_color(t.muted).child(x.evidence?.checks?.text ?? x.error ?? ""))))
+        .when(Boolean(x.evidence?.decision_error), el => el.child(div().text_color(red()).child(x.evidence.decision_error)))
+        .when(Boolean(result), el => el.child(div().text_color(result?.state === "refused" ? red() : t.foreground).child(`${result?.state}: ${result?.text}`)))
+        .child(h_flex().gap(8).flex_wrap()
+          .child(button(`evidence-${key}`, "Evidence & proof", { disabled: this.busy, onClick: () => openOverlay({ mod: "accept-card", kind: "dialog", modal: true, width: 640, height: 640, props: { ref: x.ref, folder: x.folder, machine: x.machine, title: x.title } }) }))
+          .when(Boolean(x.deferred), el => el.child(button(`restore-${key}`, "Restore to review", { disabled: this.busy, onClick: (_e, cx) => this.later(cx, true, x) }))));
+    };
+    return v_flex().track_focus(this.handle).on_key_down((ev, cx) => { if (ev.key === "escape" && !this.busy) { this.close(); cx.stop_propagation(); } }).size_full().min_h(0).p(22).gap(14).bg(t.popover).text_size(TEXT.body).text_color(t.foreground)
+      .child(div().text_size(TEXT.title).font_semibold().child("Review ready"))
+      .child(div().child(this.scope.kind === "feature" ? `Feature: ${this.scope.name ?? this.scope.feature} · this feature only` : `Space: ${this.scope.name ?? this.scope.space} · covers the whole space`))
+      .child(div().text_color(t.muted).child("Choose exact tasks. Each is checked again in order; waiting merges stay open."))
+      .child(h_flex().gap(10)
+        .child(button("review-all", "Select all eligible active", { disabled: this.busy || this.loading, onClick: (_e, cx) => { this.selected = activeReviewSelection(this.items); cx.notify(); } }))
+        .child(button("review-refresh", "Refresh review", { disabled: this.busy || this.loading, onClick: (_e, cx) => this.readBatch(cx) })))
+      .child(v_flex().flex_1().min_h(0).overflow_y_scrollbar().gap(10)
+        .when(Boolean(this.loading), el => el.child(div().child("Reading evidence…")))
+        .children([false, true].map(later => v_flex().gap(8)
+          .child(div().font_medium().child(`${later ? "Deferred · include only by choice" : "Active Ready"} (${this.items.filter(x => !!x.deferred === later).length})`))
+          .children(this.items.filter(x => !!x.deferred === later).map(row)))))
+      .when(Boolean(this.error), el => el.child(div().text_color(red()).child(this.error)))
+      .child(dialogFooter({ cancelLabel: "Close", onCancel: () => { if (!this.busy) this.close(); }, primary: { label: this.busy ? "Accepting in order…" : reviewLabel(chosen), disabled: this.busy || !chosen.length, onClick: (_e, cx) => this.acceptBatch(cx) } }));
   }
 
   // The proof in a modal over this card (artview.js: its mod is made in this app first, pulled
@@ -293,8 +376,9 @@ export default class AcceptCard extends View {
   render(cx) {
     const t = theme();
     const p = props() ?? {};
+    if (this.scope) return this.renderBatch(t);
     const x = this.t, e = x?.evidence;
-    const ready = x?.state === "ready";
+    const ready = x?.state === "ready" && (!x.status || ["ready", "deferred"].includes(x.status));
     const settled = Boolean(x && !ready);
     const w = e ? words(e) : null;
     const body = !x
@@ -302,6 +386,8 @@ export default class AcceptCard extends View {
       : v_flex().w_full().gap(16).pb(4)
         .child(div().max_w(560).text_size(TEXT.body).line_height("20px").text_color(w.summary ? t.foreground : t.muted)
           .child(w.summary || ACCEPT.noSummary))
+        .child(div().text_color(t.muted).child(e.decision_error || consequence(e)))
+        .when(x.status === "deferred", el => el.child(div().text_color(t.muted).child("Deferred · still Ready and unaccepted")))
         .child(this.section(t, ACCEPT.changes, this.changes(t, e)))
         .child(this.section(t, ACCEPT.checks, this.checks(t, e)))
         .child(this.section(t, ACCEPT.proof, this.proof(t, e)))
@@ -325,10 +411,11 @@ export default class AcceptCard extends View {
       .child(v_flex().flex_none().gap(10)
         .when(Boolean(x && this.error), (el) => el.child(div().text_color(red()).child(this.error)))
         .when(settled, (el) => el.child(this.where(t, x)))
+        .when(ready, el => el.child(button("accept-later", x.status === "deferred" ? "Restore to review" : "Later", { disabled: this.busy, onClick: (_e, cx) => this.later(cx, x.status === "deferred") })))
         // The dialog's one footer (ui.js): Cancel, then Accept; only Close once there's nothing
         // to accept.
         .child(settled ? dialogFooter({ onCancel: () => this.close(), cancelLabel: ACCEPT.close })
           : dialogFooter({ onCancel: () => this.close(), cancelLabel: ACCEPT.cancel,
-            primary: { id: "accept", label: this.busy ? ACCEPT.accepting : acceptLabel(e), disabled: !(ready && !this.busy), onClick: (_e, cx) => this.accept(cx) } })));
+            primary: { id: "accept", label: this.busy ? ACCEPT.accepting : acceptLabel(e), disabled: !(ready && !this.busy && e?.decision_token && !e?.decision_error), onClick: (_e, cx) => this.accept(cx) } })));
   }
 }

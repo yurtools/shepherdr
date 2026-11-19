@@ -148,6 +148,7 @@ async function run(cmd: string[]) {
   let p: ReturnType<typeof Bun.spawn<"ignore", "pipe", "pipe">>;
   // the window's herdr-app: SHEPHERDR_HERDR_APP in tests (as SHEPHERDR_HC for hc)
   if (cmd[0] === "herdr-app" && process.env.SHEPHERDR_HERDR_APP) cmd = [process.env.SHEPHERDR_HERDR_APP, ...cmd.slice(1)];
+  if (cmd[0] === "herdr-task" && process.env.SHEPHERDR_HERDR_TASK) cmd = [process.env.SHEPHERDR_HERDR_TASK, ...cmd.slice(1)];
   try { p = Bun.spawn(cmd, { stdout: "pipe", stderr: "pipe", stdin: "ignore" }); }
   catch (e) { return { code: 127, stdout: "", stderr: String(e) }; }
   const [stdout, stderr] = await Promise.all([new Response(p.stdout).text(), new Response(p.stderr).text()]);
@@ -617,7 +618,7 @@ export async function act(hub: Hub, b: any, compat: Compat): Promise<unknown> {
     if (!t) throw new Error("That task isn't here any more.");
     b = { ...b, ref: t.ref, folder: t.folder, machine: t.machine };
   }
-  else if ((b?.type === "evidence" || b?.type === "accept") && typeof b.task === "string") {
+  else if ((b?.type === "evidence" || b?.type === "accept" || b?.type === "later") && typeof b.task === "string") {
     const t = compat.taskOf(b.task);
     if (!t) throw new Error("That task isn't here any more.");
     b = { ...b, ref: t.ref, folder: t.folder, machine: t.machine };
@@ -674,11 +675,21 @@ export async function act(hub: Hub, b: any, compat: Compat): Promise<unknown> {
     }
     case "accept": {
       const { ref, folder, machine } = taskOf(b);
-      const r = await task(["accept", ref], folder, machine);
+      if (b.expect != null && (typeof b.expect !== "string" || !/^[a-f0-9]{64}$/.test(b.expect))) throw new Error("Invalid review evidence. Refresh the card.");
+      const preceding = b.preceding ?? [];
+      if (!Array.isArray(preceding) || preceding.length > 200 || preceding.some((x: unknown) => typeof x !== "string" || !/^[a-f0-9]{64}$/.test(x))) throw new Error("Invalid preceding review results.");
+      const r = await task(["accept", ref, ...(b.expect ? ["--expect", b.expect] : []), ...preceding.flatMap((x: string) => ["--after-accept", x])], folder, machine);
       let out: any = null;
       try { out = JSON.parse(r.stdout); } catch {}
       if (r.code !== 0 || out?.error) throw new Error(out?.error || r.stderr.trim() || "herdr-task accept failed");
       return out ?? { ok: true };
+    }
+    case "later": {
+      const { ref, folder, machine } = taskOf(b);
+      const r = await task(["later", ref, ...(b.restore ? ["--restore"] : [])], folder, machine);
+      let out: any; try { out = JSON.parse(r.stdout); } catch {}
+      if (r.code !== 0 || out?.error) throw new Error(out?.error || r.stderr.trim() || "Could not change Later.");
+      return out;
     }
     case "task-resume": {
       // an ended task's Resume (the window's): herdr-task starts its agent again on its session

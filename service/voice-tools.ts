@@ -85,7 +85,7 @@ const done = (result: string, nav?: Nav, max = MAX): Answer => ({ result: result
 const fail = (result: string): Answer => ({ result, error: true });
 
 export const STATUS: Record<string, string> = {
-  need: "needs you", ready: "ready for review", merging: "merging", work: "working", queued: "queued", scheduled: "scheduled", todo: "to do", done: "done",
+  need: "needs you", ready: "ready for review", deferred: "deferred", merging: "merging", work: "working", queued: "queued", scheduled: "scheduled", todo: "to do", done: "done",
 };
 const ORDER = ["need", "ready", "work", "merging", "queued", "scheduled", "todo", "done"];
 /** "ready", "review", "needs me": a task state from the person's words */

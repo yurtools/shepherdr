@@ -17,10 +17,10 @@ import os
 import re
 import shlex
 
-from .base import HOME, hc_json, now, run, SHELLS
+from .base import HOME, hc_json, now, run, SHELLS, Fail
 from .agents import agent_running, status_word
 from .sessions import session_of
-from .settings import ASSISTANT_TEMPLATES
+from .settings import ASSISTANT_TEMPLATES, bind_account, validate_account
 from .launch import CLEAN_ENV
 
 LABEL = "herdr.resume"
@@ -61,12 +61,12 @@ def base_argv(argv):
     kind, rest, out = kind_of(argv[at]), argv[at + 1:], [argv[at]]
     if kind == "codex":
         account = next((x for x in argv[:at] if x.startswith("CODEX_HOME=")), None)
-        if account:
-            clear = []
-            for i in range(at - 1):
-                if argv[i] == "-u" and argv[i + 1] in ("CODEX_API_KEY", "OPENAI_API_KEY", "CODEX_ACCESS_TOKEN", "CODEX_SQLITE_HOME"):
-                    clear += ["-u", argv[i + 1]]
-            out = ["env", *clear, account, argv[at]]
+        clear = []
+        for i in range(at - 1):
+            if argv[i] == "-u" and argv[i + 1] in ("CODEX_HOME", "CODEX_API_KEY", "OPENAI_API_KEY", "CODEX_ACCESS_TOKEN", "CODEX_SQLITE_HOME"):
+                clear += ["-u", argv[i + 1]]
+        if account or clear:
+            out = ["env", *clear, *([account] if account else []), argv[at]]
     i = 0
     while i < len(rest):
         a = rest[i]
@@ -317,6 +317,12 @@ def revive_pass(report):
         how, argv, direct = step
         rec = dict(rec or {}, pid=k.get("pid"), how=how, sent=now())
         if argv:
+            try:
+                argv = bind_account(argv, rec.get("log"))
+                validate_account(argv)
+            except Fail as error:
+                report.setdefault("revive_failed", []).append({"terminal": k["address"], "why": str(error)})
+                continue
             shell = (k.get("argv") or [""])[0]
             r = run(["hc", "send", k["address"], shell_line(shell, rec.get("cwd") or k.get("cwd"), env_of(k), argv, direct)],
                     env=without_caller())

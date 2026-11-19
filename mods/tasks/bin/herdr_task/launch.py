@@ -16,7 +16,7 @@ import sys
 import time
 
 from .base import ASK_HOME, ENTRY, Fail, git, hc_json, now, run, WORKTREES
-from .settings import agent_key, agent_index, ASSISTANT_TEMPLATES, trust_roots, bare, BRANCH_PATTERN, branch_pattern_problem, keep_review, notes, notes_part, review_limits, settings_block, settings_for
+from .settings import agent_key, agent_index, ASSISTANT_TEMPLATES, trust_roots, bare, BRANCH_PATTERN, branch_pattern_problem, keep_review, notes, notes_part, review_limits, settings_block, settings_for, bind_account, validate_account, codex_launch, codex_home
 from .templates import instructions
 from .space_instructions import worker_instructions
 from .agents import detail, LINE_MAX, live_agents, SUMMARY_MAX
@@ -235,8 +235,9 @@ def own_command(path, text, sandboxed=False):
 # and only its own helpers (<task>-review, -helper) to wait on, read or end.
 REVIEWERS = {"codex": (["codex", "--no-daemon", "--sandbox", "read-only", "--ask-for-approval", "never"],
                        {"--disable": re.compile(r"hooks"), "-m": re.compile(r"[\w.:-]+"),
-                        "-c": re.compile(r'projects=\{.*\}|model_reasoning_effort="?\w+"?', re.S)}),
-             "claude": (["claude", "--permission-mode", "plan"], {"--model": re.compile(r"[\w.:\[\]-]+"), "--effort": re.compile(r"\w+")})}
+                        "-c": re.compile(r'projects=\{.*\}|model_reasoning_effort="?\w+"?|service_tier="(?:fast|default)"', re.S)}),
+             "claude": (["claude", "--permission-mode", "plan"], {"--model": re.compile(r"[\w.:\[\]-]+"), "--effort": re.compile(r"\w+"),
+                        "--settings": re.compile(r'\{"fastMode": (?:true|false)\}')})}
 HELPER = re.compile(r"[\w.-]+-(?:review|helper)(?:-[\w.-]+)?")
 
 
@@ -248,6 +249,21 @@ def helper_hc(words):
         return False
     i = words.index("--")
     opts, cmd = words[2:i], words[i + 1:]
+    task_key = os.environ.get("HERDR_BROWSER_TASK")
+    if task_key and any(opts[j] == "--label" and opts[j + 1].startswith("herdr.task=")
+                        and opts[j + 1] != "herdr.task=" + task_key for j in range(len(opts) - 1)):
+        return False
+    if cmd and cmd[0] == "env":
+        at = agent_index(cmd)
+        if cmd[:at + 1] != codex_launch(codex_home(cmd)):
+            return False
+        try:
+            validate_account(cmd)
+        except Fail:
+            return False
+        if task_key and not helper_account(cmd, task_key):
+            return False
+        cmd = cmd[at:]
     j = 0
     while j < len(opts):
         if opts[j] == "--bg":
@@ -269,6 +285,28 @@ def helper_hc(words):
             k += 2
         return len(rest) - k <= 1 and not (rest[k:] and rest[k].startswith("-"))
     return False
+
+
+def helper_account(cmd, task_key):
+    """The account prefix in this worker's Reviewer line, never an arbitrary env wrapper."""
+    from types import SimpleNamespace
+    from .base import STORE
+    from .store import read_list
+    from .settings import task_settings
+    slug, _, number = task_key.rpartition("#")
+    if not slug or os.path.basename(slug) != slug or not number.isdigit():
+        return False
+    data = read_list(os.path.join(STORE, slug + ".json")) or {}
+    task = next((t for t in data.get("tasks", []) if t.get("id") == int(number)), None)
+    if not task or not data.get("folder"):
+        return False
+    store = SimpleNamespace(loc={"folder": data["folder"], "kind": data.get("kind", "folder")})
+    try:
+        rv = next((r["value"] for r in task_settings(store, task) if r["label"] == "Reviewer"), {})
+        expected = shlex.split(rv.get("command") or "")
+        return cmd[:agent_index(cmd)] == expected[:agent_index(expected)] if expected else False
+    except (Fail, ValueError, TypeError):
+        return False
 
 
 def ask_hook():
@@ -800,6 +838,11 @@ def launch(s, task, argv, space, message=None, parent=None, resume=None, role=No
     which keeps it under a restarted coordinator) and herdr.role=reviewer for a reviewer, kept
     apart from the task's agents. Returns its record."""
     key = s.key(task)
+    argv = bind_account(argv)
+    validate_account(argv)
+    if resume:
+        resume = bind_account(resume)
+        validate_account(resume)
     cmd = list(resume or argv)
     if not role:
         cmd = own_argv(cmd, folder_for(s, task))

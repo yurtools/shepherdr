@@ -14,7 +14,7 @@ from . import sandbox
 from .base import Fail, git, guard, now, run, STORE, stop_note, VERSION
 from .settings import (
     agent_argv, agent_key, bare, merge_policy, review_limits, set_opts, settings_block, settings_for, space_base,
-    task_settings, worker_argv, worktrees_on,
+    task_settings, worker_argv, worktrees_on, bind_account, codex_home, validate_account,
 )
 from .agents import (
     agent_log, agent_running, background_jobs, busy_again, detail, fit, LINE_MAX, live_agents, ready_turns, STATUSES, SUMMARY_MAX,
@@ -106,12 +106,14 @@ def cmd_add(args):
         if args.worktree and not repo:
             raise Fail("Worktrees need a git repo; this folder isn't one.")
         # The person's setting wins: worktrees off for this repo means in the folder, --worktree or not.
-        mode = "here" if args.here or not worktrees_on(s) else "worktree"
+        space = bare(args.space) if args.space else caller_space()
+        mode = "here" if args.here or not worktrees_on(s, space) else "worktree"
         t = s.new(args.title.strip(), prompt, mode)
+        if space:
+            t["space"] = bare(space)
         feature = caller_labels().get("herdr.feature")
         if feature: t["feature"] = feature
-        set_opts(t, args)
-        space = bare(args.space) if args.space else caller_space()
+        set_opts(t, args, s)
         set_base(s, t, args.base, space, new=True)
         set_branch(s, t, getattr(args, "branch", None))
         set_notes(t, args)
@@ -146,6 +148,8 @@ def schedule(s, t, at, plan=None):
     t["state"], t["scheduled_for"] = "scheduled", at
     if plan is not None:
         t["queue"] = plan
+        if plan.get("space"):
+            t["space"] = bare(plan["space"])
     for k in ("queued_at", "held"):
         t.pop(k, None)
     s.dirty = True
@@ -266,6 +270,9 @@ def cmd_show(args):
 
 def begin(s, t, argv, space, parent=None):
     """Starts the task's first agent. Returns its record."""
+    argv = bind_account(argv)
+    validate_account(argv)  # A failed delayed start keeps its queue and identity intact.
+    t["space"] = bare(space)
     t["state"], t["started"] = "running", now()
     # Its brief teaches `reviewed`: ready waits for a review of its final commit (review_refusal).
     t["review_gate"] = True
@@ -301,17 +308,19 @@ def cmd_start(args):
             raise Fail(f"{s.ref(t)} is already running ({live[0]['address']}). Use switch or resume.")
         if t["state"] == "done":
             raise Fail(f"{s.ref(t)} is done. Reopen it first.")
+        q = t.get("queue") or {}
+        space = bare(args.space) if args.space else (q.get("space") or t.get("space") or default_space())
         if args.here:
             t["mode"] = "here"
-        elif args.worktree and worktrees_on(s):
+        elif args.worktree and worktrees_on(s, space):
             t["mode"] = "worktree"
         set_branch(s, t, getattr(args, "branch", None))
-        q = t.get("queue") or {}
-        space = bare(args.space) if args.space else (q.get("space") or default_space())
+        reuse_queue = not args.space or bare(args.space) == q.get("space")
         argv = agent_argv(None, args.argv) if args.argv else worker_argv(s, t, space, args.agent) if args.agent else \
-            (q.get("argv") or worker_argv(s, t, space))
+            ((q.get("argv") if reuse_queue else None) or worker_argv(s, t, space))
         parent = args.parent or q.get("parent")
-        plan = {"argv": argv, "space": space, "parent": parent, **({"custom": True} if args.argv else {})}
+        plan = {"argv": argv, "space": space, "parent": parent,
+                **({"custom": True} if args.argv or (reuse_queue and q.get("custom")) else {})}
         at = scheduled_at(args)
         if at:
             # start --at / --in: it starts by itself then, as this start would now.
@@ -849,7 +858,7 @@ def cmd_edit(args):
             with open(args.prompt_file) as f:
                 t["prompt"] = f.read()
         pick = [t.get(k) for k in ("agent", "model", "effort")]
-        set_opts(t, args)
+        set_opts(t, args, s)
         if [t.get(k) for k in ("agent", "model", "effort")] != pick:
             # The next agent started for it runs on the new choice (start_again), a queued one too.
             t["pick_at"] = now()
@@ -932,7 +941,10 @@ def start_again(s, t, space, key=None, argv_json=None, message=None, parent=None
     keep = prev and prev.get("argv") and (t.get("pick_at") or 0) <= (prev.get("at") or 0)
     argv = agent_argv(None, argv_json) if argv_json else worker_argv(s, t, space, key) if key else \
         (prev["argv"] if keep else worker_argv(s, t, space))
+    argv = bind_account(argv, prev.get("log") if keep and not (argv_json or key) else None)
     same = prev and agent_key(argv) == prev.get("agent")
+    if same and agent_key(argv) == "codex":
+        same = codex_home(argv) == codex_home(prev.get("argv") or [], prev.get("log"))
     res = resume_argv(argv, prev["session"], folder_for(s, t)) if same and prev.get("session") else None
     if res:
         return launch(s, t, argv, space, message or nudge, parent=parent, resume=res), True

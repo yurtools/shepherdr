@@ -51,10 +51,15 @@ export async function profiles(machine = null) {
   const r = await exec("sh", ["-c", "f=\"${HERDR_APP_HOME:-$HOME/.config/herdr-app}/data/agent-profiles.json\"; if [ -f \"$f\" ]; then cat \"$f\"; else printf '{\"profiles\":[]}'; fi"], { on: machine });
   if (r.code !== 0) throw new Error("Cannot read agent profiles");
   const data = JSON.parse(r.stdout);
-  return (data.profiles ?? []).filter((x) => typeof x.id === "string" && /^[\w-]+$/.test(x.id)
+  return (Array.isArray(data?.profiles) ? data.profiles : []).filter((x) => x && typeof x.id === "string" && /^[\w-]+$/.test(x.id)
     && x.agent === "codex" && typeof x.home === "string" && x.home.startsWith("/") && !/[\0\r\n]/.test(x.home));
 }
 export async function profilePick(pick, machine = null) {
-  if (!pick?.profile) return pick;
-  return { ...pick, launch: profileLaunch(pick, await profiles(machine)) };
+  const launch = profileLaunch(pick, pick?.profile ? await profiles(machine) : []);
+  if (pick?.profile) {
+    const home = launch.find(x => x.startsWith("CODEX_HOME=")).slice(11);
+    const result = await exec("test", ["-d", home], { on: machine });
+    if (result.code !== 0) throw new Error("The assigned account profile is unavailable on this machine.");
+  }
+  return launch ? { ...pick, launch } : pick;
 }

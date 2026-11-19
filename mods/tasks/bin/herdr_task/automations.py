@@ -372,13 +372,15 @@ def fire(s, a, why, brief=None):
     prompt = a.get("prompt") or ""
     if brief:
         prompt = f"{prompt.rstrip()}\n\n{brief}" if prompt.strip() else brief
-    t = s.new(a["title"], prompt, a.get("mode") or ("worktree" if worktrees_on(s) else "here"))
+    space = a.get("space")
+    t = s.new(a["title"], prompt, a.get("mode") or ("worktree" if worktrees_on(s, space) else "here"))
+    if space:
+        t["space"] = bare(space)
     t["automation"] = a["id"]
     if a.get("agent"):
         t["agent"] = a["agent"]
     for k, v in (a.get("set") or {}).items():
         set_task(t, k, v)
-    space = a.get("space")
     run_rec = {"at": now(), "why": why, "task": s.ref(t)}
     if a.get("from") and why.split(":")[0] in EVENTS:
         run_rec["from"] = from_text(a["from"])

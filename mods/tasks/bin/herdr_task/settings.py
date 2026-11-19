@@ -114,8 +114,10 @@ def settings_layers(s, space=None):
     except (OSError, ValueError):
         d = {}
     spaces = d.get("spaces") or {}
-    mine = [v for k, v in spaces.items() if (v or {}).get("folder") == s.loc["folder"]]
-    pick = (spaces.get(bare(space)) if space and (spaces.get(bare(space)) or {}).get("folder") == s.loc["folder"] else None) or (mine[0] if mine else None)
+    mine = [v for v in spaces.values() if isinstance(v, dict) and v.get("folder") == s.loc["folder"]]
+    # Space identity survives project-root changes and worktrees. Never replace an explicit
+    # (even deleted) space with another space that happens to share this folder.
+    pick = spaces.get(bare(space)) if space else (mine[0] if len(mine) == 1 else None)
     machine = (d.get("machines") or {}).get(d.get("here") or LOCAL_MACHINE)
     return d.get("everywhere") or {}, machine or {}, pick or {}
 
@@ -127,17 +129,25 @@ def settings_for(s, space=None):
     machine-only rows, read by machine_limits/machine_option); ones set before still apply here. Written by the settings window (~/.config/shepherdr/settings.json); herdr-task only
     reads them."""
     everywhere, machine, pick = settings_layers(s, space)
-    out = {k: dict(v) for k, v in DEFAULTS.items()}
+    return resolve_layers((everywhere, machine, pick))
 
-    def merge(part):
-        for k, v in (part or {}).items():
-            if isinstance(v, dict) and isinstance(out.get(k), dict):
+
+ROLE_KEYS = ("coordinator", "feature", "worker", "reviewer", "backup")
+
+
+def resolve_layers(layers):
+    """Match native settings: role choices replace whole; other sections merge by field.
+    A null/unset role inherits; null fields inside a chosen role use CLI defaults."""
+    out = {k: dict(v) for k, v in DEFAULTS.items()}
+    for layer in layers:
+        for k, v in (layer or {}).items():
+            if k in ROLE_KEYS:
+                if isinstance(v, dict):
+                    out[k] = dict(v)
+            elif isinstance(v, dict) and isinstance(out.get(k), dict):
                 out[k].update({kk: vv for kk, vv in v.items() if vv is not None})
             elif k in out and v is not None:
                 out[k] = v
-    merge(everywhere)
-    merge(machine)
-    merge(pick)
     return out
 
 
@@ -162,21 +172,62 @@ def worktrees_on(s, space=None):
 
 def profile_launch(pick):
     """Machine-local account binding. Missing named profiles fail instead of changing login."""
-    if not pick.get("profile"):
+    if pick.get("profile") in (None, ""):
         return None
     path = os.path.join(os.environ.get("HERDR_APP_HOME") or os.path.join(HOME, ".config", "herdr-app"),
                         "data", "agent-profiles.json")
     try:
         with open(path) as stream:
             profiles = json.load(stream).get("profiles", [])
-        profile = next(x for x in profiles if x.get("id") == pick["profile"])
+        if not isinstance(profiles, list) or not isinstance(pick["profile"], str) or not re.fullmatch(r"[\w-]+", pick["profile"]):
+            raise ValueError("Invalid account profiles")
+        profile = next(x for x in profiles if isinstance(x, dict) and x.get("id") == pick["profile"])
         home = profile["home"]
-        if pick.get("agent") != "codex" or profile.get("agent") != "codex" or not os.path.isabs(home) or any(x in home for x in "\0\r\n"):
+        if (pick.get("agent") != "codex" or profile.get("agent") != "codex" or not isinstance(home, str)
+                or not os.path.isabs(home) or any(x in home for x in "\0\r\n") or not os.path.isdir(home)):
             raise ValueError("Invalid Codex account profile")
-    except (OSError, ValueError, KeyError, StopIteration, TypeError) as error:
+    except (OSError, ValueError, KeyError, StopIteration, TypeError, AttributeError) as error:
         raise Fail("The assigned Codex account profile is unavailable on this machine") from error
+    return codex_launch(home)
+
+
+def codex_launch(home=None):
+    """Explicit default means this machine's default home, never the parent's named account."""
+    home = home or os.path.join(HOME, ".codex")
     return ["env", "-u", "CODEX_API_KEY", "-u", "OPENAI_API_KEY", "-u", "CODEX_ACCESS_TOKEN",
             "-u", "CODEX_SQLITE_HOME", "CODEX_HOME=" + home, "codex"]
+
+
+def codex_home(argv, log=None):
+    return next((x.split("=", 1)[1] for x in argv if x.startswith("CODEX_HOME=")), None) or \
+        (log.rsplit("/sessions/", 1)[0] if log and "/sessions/" in log else os.path.join(HOME, ".codex"))
+
+
+def bind_account(argv, log=None):
+    """Bind legacy/default launches too. Saved logs retain their original account home."""
+    if agent_key(argv) != "codex" or any(x.startswith("CODEX_HOME=") for x in argv):
+        return argv
+    return codex_launch(codex_home(argv, log))[:-1] + argv
+
+
+def validate_account(argv):
+    """A queued/saved named home must still be configured on the destination machine."""
+    if agent_key(argv) != "codex":
+        return
+    home = codex_home(argv)
+    if home == os.path.join(HOME, ".codex"):
+        return
+    try:
+        path = os.path.join(os.environ.get("HERDR_APP_HOME") or os.path.join(HOME, ".config", "herdr-app"), "data", "agent-profiles.json")
+        with open(path) as stream:
+            profiles = json.load(stream).get("profiles", [])
+        for p in profiles:
+            if isinstance(p, dict) and p.get("home") == home:
+                if p.get("id") and profile_launch({"agent": "codex", "profile": p["id"]}):
+                    return
+    except (OSError, ValueError, TypeError, AttributeError):
+        pass
+    raise Fail("The assigned Codex account profile is unavailable on this machine")
 
 
 def argv_for(pick):
@@ -184,6 +235,7 @@ def argv_for(pick):
     argv), as the chat's agent picker builds it (mods/chat/agent.js argvFor). None: no setting."""
     if not pick:
         return None
+    profile_launch(pick)  # also reject malformed profiles or a profile assigned to the wrong CLI
     if pick.get("argv"):
         return [str(x) for x in pick["argv"]]
     agent = pick.get("agent")
@@ -201,7 +253,7 @@ def argv_for(pick):
             a += ["--permission-mode", "default" if perm == "manual" else perm]
         return a
     if agent == "codex":
-        a = (profile_launch(pick) or ["codex"]) + ["--no-daemon"]
+        a = (profile_launch(pick) or codex_launch()) + ["--no-daemon"]
         if pick.get("model"):
             a += ["-m", pick["model"]]
         if pick.get("effort"):
@@ -223,11 +275,10 @@ def worker_pick(s, task, space=None, agent=None):
     """What a task's agent runs on, {agent, model, effort, fast, perm}: Settings' worker, then the
     task's own --agent / --model / --effort, then `agent` (start --agent). Another CLI than
     Settings' starts from its own defaults (models and permissions differ per CLI)."""
-    roles = settings_for(s, space)
+    roles = settings_for(s, space or task.get("space") or (task.get("queue") or {}).get("space"))
+    # Preserve the documented Assistant fallback only when no Worker choice exists. A
+    # chosen plain Codex role is complete and must not borrow the Assistant's profile.
     pick = dict(roles["worker"] or roles.get("coordinator") or {})
-    coordinator = roles.get("coordinator") or {}
-    if "profile" not in pick and pick.get("agent") == coordinator.get("agent") and coordinator.get("profile"):
-        pick["profile"] = coordinator["profile"]
     for key in (task.get("agent"), agent):
         if key and key != pick.get("agent"):
             pick = {"agent": key}
@@ -339,7 +390,7 @@ def set_task(t, key, value):
         t.pop("set", None)
 
 
-def set_opts(t, args):
+def set_opts(t, args, s=None):
     """add/edit's --set pairs and --agent, --model, --effort, --reviewer, --reviewer-model,
     --reviewer-effort, in that order (a --set pair wins over its flag)."""
     mode=getattr(args,"approval_mode",None)
@@ -357,7 +408,7 @@ def set_opts(t, args):
         set_task(t, k, v)
     if getattr(args, "reviewer_model", None) or getattr(args, "reviewer", None) or any(
             SET_KEYS.get(p.split("=", 1)[0].strip().lower()) in ("reviewer", "reviewer_model") for p in getattr(args, "set", None) or []):
-        check_reviewer_model(t)
+        check_reviewer_model(t, s)
 
 
 def by_layer(s, space, section, key, value, default):
@@ -385,7 +436,7 @@ LOGIN = {"claude": "claude auth login", "codex": "codex login"}
 def codex_models(profile=None):
     """The model ids Codex offers here: its models_cache.json, which Codex fetches for the account it is signed in
     with (a ChatGPT account gets fewer than an API key, #948); None when there is none to read."""
-    home = os.environ.get("CODEX_HOME") or os.path.join(os.path.expanduser("~"), ".codex")
+    home = os.path.join(HOME, ".codex")
     if profile:
         prefix = profile_launch({"agent": "codex", "profile": profile})
         home = next(x.split("=", 1)[1] for x in prefix if x.startswith("CODEX_HOME="))
@@ -407,12 +458,15 @@ def codex_lacks(model, profile=None):
 CLAUDE_MODEL = re.compile(r"^(claude-|opus|sonnet|haiku|fable)", re.I)
 
 
-def check_reviewer_model(t):
+def check_reviewer_model(t, s=None):
     """add/edit: a reviewer model Codex here can't use is refused when it is set (#948), not found at review time."""
     m = t.get("reviewer_model")
-    if not m or t.get("reviewer") == "claude" or (not t.get("reviewer") and CLAUDE_MODEL.match(m)):
+    rv = dict(settings_for(s, t.get('space')).get('reviewer') or {}) if s is not None else {}
+    if t.get('reviewer') and t['reviewer'] != rv.get('agent'):
+        rv = {'agent': t['reviewer']}
+    if not m or rv.get("agent") == "claude" or (not rv.get("agent") and CLAUDE_MODEL.match(m)):
         return
-    ids = codex_lacks(m)
+    ids = codex_lacks(m, rv['profile']) if rv.get('profile') else codex_lacks(m)
     if ids:
         raise Fail(f"Codex here doesn't offer {m} for the account it is signed in with: pick one of {', '.join(ids)} "
                    "(or leave the reviewer model unset for Codex's own default).")
@@ -424,7 +478,7 @@ def codex_login_now():
     if not shutil.which("codex"):
         return None, ""
     try:
-        r = subprocess.run(["codex", "login", "status"], stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=10)
+        r = subprocess.run(codex_launch() + ["login", "status"], stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=10)
     except (OSError, subprocess.SubprocessError):
         return None, ""
     out = f"{r.stdout}\n{r.stderr}"
@@ -450,7 +504,7 @@ def trust_roots(folder):
     return out
 
 
-def reviewer_command(who, model=None, effort=None, folder=None, profile=None):
+def reviewer_command(who, model=None, effort=None, folder=None, profile=None, fast=False, home=None):
     """The command a worker starts its reviewer with (the brief's Reviewer line): read-only, and for
     Codex on its own app server (--no-daemon, as task agents run: a shared one can keep a sign-in
     since replaced, and every turn then fails, #745). Codex would first stop on its own screens,
@@ -460,16 +514,20 @@ def reviewer_command(who, model=None, effort=None, folder=None, profile=None):
     when a hook is new or changed (hooks off: a read-only reviewer needs none, and they would run
     outside its sandbox)."""
     if who == "codex":
-        a = (profile_launch({"agent": "codex", "profile": profile}) or ["codex"]) + ["--no-daemon", "--sandbox", "read-only", "--ask-for-approval", "never", "--disable", "hooks"]
+        a = (profile_launch({"agent": "codex", "profile": profile}) or codex_launch(home)) + ["--no-daemon", "--sandbox", "read-only", "--ask-for-approval", "never", "--disable", "hooks"]
         roots = trust_roots(folder)
         if roots:
             a += ["-c", "projects={" + ",".join(f'{json.dumps(r)}={{trust_level="trusted"}}' for r in roots) + "}"]
         a += ["-m", model] if model else []
         a += ["-c", f'model_reasoning_effort="{effort}"'] if effort else []
+        a += ["-c", 'service_tier="%s"' % ("fast" if fast else "default")]
     elif who == "claude":
+        if profile:
+            profile_launch({"agent": who, "profile": profile})
         a = ["claude", "--permission-mode", "plan"]
         a += ["--model", model] if model else []
         a += ["--effort", effort] if effort else []
+        a += ["--settings", json.dumps({"fastMode": bool(fast)})]
     else:
         return None
     return shlex.join(a)
@@ -512,6 +570,7 @@ def task_settings(s, t, space=None, argv=None, live=False):
         for f in ("model", "effort"):
             if t.get(f"reviewer_{f}"):
                 rv[f] = t[f"reviewer_{f}"]
+        profile_launch(rv)
         other = {"claude": "codex", "codex": "claude"}.get(agent)
         want = rv.get("agent") or (other if other and shutil.which(other) else agent)
         who, said = want, ""
@@ -540,7 +599,10 @@ def task_settings(s, t, space=None, argv=None, live=False):
         elif not rv.get("agent"):
             text += " (the other CLI)" if who != agent else " (your own CLI: no other is installed)"
         folder = t.get("worktree") or getattr(s, "loc", {}).get("folder")
-        cmd = reviewer_command(who, rv.get("model"), rv.get("effort"), folder, rv["profile"]) if rv.get("profile") else reviewer_command(who, rv.get("model"), rv.get("effort"), folder)
+        # An automatic fallback to the worker's CLI also means the worker's account. An
+        # explicit plain Codex Reviewer still means the default account.
+        home = codex_home(argv) if who == agent == "codex" and not rv.get("agent") else None
+        cmd = reviewer_command(who, rv.get("model"), rv.get("effort"), folder, rv.get("profile"), rv.get("fast", False), home)
         if cmd:
             text += f"; start it as `{cmd}`"
         add("Reviewer", text, {"agent": who, "model": rv.get("model"), "effort": rv.get("effort"), "command": cmd, **({"profile": rv["profile"]} if rv.get("profile") else {})}, rv_by)

@@ -16,10 +16,12 @@ class AccountProfiles(unittest.TestCase):
         with tempfile.TemporaryDirectory() as root:
             data = Path(root) / "data"
             data.mkdir()
-            (data / "agent-profiles.json").write_text(json.dumps({"profiles": [{"id": "secondary", "agent": "codex", "home": "/tmp/profile two"}]}))
+            account = Path(root) / 'profile two'
+            account.mkdir()
+            (data / "agent-profiles.json").write_text(json.dumps({"profiles": [{"id": "secondary", "agent": "codex", "home": str(account)}]}))
             with mock.patch.dict(os.environ, {"HERDR_APP_HOME": root}):
                 argv = settings.argv_for({"agent": "codex", "profile": "secondary", "model": "test-model"})
-                self.assertIn("CODEX_HOME=/tmp/profile two", argv)
+                self.assertIn("CODEX_HOME=" + str(account), argv)
                 self.assertIn("OPENAI_API_KEY", argv)
                 self.assertIn("test-model", argv)
                 (Path(root) / "secondary-models").mkdir(exist_ok=True)
@@ -31,12 +33,14 @@ class AccountProfiles(unittest.TestCase):
                 from herdr_task.launch import resume_argv
                 resumed = resume_argv(argv, "SESSION")
                 self.assertEqual(resumed[resumed.index("codex") + 1], "resume")
-                self.assertIn("CODEX_HOME=/tmp/profile two", resumed)
+                self.assertIn("CODEX_HOME=" + str(account), resumed)
                 with self.assertRaises(Fail): settings.argv_for({"agent": "codex", "profile": "missing"})
-    def test_worker_inherits_assistant_account_unless_overridden(self):
+    def test_worker_choice_is_independent_of_assistant_account(self):
         roles = {"coordinator": {"agent": "codex", "profile": "secondary"}, "worker": {}}
         with mock.patch.object(settings, "settings_for", return_value=roles):
-            self.assertEqual(settings.worker_pick(None, {})["profile"], "secondary")
+            self.assertEqual(settings.worker_pick(None, {})['profile'], 'secondary')
+            roles["worker"] = {"agent": "codex"}
+            self.assertNotIn('profile', settings.worker_pick(None, {}))
             roles["worker"] = {"agent": "codex", "profile": None}
             self.assertIsNone(settings.worker_pick(None, {})["profile"])
             roles["worker"] = {"agent": "claude"}

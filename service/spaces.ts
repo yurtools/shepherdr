@@ -82,14 +82,17 @@ export async function execTemplate(hub: Hub, name: string, machine: string | nul
   let cmd = own;
   if (pick?.agent === "claude" || pick?.agent === "codex") {
     if (await has(pick.agent)) {
-      let launch = null;
+      let launch = pick.profile ? null : profileLaunch(pick, []);
       if (pick.profile) {
         const result = await exec(hub, ["sh", "-c", 'cat "${HERDR_APP_HOME:-$HOME/.config/herdr-app}/data/agent-profiles.json"'], machine);
         launch = profileLaunch(pick, JSON.parse(result.stdout || "{}").profiles ?? []);
+        const home = launch!.find((x: string) => x.startsWith("CODEX_HOME="))!.slice(11);
+        if ((await exec(hub, ["test", "-d", home], machine)).code !== 0)
+          throw new Error("The assigned account profile is unavailable on this machine.");
       }
       cmd = argvFor({ ...pick, ...(launch ? { launch } : {}) }, { agent: null, argv: [] }).argv.map(shellWord).join(" ");
     }
-    else if (!(await has(own.split(/\s+/)[0]))) {
+    else if (pick.profile || !(await has(own.split(/\s+/)[0]))) {
       throw new Error(`${(NAMES as Record<string, string>)[pick.agent] ?? pick.agent} isn't installed on ${machine ?? "this computer"}. Install it, or pick another agent for the Assistant in Settings › Agents.`);
     }
   }

@@ -2857,8 +2857,11 @@ class ReviewerLine(unittest.TestCase):
     def test_codex_runs_on_its_own_server(self):
         r = self.line("ready")
         self.assertEqual(r["value"]["agent"], "codex")
-        self.assertTrue(r["value"]["command"].startswith("codex --no-daemon --sandbox read-only --ask-for-approval never"))
-        self.assertIn("(the other CLI); start it as `codex --no-daemon", r["text"])
+        import shlex
+        argv = shlex.split(r['value']['command'])
+        self.assertEqual(argv[argv.index('codex'):][:6], ['codex', '--no-daemon', '--sandbox', 'read-only', '--ask-for-approval', 'never'])
+        self.assertIn('CODEX_HOME=' + os.path.join(self.settings.HOME, '.codex'), argv)
+        self.assertIn("(the other CLI); start it as `env ", r["text"])
 
     def test_signed_out_codex_never_reviews(self):
         r = self.line("signed-out")
@@ -2911,7 +2914,12 @@ class ReviewerLine(unittest.TestCase):
         d = tempfile.mkdtemp()
         with open(os.path.join(d, "models_cache.json"), "w") as f:
             json.dump({"models": [{"slug": i, "display_name": i} for i in ids]}, f)
-        p = mock.patch.dict(os.environ, {"CODEX_HOME": d})
+        # The default account is explicit; cache fixtures belong under its .codex home.
+        import shutil
+        account = os.path.join(d, '.codex')
+        os.makedirs(account)
+        shutil.move(os.path.join(d, 'models_cache.json'), os.path.join(account, 'models_cache.json'))
+        p = mock.patch.object(self.settings, 'HOME', d)
         p.start()
         self.addCleanup(p.stop)
 
@@ -4970,7 +4978,9 @@ class CodexAsksOnTheCard(unittest.TestCase):
         # its review: the reviewer the brief's Reviewer line gives, read-only, and its own helpers only
         from herdr_task.settings import reviewer_command
         rv = reviewer_command("codex", folder=tempfile.mkdtemp())
-        with mock.patch.dict(os.environ, {"HERDR_BROWSER_TASK": "demo#1"}):
+        from herdr_task import store
+        fixture = {'folder': '/synthetic/project', 'tasks': [{'id': 1, 'reviewer': 'codex', 'set': {'review': 'on'}}]}
+        with mock.patch.dict(os.environ, {"HERDR_BROWSER_TASK": "demo#1"}), mock.patch.object(store, 'read_list', return_value=fixture):
             own = lambda c, sb=True: launch.own_command("/x/herdr-task", c, sb)  # noqa: E731
             yes = [f"hc run --bg --name demo-1-review --label \"herdr.task=$HERDR_BROWSER_TASK\" --label herdr.role=reviewer "
                    f"--label herdr.agent=codex -- {rv} 'Review it: \"ok\" & $x'",

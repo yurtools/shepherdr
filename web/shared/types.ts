@@ -4,7 +4,7 @@ import type { BrowserNote } from './browser.ts'
 
 /** Status marks: red needs you, green ready, green turning ring merging, amber working, grey ring idle or to do, grey
  * clock queued, grey check done, dashed ring unreachable. */
-export type Status = 'need' | 'ready' | 'merging' | 'work' | 'idle' | 'queued' | 'scheduled' | 'todo' | 'done' | 'off'
+export type Status = 'need' | 'ready' | 'deferred' | 'merging' | 'work' | 'idle' | 'queued' | 'scheduled' | 'todo' | 'done' | 'off'
 /** A chat's final segment is its role; the task ID may itself contain a machine qualifier. */
 export function taskChatId(chat: string) { const at = chat.lastIndexOf('/'); return at < 0 ? undefined : chat.slice(0, at) }
 
@@ -58,6 +58,7 @@ export function nameProblem(name: string, taken: string[] = []): string | undefi
 export type TabState = 'working' | 'blocked' | 'done' | 'idle'
 /** a space's tab other than its Assistant's (Shepherdr 3's tab bar) */
 export interface PlaceTab {
+  reviewScope?: Place["reviewScope"]
   id?: string
   name: string
   named?: boolean
@@ -75,6 +76,7 @@ export interface PlaceTab {
  *  space (its home folder, ~), always first under it and never removed: its coordinator also keeps an eye on the
  *  machine, and the main machine's on every machine. Spaces are the only places with a chat. */
 export interface Place {
+  reviewScope?: { kind: 'space' | 'feature'; space: string; folder: string; machine: string | null; feature?: string; name?: string }
   id: string
   /** nobody named it: Herdr names it after its folder (its Rename field starts empty, this name its placeholder) */
   unnamed?: boolean
@@ -273,7 +275,7 @@ export interface Report {
  * into main, nothing for you to do (GitHub's checks run, it is rebased or merged); work: its agent is at it; queued:
  * it waits for other tasks to be done, then Shepherdr tells its agent to go; todo: its agent waits for a go, or is
  * starting and not yet at work on its brief; done: merged */
-export type TaskStatus = 'need' | 'ready' | 'merging' | 'work' | 'queued' | 'scheduled' | 'todo' | 'done'
+export type TaskStatus = 'need' | 'ready' | 'deferred' | 'merging' | 'work' | 'queued' | 'scheduled' | 'todo' | 'done'
 
 /** A task's one agent: tapping the task opens its chat. */
 export interface TaskAgent {
@@ -290,6 +292,10 @@ export interface TaskAgent {
 }
 
 export interface Task {
+  ref?: string
+  feature?: string
+  reviewMachine?: string | null
+  reviewSpace?: string
   /** short name, as people say it: GTM-15 */
   id: string
   name: string
@@ -1234,6 +1240,9 @@ export interface Snapshot {
 }
 
 export type Action =
+  | { type: 'evidence'; task: string }
+  | { type: 'accept'; task: string; expect?: string; preceding?: string[] }
+  | { type: 'later'; task: string; restore?: boolean }
   | { type: 'plugin'; plugin: string; method: string; input?: unknown; cid: string }
   /** read every machine's plan limits again, unless they were read a moment ago */
   | { type: 'limits-check' }

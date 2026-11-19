@@ -36,7 +36,7 @@ import {
 import { PANE_MIN } from './panes.ts'
 import { ChatColumn, Frame, PanelColumn, PlacesColumn, PlacesToggle } from './Frame.tsx'
 import { PanelSheet, TabBody, TaskPanel, TaskTabs } from './Panel.tsx'
-import { openAccept, useAccepting } from './screens/Accept.tsx'
+import { openAccept, useAccepting, ReviewReady } from './screens/Accept.tsx'
 import * as TK from '@core/tasks.js'
 
 /** a line's first letter a capital, as the window writes every reason (core/tasks.js) */
@@ -341,6 +341,7 @@ function SpaceColumn({ place, pane }: { place: Place; pane?: number }) {
         {registry.placeHeader.filter((h) => h.order > 10).map(({ View }, i) => (
           <View key={i} place={place} />
         ))}
+        {!tab || tab.reviewScope ? <ReviewReady place={place} scope={tab?.reviewScope ?? place.reviewScope} /> : null}
         <PlaceMarks place={place} />
         {pane === undefined ? null : <PaneButtons i={pane} />}
       </Head>
@@ -482,7 +483,7 @@ function TaskPage({ task, middle, pane }: { task: Task; middle?: boolean; pane?:
   // as 3.0's task header (mods/chat/panel.js barRow): Review (opens the Accept card) once it is Ready ("Accepting…" while
   // its accept runs), sized as the header's other buttons; then its tabs (TaskTabs). No Pin here (SHEP-62): the task row's
   // menu pins it
-  const tools = task.status === 'ready' && !task.archived ? <HeadButton disabled={accepting} onClick={() => openAccept(task.id)}>{accepting ? 'Accepting…' : 'Review'}</HeadButton> : null
+  const tools = ['ready', 'deferred'].includes(task.status) && !task.archived ? <HeadButton disabled={accepting} onClick={() => openAccept(task.id)}>{accepting ? 'Accepting…' : 'Review'}</HeadButton> : null
   // its title alone on the first line, so it keeps the room; under it, quieter, its id in the list's monospace, then what
   // its agent is doing (working with no % yet, or a provider retry's line: its row's words, as the window's header says
   // them), else where it merges
@@ -861,6 +862,8 @@ function PhoneHome({ snap }: { snap: Snapshot }) {
   const keyboard = useUI((u) => u.keyboard)
   // the space's other agent tab picked in ⋯ and shown as its chat
   const tabChat = useUI((u) => (u.term?.startsWith('t:') && u.tabView?.[u.term] === 'chat' ? u.term : null))
+  const selectedTerm = useUI(u => u.term)
+  const selectedTab = place.tabs?.find(t => t.term === selectedTerm)
   const Chat = registry.views.chat
   const Tasks = registry.views.tasks
   const TasksMenu = registry.views.tasksMenu
@@ -887,6 +890,7 @@ function PhoneHome({ snap }: { snap: Snapshot }) {
           )
         }
       />
+      {tab === 'chat' && place.id && (!selectedTab || selectedTab.reviewScope) ? <div className="flex shrink-0 px-4 py-1"><ReviewReady place={place} scope={selectedTab?.reviewScope ?? place.reviewScope} /></div> : null}
       {tab === 'chat' && !place.id ? (
         <NoSpaces />
       ) : tab === 'chat' ? (

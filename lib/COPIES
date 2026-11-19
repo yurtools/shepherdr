@@ -7,6 +7,7 @@ inbox.js: spaces-chat tabs-tasks tasks workspace-status-chat
 core/voice.js: chat
 core/screen.js: chat
 core/accept.js: accept-card
+core/review.js: accept-card chat jump tasks
 core/toasts.js: toasts
 core/menus.js: spaces-chat tasks tasks-menu menu-tasks new-menu-tasks pane-chat tabs-tasks coordinator
 core/asks.js: chat jump spaces-chat tabs-tasks tasks workspace-status-chat toasts

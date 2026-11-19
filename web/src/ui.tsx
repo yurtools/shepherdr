@@ -523,7 +523,8 @@ export function taskLine(t: Task, where?: string[]): ReactNode {
 
 const STATUS_WORD: Record<Status, string> = {
   need: 'Needs you',
-  ready: 'Ready',
+  ready: 'Ready · active',
+  deferred: 'Deferred',
   merging: 'Merging',
   work: 'Working',
   idle: 'Stopped',

@@ -372,16 +372,17 @@ export default class Tasks extends View {
         const mine = [...needRows, ...tasksOf.ready.map((p) => this.row(p, t))];
         if (mine.length) body.push(this.group("you", "For you", mine, t, { open, top: true }));
         // Pinned: the rest of them, in status order; every one shows (Done ones too).
-        const pins = pinned.filter((p) => placed.includes(p) && p.section !== "ready");
+        const pins = pinned.filter((p) => placed.includes(p) && p.section !== "ready" && p.section !== "deferred");
         if (pins.length) body.push(this.group("pinned", "Pinned", sorted(pins).map((p) => this.row(p, t)), t, { open }));
         // Each space's other work, in status order, under its name: the machine only when two machines have a space
         // of that name.
-        const work = rest.filter((p) => p.section !== "ready" && p.section !== "done");
+        const work = rest.filter((p) => p.section !== "ready" && p.section !== "deferred" && p.section !== "done");
         const shownLists = lists.filter((l) => work.some((p) => p.list === l));
         for (const l of shownLists) {
           const twin = shownLists.some((o) => o !== l && placeName(o) === placeName(l) && (o.machine ?? null) !== (l.machine ?? null));
           body.push(this.spaceGroup(l, sorted(work.filter((p) => p.list === l)).map((p) => this.row(p, t, true)), t, twin ? machineName(l.machine) : null));
         }
+        if (tasksOf.deferred.length) body.push(this.group("deferred", "Deferred · still Ready", tasksOf.deferred.map(p => this.row(p, t)), t, { open }));
         // Done: only its count, a quiet line, until opened (then a group that folds it away again).
         const done = tasksOf.done.filter((p) => !isPin(p));
         if (done.length) body.push(open || this.shut("done:open") ? this.group("done", STATUS.done, done.map((p) => this.row(p, t)), t, { open, done: done.length, onFold: () => this.fold("done:open", false) })
@@ -882,7 +883,7 @@ export default class Tasks extends View {
     return this.line(`task-${key}`, {
       go: this.target(p), glyph: this.glyph(p, w), ref: refOf(list, task), title: task.title, sub, left, leftColor: section === "scheduled" ? t.dim : null,
       dim: section === "done", selected: focused, where: bare ? null : this.whereOf(list.machine, placeName(list)),
-      action: section === "ready" ? this.acceptButton(p, t) : null,
+      action: ["ready", "deferred"].includes(section) ? this.acceptButton(p, t) : null,
       pin: this.shelved(p) ? null : { key, on: this.pins().has(key), status: section, machine: list.machine ?? null, folder: list.folder,
         ref: refOf(list, task), sub: section === "scheduled" ? sub : null },
     }, t);

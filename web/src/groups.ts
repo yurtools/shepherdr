@@ -9,7 +9,8 @@ export type GroupBy = 'status' | 'place'
 
 export const GROUPS: [Task['status'], string][] = [
   ['need', 'Needs you'],
-  ['ready', 'Ready'],
+  ['ready', 'Ready · active'],
+  ['deferred', 'Deferred'],
   ['merging', 'Merging'],
   ['work', 'Working'],
   ['queued', 'Queued'],

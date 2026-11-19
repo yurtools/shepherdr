@@ -119,7 +119,7 @@ function TaskRow({ t, ix, where }: { t: Task; ix: number; where?: string[] }) {
   // Review (opens the Accept card) at a Ready row's end, soft as the chat header's Review: one per Ready row, so never the
   // filled look; "Accepting…" while its accept runs
   const accept =
-    t.status === 'ready' && !t.archived ? (
+    ['ready', 'deferred'].includes(t.status) && !t.archived ? (
       <button type="button" disabled={busy} onClick={() => openAccept(t.id)}
         className="press-dim pointer-events-auto relative z-1 h-6 shrink-0 rounded-full bg-bubble px-2.5 text-[0.75rem] font-medium whitespace-nowrap text-fg after:absolute after:-inset-x-1 after:-inset-y-2.5 enabled:hover:bg-sel disabled:opacity-60 phone:px-3 phone:text-[0.8125rem]">
         {busy ? 'Accepting…' : 'Review'}

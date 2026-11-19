@@ -3,15 +3,16 @@
 // for the Tasks panel (mods/tasks) and the web app alike: what Herdr knows live (a task's agents and their
 // status) comes in as arguments, so nothing here reads Herdr.
 // Shared core: the source is core/tasks.js; bin/sync-shared copies it into the mods in lib/COPIES.
+import { deferred } from "./review.js";
 import { REASONS } from "./needs.js";
 
 // An agent's own status, most urgent first.
 export const RANK = { blocked: 4, done: 3, working: 2, idle: 1 };
-export const STATUS = { needs: "Needs you", working: "Working", merging: "Merging", ready: "Ready", queued: "Queued", scheduled: "Scheduled", todo: "To do", done: "Done" };
-export const RANK_OF = Object.fromEntries(["needs", "ready", "merging", "working", "queued", "scheduled", "todo", "done"].map((id, i) => [id, i]));
+export const STATUS = { needs: "Needs you", working: "Working", merging: "Merging", ready: "Ready · active", deferred: "Deferred", queued: "Queued", scheduled: "Scheduled", todo: "To do", done: "Done" };
+export const RANK_OF = Object.fromEntries(["needs", "ready", "deferred", "merging", "working", "queued", "scheduled", "todo", "done"].map((id, i) => [id, i]));
 // The list's order: its groups, and the filter row's chips.
 // Scheduled (SHEP-38, herdr-task --at/--in): a task that starts by itself at a time, after Queued (it waits longer).
-export const ORDER = ["needs", "ready", "merging", "working", "queued", "scheduled", "todo", "done", "automations"];
+export const ORDER = ["needs", "ready", "deferred", "merging", "working", "queued", "scheduled", "todo", "done", "automations"];
 // How the list can be grouped (the ⋯ menu's Group by; Shepherdr's GROUP_WORDS). "folder" was Space's old key.
 export const GROUP_BY = ["you", "space", "status"];
 // A grouping's key: "folder" was Space's; Machine and Machine › Space are gone (SHEP-98): For you.
@@ -196,6 +197,7 @@ export function place(list, task, { live = [], helpers = [], loaded = true, now 
   // its process gone, the agent stopped.
   else if (live.length) need("reply", task.waits ?? REASONS.reply);
   else need("stopped", REASONS.stopped);
+  if (section === "ready" && deferred(task)) section = "deferred";
   return { list, task, live, status, section, needs, why, ...(settles ? { settles } : {}) };
 }
 
@@ -297,7 +299,7 @@ export function secondLine(p, w, queued = null, now = Date.now()) {
   return section === "needs" || section === "merging" ? p.why : section === "working" ? p.why ?? w?.text ?? null
     : section === "queued" ? queued
     : section === "scheduled" ? startsLine(p.task.scheduled_for, now)
-    : section === "ready" ? (p.task.ready_at ? `Ready ${ago(p.task.ready_at, true, now)}` : "Ready to accept") : null;
+    : section === "deferred" ? "Later · still Ready" : section === "ready" ? (p.task.ready_at ? `Ready ${ago(p.task.ready_at, true, now)}` : "Ready to accept") : null;
 }
 
 // The minutes left under a working row's dot ("6m"), once its agent gave them; a scheduled one's time until it starts

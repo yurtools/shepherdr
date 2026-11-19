@@ -56,14 +56,14 @@ def cmd_list(args):
     for folder in folders:
         if not os.path.isdir(folder):
             continue
-        with Store(locate(folder), write="try") as s:
+        with Store(locate(folder), write=False if getattr(args, "read_only", False) else "try") as s:
             out = []
             archived = sum(1 for t in s.data["tasks"] if t.get("archived"))
             for t in s.data["tasks"]:
                 if bool(t.get("archived")) != args.archived:
                     continue
                 mine = live_agents(s.key(t)) if t["state"] in ("running", "ready") else []
-                if mine:
+                if mine and not getattr(args, "read_only", False):
                     refresh_sessions(s, t, mine)
                 v = view(s, t, [detail(k) for k in mine] if mine else [])
                 if t["state"] == "queued":
@@ -217,13 +217,14 @@ def set_notes(t, args):
 
 
 def cmd_show(args):
-    with open_store(args, write="try") as s:
+    reading_evidence = getattr(args, "evidence", False)
+    with open_store(args, write=False if reading_evidence else "try") as s:
         t = s.find(args.id)
         live = [detail(k) for k in live_agents(s.key(t))]
-        refresh_sessions(s, t, live)
+        if not reading_evidence: refresh_sessions(s, t, live)
         # Back at work since it said ready: saved at once, so the Accept card (which reads this)
         # says it's Working, not Ready.
-        if busy_again(t, live):
+        if not reading_evidence and busy_again(t, live):
             back_to_work(s, t, "its agent is at work again")
         v = view(s, t, live)
         if t["state"] == "queued":
@@ -734,7 +735,14 @@ def finalize(s, t):
         # #988: a GitHub repo gh couldn't reach just now: never on as if it had no GitHub (Accept would
         # merge it here while a pull request, its agent's, stays open there).
         failed = f"Couldn't reach GitHub to open its pull request: {github_unreachable(s)}"
-    t["state"], t["ready_at"] = "ready", now()
+    # Repeating Ready with unchanged output preserves Later; a new worker cycle surfaces again.
+    signature = {k: t.get(k) for k in ("head", "summary", "details", "proof")}
+    fresh = t.get("state") != "ready" or (t.get("deferred_evidence") is not None and t["deferred_evidence"] != signature)
+    if fresh or not t.get("ready_at"):
+        t["ready_at"] = now()
+        for k in ("deferred_ready_at", "deferred_at", "deferred_evidence"):
+            t.pop(k, None)
+    t["state"] = "ready"
     for k in ("attention", "merge_requested", "review"):
         t.pop(k, None)
     (t.get("pr") or {}).pop("wait", None)
@@ -1081,7 +1089,7 @@ WAITS_APPROVAL = "It waits for an approving review."  # #743: not a problem, it 
 IN_QUEUE = "It is in GitHub's merge queue."  # #802: merging, done once GitHub merged it
 
 
-def merge_now(s, t):
+def merge_now(s, t, expected=None, preceding=()):
     """Merges the task's pull request on GitHub (squash) and tidies up here. Returns why it
     couldn't, or None when it's merged (and the task done). A base branch with GitHub's merge
     queue (#742, #801, #802): the pull request joins the queue and the task stays Merging until
@@ -1111,6 +1119,18 @@ def merge_now(s, t):
         # doesn't know the base has a merge queue (a ruleset's queue, an older gh): GitHub only queued
         # it, and a pull request whose branch goes is closed and leaves the queue. Its branch on GitHub
         # goes below, once GitHub says it merged (drop_branch()).
+        if expected:
+            from .decisions import validate
+            latest = validate(s, t, expected, preceding).get("current_pr")
+            if latest:
+                problem = pr_problem(latest)
+                if problem: return problem
+                if pr_pending(latest): return CHECKS_RUNNING
+                if needs_approval(latest): return WAITS_APPROVAL
+                v = latest
+            from .agents import task_status
+            if task_status(t, [detail(k) for k in live_agents(s.key(t))])[0] not in ("ready", "deferred"):
+                return "The worker resumed; refresh its review."
         ok, _, err = gh("pr", "merge", n, "--repo", repo, "--squash", "--match-head-commit", v.get("headRefOid") or "")
         # Merged, or only queued (or set to merge by itself)? Asked again; a one-off GitHub error can
         # also come after the merge went through.
@@ -1228,6 +1248,18 @@ def cmd_accept(args):
     error, how, sent, started, back = None, "done", None, False, False
     with open_store(args) as s:
         t = s.find(args.id)
+        expected = getattr(args, "expect", None)
+        preceding = getattr(args, "after_accept", None) or []
+        before = None
+        receipt = t.get("accept_receipt")
+        if expected and receipt and receipt.get("token") == expected:
+            if t["state"] != "done" and (t["state"] != "ready" or not t.get("accepted_at") or
+                    receipt.get("ready_at", t.get("ready_at")) != t.get("ready_at")):
+                raise Fail("The previous acceptance was recorded, but this task resumed. Refresh and review its new work.")
+            say(args, {**view(s, t), "accepted": receipt["accepted"], "replayed": True}, f"{s.ref(t)}: acceptance already recorded.")
+            return
+        if t.get("accepted_at") and (t.get("merge_requested") or t.get("auto_merge") or t.get("merge_queued")):
+            raise Fail("Acceptance is already in progress; wait for its merge result.")
         if t["state"] != "ready":
             raise Fail(f"{s.ref(t)} isn't ready ({t['state']}); only a Ready task can be accepted.")
         # Its agent at work again since it said ready: never accepted half done. Working again
@@ -1243,22 +1275,37 @@ def cmd_accept(args):
         # failed once, doesn't stand in the way. Without one, only a failed try doesn't.
         elif t.get("attention") and not t.get("pr") and not t["attention"].startswith(("Couldn't ask for the merge", MERGE_FAILED)):
             raise Fail(f"{s.ref(t)} needs attention first: {t['attention']}")
-    if back:
-        raise Fail(f"{s.ref(t)} is working again: its agent took up more work after it said ready. Accept it once it says ready again.")
-    with open_store(args) as s:
-        t = s.find(args.id)
+        if back:
+            # Persist the resumed-worker status before refusing.
+            if hasattr(s, "save"): s.save()
+            raise Fail(f"{s.ref(t)} is working again: its agent took up more work after it said ready. Accept it once it says ready again.")
+        if expected:
+            from .decisions import validate
+            before = validate(s, t, expected, preceding)["decision_basis"]
+            from .agents import task_status
+            if task_status(t, [detail(k) for k in live_agents(s.key(t))])[0] not in ("ready", "deferred"):
+                raise Fail("This task is no longer ready for a decision. Refresh its review.")
         if t["state"] != "ready":
             raise Fail(f"{s.ref(t)} isn't ready ({t['state']}); only a Ready task can be accepted.")
         t.pop("attention", None)
         wt = t.get("worktree") if t.get("mode") == "worktree" else None
+        # Discovering a PR may take time. Check the exact branch and worker again afterwards,
+        # including the local completion/fast-forward paths, before recording any approval.
+        if wt and not t.get("pr"):
+            own_open_pr(s, t)
+            if expected:
+                before = validate(s, t, expected, preceding)["decision_basis"]
+                if task_status(t, [detail(k) for k in live_agents(s.key(t))])[0] not in ("ready", "deferred"):
+                    raise Fail("The worker resumed; refresh its review.")
         t["accepted_at"] = now()
         s.dirty = True
         if not wt:
             # Worked in the folder itself: nothing to merge.
             finish(s, t)
-        elif t.get("pr") or own_open_pr(s, t):
+        elif t.get("pr"):
+            if expected: validate(s, t, expected, preceding)
             how = "github"
-            error = merge_now(s, t)
+            error = merge_now(s, t, expected=expected, preceding=preceding) if expected else merge_now(s, t)
             if error == IN_QUEUE:
                 how, error = "queue", None
             elif error in (CHECKS_RUNNING, WAITS_APPROVAL):
@@ -1278,6 +1325,15 @@ def cmd_accept(args):
             how = "agent"
             t["merge_requested"] = now()
             sent, started = tell(s, t, local_merge_msg(s, t), args)
+        if expected and not error:
+            from .decisions import decision
+            # The merge/completion already happened. A lost follow-up read must not roll back
+            # its durable receipt; without a proven advance, later selections simply refresh.
+            try:
+                after = decision(s, t)["decision_basis"] if how in ("merged", "github") else before
+            except (Fail, OSError, ValueError):
+                after = None
+            t["accept_receipt"] = {"token": expected, "accepted": how, "at": now(), "ready_at": t.get("ready_at"), "before": before, "after": after}
         v = view(s, t)
     if error:
         say(args, {**v, "error": error}, None) if args.json else print(f"herdr-task: {error}", file=sys.stderr)
@@ -1310,3 +1366,19 @@ def cmd_fix(args):
         v = view(s, t)
     say(args, {**v, "terminal": sent, "new_agent": started},
         f"{s.ref(t)}: asked {sent} to fix it" + (" (a new agent)" if started else ""))
+
+
+def cmd_later(args):
+    from .agents import task_status
+    with open_store(args) as s:
+        t = s.find(args.id)
+        if t.get("state") != "ready": raise Fail("Only Ready work can be deferred or restored.")
+        if not getattr(args, "restore", False):
+            if task_status(t, [detail(k) for k in live_agents(s.key(t))])[0] not in ("ready", "deferred"):
+                raise Fail("This task needs attention or is working; it cannot be deferred.")
+            t["deferred_ready_at"], t["deferred_at"] = t.get("ready_at") or 0, now()
+            t["deferred_evidence"] = {k: t.get(k) for k in ("head", "summary", "details", "proof")}
+        else:
+            for k in ("deferred_ready_at", "deferred_at", "deferred_evidence"): t.pop(k, None)
+        s.dirty = True
+        say(args, view(s, t), f"{s.ref(t)}: " + ("restored to review." if getattr(args, "restore", False) else "Later; still Ready and unaccepted."))

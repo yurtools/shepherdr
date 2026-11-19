@@ -67,8 +67,9 @@ How to run, build and lay out the code: [docs/develop.md](docs/develop.md).
 - A test space's Assistant without the window: `hc run` it with the chat slot labels from the newest
   `data/backups/*/sidebar.json` (`coordinator.slots`), as `service/actions.ts` does; answer the folder-trust prompt
   with `hc keys <t> down enter`.
-- No Shepherdr service runs on the dev VM: to screenshot a web dialog, serve `web/dist` with a tiny Bun stub answering
-  only the APIs it needs, never the full service: upgrade `/api/ws` and send
+- Check the existing local service (`shepherdr web status`) before planning activation or UI proof; the dev VM can
+  have one running. For isolated web-dialog screenshots, serve `web/dist` with a tiny Bun stub answering only the APIs
+  it needs, never a second full service: upgrade `/api/ws` and send
   `{type:'snapshot',snapshot:{places,machines,tasks,...}}`; 404 other `/api`. A later pushed `chat` event (setTimeout) makes
   replies arrive while scrolled up (the Latest pill's count). Run the stub in the background, or it dies with the shell call. Each
   place in the snapshot needs a `chat` field (else a blank crash); open a viewer with `?artifact=<id>`, a task with
@@ -105,8 +106,9 @@ How to run, build and lay out the code: [docs/develop.md](docs/develop.md).
 - Window-mod render tests: `bun test` in service/ with `mock.module` for gpui-kit/gpui-base and herdr via
   service/fake-herdr.ts (bun's mocks are per process, so every herdr stand-in needs every name); see
   service/spaces-sidebar.test.ts.
-- No herdr-app window runs on the dev VM: window-mod UI can only be syntax-checked here, not screenshot. No ImageMagick
-  either: crop proof screenshots with python3 PIL. Stop a background stub with `kill $(lsof -t -i:<port>)`, never
+- Check `herdr-app status` before deciding native UI proof is unavailable; `herdr-app shot <absolute path>` captures an
+  existing window. Never start another window for a test. No ImageMagick here: crop proof screenshots with python3 PIL.
+  Stop a background stub with `kill $(lsof -t -i:<port>)`, never
   `pkill -f` on its path (it matches the calling shell).
 - Autopilot wake replay: print `herdr_task.autopilot.message()` (patch `heartbeat_of`/`direction_of`), then
   `claude -p --append-system-prompt templates/assistant.md` in a scratch repo with fake herdr-task/hc on PATH.

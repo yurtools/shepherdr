@@ -49,11 +49,19 @@ const STATUS_DETAILS = {
   'assistant-asked': 'Assistant asked you to decide.', 'review-expired': 'Assistant review expired. You can decide or ask again.',
   'review-unavailable': 'Assistant review is unavailable. You can decide here.',
   'policy-error': 'Approval policy could not be read. You can decide here.',
+  'rule-denied': 'A saved deny rule blocks Assistant approval. You can decide here.',
+  'policy-changed': 'The review policy changed during review. You can decide or ask again.',
   'native-unavailable': 'Codex Auto-review needs a compatible new or restarted Codex launch.',
 };
 
 // Readers accept only known codes bound to this exact request. No tokens, payloads,
 // arbitrary error messages, configured modes or inferred elapsed-time progress reach a card.
+// The helper may also supply an intentional, redacted rationale for an ask decision.
+function reviewReason(v) {
+  if (typeof v !== 'string' || !v.trim() || v.length > 400 || /[\x00-\x1f\x7f]/.test(v)) return '';
+  return v.replace(/\bBearer\s+[^\s,;]+/gi, 'Bearer [redacted]')
+    .replace(/((?:token|password|secret|api[_-]?key|authorization)["']?\s*[=:\s]\s*)("[^"]*"|'[^']*'|[^\s,;]+)/gi, '$1[redacted]').slice(0,400);
+}
 export function permissionStatus(req, metadata) {
   if (!req || ['request_user_input','EnterPlanMode'].includes(req.tool_name) || words(req).kind !== 'permission') return undefined;
   const unknown = { state: 'unknown', text: 'Approval status unavailable', detail: 'You can decide here.', attention: true };
@@ -65,7 +73,7 @@ export function permissionStatus(req, metadata) {
     const who = v.reviewer === 'feature' ? 'Feature Assistant' : v.reviewer === 'space' ? 'Space Assistant' : 'Assistant';
     return { state: 'assistant', text: `Waiting for ${who} review`, attention: false };
   }
-  if (v.state === 'person') return { state: 'person', text: 'Waiting for your decision', detail: v.reason === 'pipeline-stage' && Number.isInteger(v.stage) && v.stage >= 0 && v.stage < 1000 ? `Stage ${v.stage+1} needs an allow rule. Every pipeline stage must be allowed.` : STATUS_DETAILS[v.reason] ?? 'You can decide here.', attention: true };
+  if (v.state === 'person') return { state: 'person', text: 'Waiting for your decision', detail: v.reason === 'assistant-asked' && reviewReason(v.review_reason) ? `Assistant asks you: ${reviewReason(v.review_reason)}` : v.reason === 'pipeline-stage' && Number.isInteger(v.stage) && v.stage >= 0 && v.stage < 1000 ? `Stage ${v.stage+1} needs an allow rule. Every pipeline stage must be allowed.` : STATUS_DETAILS[v.reason] ?? 'You can decide here.', attention: true };
   return unknown;
 }
 // A file as the person knows it: from the agent's folder, else from home, else whole; just its

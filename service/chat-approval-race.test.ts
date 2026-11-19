@@ -39,7 +39,7 @@ test('a visible native card refreshes status without re-alerting while the Assis
  const cx={notify(){changes++}};
  await v.readAsks(cx);expect(v.asks[0].approval.state).toBe('checking');expect(alerts).toBe(0);
  metadata={...metadata,state:'assistant',reviewer:'feature'};await v.readAsks(cx);expect(v.asks[0].approval.text).toBe('Waiting for Feature Assistant review');expect(alerts).toBe(0);
- metadata={...metadata,state:'person',reason:'assistant-asked'};await v.readAsks(cx);expect(v.asks[0].approval.attention).toBe(true);expect(alerts).toBe(1);
+ metadata={...metadata,state:'person',reason:'assistant-asked',review_reason:'The destination needs your choice.'};await v.readAsks(cx);expect(v.asks[0].approval.attention).toBe(true);expect(v.asks[0].approval.detail).toContain(metadata.review_reason);expect(alerts).toBe(1);
  answered=true;await v.readAsks(cx);expect(v.asks).toEqual([]);expect(changes).toBe(4);
 });
 

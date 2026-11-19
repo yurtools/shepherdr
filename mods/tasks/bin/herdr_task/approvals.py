@@ -1,9 +1,11 @@
 """Shepherdr approval policy: explicit grants, bounded delegation and a local audit trail.
 The requesting CLI remains responsible for its sandbox and managed policy enforcement.
 """
-import contextlib, hashlib, json, os, re, secrets, shlex, struct, subprocess, tempfile, time
+import contextlib, hashlib, json, math, os, re, secrets, shlex, struct, subprocess, tempfile, time
 from pathlib import Path
 MODES = ('manual','rules','assistant','codex-review')
+SHELL_TOOLS = ('Bash','shell','shell_command','local_shell','exec_command','container.exec','functions.exec_command')
+QUESTION_TOOLS = ('AskUserQuestion','ExitPlanMode','EnterPlanMode','request_user_input','request_user_input_async')
 DEFAULT_POLICY = ('Approve only reversible local work inside the stated project that is necessary for the user\'s task. '
                   'Ask the user about publishing, deployment, financial actions, credential access, destructive data changes, '
                   'changes outside the project, or unclear intent. Never approve plan or product-choice questions here.')
@@ -20,7 +22,7 @@ def write(path, value):
  path=Path(path);path.parent.mkdir(parents=True,exist_ok=True)
  fd,tmp=tempfile.mkstemp(prefix='.'+path.name,dir=path.parent)
  try:
-  with os.fdopen(fd,'w') as f: json.dump(value,f,ensure_ascii=False)
+  with os.fdopen(fd,'w') as f: json.dump(value,f,ensure_ascii=False,allow_nan=False)
   os.replace(tmp,path)
  finally:
   with contextlib.suppress(FileNotFoundError):os.unlink(tmp)
@@ -39,40 +41,180 @@ def answer_once(path, value):
   with contextlib.suppress(FileNotFoundError):os.unlink(tmp)
 
 @contextlib.contextmanager
-def locked():
+def locked(wait=True):
  folder=store();folder.mkdir(parents=True,exist_ok=True);lock=folder/'.lock';fd=None
- for _ in range(100):
+ for _ in range(100 if wait else 1):
   try:fd=os.open(lock,os.O_CREAT|os.O_EXCL|os.O_WRONLY,0o600);break
   except FileExistsError:
    with contextlib.suppress(OSError):
     if time.time()-lock.stat().st_mtime>30:lock.unlink()
-   time.sleep(.02)
+   if wait:time.sleep(.02)
  if fd is None:raise ValueError('Approval settings are busy. Try again.')
  try:yield
  finally:
   os.close(fd)
   with contextlib.suppress(FileNotFoundError):lock.unlink()
 
-def plain_command(value):
+def shell_stages(value, depth=0):
+ """Parse a small literal shell subset. Never execute, expand, or alter the request.
+
+ Only ordinary pipelines and literal argv are supported. Reject syntax whose shell
+ meaning differs from token prefix matching, including comments and expansions.
+ Shell -c wrappers are unwrapped only when they are the entire command/stage.
+ """
+ if depth>8:return None
  if isinstance(value,list):
-  if len(value)==3 and value[0].split('/')[-1] in ('sh','bash','zsh') and value[1] in ('-c','-lc'):return plain_command(value[2])
-  return list(value) if value and all(isinstance(x,str) for x in value) else None
- if not isinstance(value,str):return None
+  if not value or not all(isinstance(x,str) and '\x00' not in x for x in value):return None
+  groups=[list(value)]
+ elif isinstance(value,str):
+  parts=[];start=0;quote=None;escaped=False
+  for i,c in enumerate(value):
+   if c in '\x00\n\r':return None
+   if escaped:escaped=False;continue
+   if quote=="'":
+    if c=="'":quote=None
+    continue
+   if c=='\\':
+    # Inside double quotes a backslash escapes only these shell characters.
+    if quote!='"' or i+1<len(value) and value[i+1] in '$`"\\':escaped=True
+    continue
+   if c in '$`':return None
+   if quote=='"':
+    if c=='"':quote=None
+    continue
+   if c in ("'",'"'):quote=c
+   elif c=='|':parts.append(value[start:i]);start=i+1
+   elif c in ';&<>(){}*?[]~#':return None
+  if quote or escaped:return None
+  parts.append(value[start:])
+  try:groups=[shlex.split(p) for p in parts]
+  except ValueError:return None
+  if not all(groups):return None
+ else:return None
+ out=[]
+ for words in groups:
+  at=command_at(words)
+  if at==len(words):return None
+  name=words[at].split('/')[-1]
+  if not words[at] or name in ('!','time','if','then','fi','for','while','do','done','case','esac','function'):return None
+  if name in ('sh','bash','zsh'):
+   if at:return None
+   if len(words)!=3 or words[1] not in ('-c','-lc'):return None
+   inner=shell_stages(words[2],depth+1)
+   # A nested multi-stage pipeline changes grouping; leave it to a person.
+   if not inner or len(groups)>1 and len(inner)>1:return None
+   out.extend(inner)
+  else:out.append(words)
+ return out
+
+def command_at(words):
+ return next((i for i,w in enumerate(words) if not re.match(r'^[A-Za-z_][A-Za-z_0-9]*=',w)),len(words))
+
+def prefix_command_at(words):
+ at=command_at(words)
+ # Keep the literal timeout/duration in the match, but inspect the executable
+ # behind it before offering a prefix. Other timeout option forms remain exact.
+ while at<len(words) and words[at].split('/')[-1]=='timeout':
+  if at+1>=len(words) or not re.fullmatch(r'\d+(?:\.\d+)?[smhd]?',words[at+1]):return len(words)
+  at+=2
+  if at<len(words) and words[at]=='--':at+=1
+ return at
+
+def suggested_prefix(words):return shlex.join(words[:prefix_command_at(words)+2])
+
+def unsafe_prefix(pattern):
+ at=prefix_command_at(pattern);effective=pattern[at:]
+ return (len(pattern)<2 or not effective or
+         any(w.split('/')[-1]=='timeout' for w in pattern[:at]) and len(effective)<2 or
+         effective[0].split('/')[-1] in ('sh','bash','zsh','dash','ksh','fish','env','sudo','command','exec','eval','nohup','nice','stdbuf','xargs') or
+         (re.fullmatch(r'python(?:[23](?:\.\d+)*)?',effective[0].split('/')[-1]) or effective[0].split('/')[-1] in ('node','nodejs','ruby','perl','php','lua','pwsh','powershell')) and (len(effective)<2 or effective[1].startswith('-')))
+
+def wrapped_pipeline(words,depth):
+ at=command_at(words)
+ if at==len(words):return False
+ name=words[at].split('/')[-1]
+ if name in ('sh','bash','zsh'):
+  return any(pipeline_syntax(w,depth+1) for w in words[at+1:])
+ if name in ('env','sudo','command','exec','nohup','nice','timeout','stdbuf'):
+  # These wrappers are not expanded into new grants. Recognize a shell behind
+  # them only to reject a hidden whole-pipeline payload conservatively.
+  return any(w.split('/')[-1] in ('sh','bash','zsh') and any(pipeline_syntax(arg,depth+1) for arg in words[i+1:]) for i,w in enumerate(words[at+1:],at+1))
+ return False
+
+def pipeline_syntax(value,depth=0):
+ """Detect even malformed pipeline syntax before considering legacy payload grants.
+ Quoted/escaped pipes are literal; inspect supported shell wrappers recursively.
+ Unsupported parsing never turns a real pipe/||/|& into a whole-script allow.
+ """
+ if depth>8:return True
+ if isinstance(value,list):
+  if not all(isinstance(w,str) for w in value):return False
+  return wrapped_pipeline(value,depth)
+ if not isinstance(value,str):return False
  quote=None;escaped=False
- for c in value:
+ for i,c in enumerate(value):
   if escaped:escaped=False;continue
   if quote=="'":
    if c=="'":quote=None
    continue
-  if c=='\\':escaped=True;continue
-  if c in ('`','$'):return None
+  if c=='\\':
+   if quote!='"' or i+1<len(value) and value[i+1] in '$`"\\':escaped=True
+   continue
+  if c in '$`' and '|' in value[i+1:]:return True
   if quote=='"':
    if c=='"':quote=None
    continue
   if c in ("'",'"'):quote=c
-  elif c in '; &|<>\n\r'.replace(' ',''):return None
- try:return shlex.split(value) or None
- except ValueError:return None
+  elif c=='|':return True
+ try:
+  return wrapped_pipeline(shlex.split(value),depth)
+ except ValueError:pass
+ return False
+
+def plain_command(value):
+ stages=shell_stages(value)
+ return stages[0] if stages and len(stages)==1 else None
+
+def shell_value(req):
+ if req.get('tool_name') not in SHELL_TOOLS:return None
+ value=req.get('tool_input')
+ return value.get('command',value.get('cmd')) if isinstance(value,dict) else None
+
+def request_stages(req):
+ value=shell_value(req);stages=shell_stages(value)
+ return None if stages and len(stages)==1 and pipeline_syntax(value) else stages
+
+def expired(row, now):
+ value=row.get('expires')
+ return isinstance(value,(int,float)) and value!=0 and value<=now
+
+def maintained(name, default):
+ """Ordinary reads also prune expired records, but never require a writable lock.
+ Re-read under the writers' lock so a concurrent addition cannot be lost. An
+ unreadable/invalid store is left untouched; policy readers still fail closed.
+ """
+ path=store()/name;rows=read(path)
+ if rows is None:return default if not path.exists() else None
+ if not isinstance(rows,type(default)) or any(not isinstance(r,dict) for r in (rows.values() if isinstance(rows,dict) else rows)):return None
+ values=rows.values() if isinstance(rows,dict) else rows
+ if not any(isinstance(r,dict) and expired(r,time.time()) for r in values):return rows
+ try:
+  with locked(wait=False):
+   fresh=read(path)
+   if not isinstance(fresh,type(default)) or any(not isinstance(r,dict) for r in (fresh.values() if isinstance(fresh,dict) else fresh)):return rows
+   now=time.time()
+   clean={k:r for k,r in fresh.items() if not expired(r,now)} if isinstance(fresh,dict) else [r for r in fresh if not expired(r,now)]
+   if clean!=fresh:write(path,clean)
+   return clean
+ except (OSError,ValueError):return rows
+
+def rules():return maintained('rules.json',[])
+
+def for_update(name,default):
+ path=store()/name;value=read(path)
+ if value is None and not path.exists():return default
+ if not isinstance(value,type(default)):raise ValueError('Approval settings could not be read. Nothing was changed.')
+ return value
 
 def action_key(req):return hashlib.sha256(json.dumps([req.get('tool_name'),req.get('tool_input')],sort_keys=True,ensure_ascii=False).encode()).hexdigest()
 
@@ -89,19 +231,20 @@ def status_key(req):
   return '{'+','.join(json.dumps(k,ensure_ascii=True)+':'+stable(v[k]) for k in sorted(v,key=lambda k:k.encode('utf-16-be','surrogatepass')))+'}'
  return hashlib.sha256(stable(req).encode()).hexdigest()
 
-def status(path, req, state, reason='', reviewer=''):
+def status(path, req, state, reason='', reviewer='', stage=None):
  """Publish only bounded lifecycle codes, never the ticket, token, context or tool input."""
  path=Path(path);answer=path.parent.parent/'ans'/path.name
  if read(path)!=req or answer.exists():return
  value={'version':1,'request_hash':status_key(req),'state':state,'reason':reason}
  if reviewer in ('feature','space'):value['reviewer']=reviewer
+ if isinstance(stage,int):value['stage']=stage
  write(path.with_suffix('.status'),value)
  # A late callback must not leave a live-looking status after the hook has closed.
  if read(path)!=req or answer.exists():
   with contextlib.suppress(FileNotFoundError):path.with_suffix('.status').unlink()
 
-def waiting(path, req, reason, detail, reviewer=''):
- status(path,req,'assistant' if reason=='review-pending' else 'person',reason,reviewer)
+def waiting(path, req, reason, detail, reviewer='', stage=None):
+ status(path,req,'assistant' if reason=='review-pending' else 'person',reason,reviewer,stage)
  return {'action':'wait','reason':detail}
 
 def review_status(path, req, retry_unavailable=False):
@@ -155,16 +298,19 @@ def settings(ctx):
  role=out.get(ctx.get('role'))
  if role and role!='inherit':out['mode']=role
  if ctx.get('task_mode') in MODES:out['mode']=ctx['task_mode']
- override=(read(store()/'overrides.json',{}) or {}).get(session_key(ctx))
+ overrides=maintained('overrides.json',{})
+ if overrides is None:out['_read_error']=True
+ override=(overrides or {}).get(session_key(ctx))
  if override and override.get('expires',0)>time.time():out['mode']=override['mode']
  if out.get('mode') not in MODES:out['mode']='manual'
  if not isinstance(out.get('policy'),str):out['policy']=DEFAULT_POLICY
  return out
 
 def session_key(ctx):return hashlib.sha256(json.dumps([ctx.get('space'),ctx.get('task') or ctx.get('session'),ctx.get('account')]).encode()).hexdigest()
-def is_permission(req):return req.get('tool_name') not in ('AskUserQuestion','ExitPlanMode','EnterPlanMode','request_user_input','') and bool(req.get('tool_name'))
+def execution_tool(tool):return isinstance(tool,str) and bool(tool) and re.split(r'\.|__',tool)[-1] not in QUESTION_TOOLS
+def is_permission(req):return execution_tool(req.get('tool_name'))
 def summary(req):
- value=(req.get('tool_input') or {}).get('command') if isinstance(req.get('tool_input'),dict) else ''
+ value=shell_value(req)
  return redact(shlex.join(value) if isinstance(value,list) else str(value or req.get('tool_name') or 'Permission'))
 
 def rule_seed(req,ctx):
@@ -172,10 +318,11 @@ def rule_seed(req,ctx):
  # the request and terminal have gone. Never retain the full tool input.
  if not is_permission(req) or '[redacted]' in summary(req) or '[redacted]' in redact(json.dumps(req.get('tool_input'),ensure_ascii=False)):
   return None
- words=plain_command((req.get('tool_input') or {}).get('command'))
- if words and len(shlex.join(words))>500:words=None
+ stages=request_stages(req)
+ if stages and len(json.dumps(stages))>4000:stages=None
+ words=stages[0] if stages and len(stages)==1 else None
  return {'context':{k:ctx.get(k,'') for k in ('terminal','space','task','session','account','cwd')},
-         'tool':req.get('tool_name'),'words':words,'action_key':action_key(req)}
+         'tool':req.get('tool_name'),'words':words,'stages':stages,'pipeline':pipeline_syntax(shell_value(req)),'action_key':action_key(req)}
 
 def audit(req,ctx,decision,reason,source):
  row={'id':secrets.token_hex(8),'at':int(time.time()*1000),'key':request_key(req),'terminal':ctx.get('terminal'),'space':ctx.get('space'),
@@ -188,21 +335,54 @@ def audit(req,ctx,decision,reason,source):
 def response(action,reason='',source='policy'):
  return {'action':action,'reason':reason,'source':source,'response':{'hookSpecificOutput':{'hookEventName':'PermissionRequest','decision':{'behavior':action,**({'message':reason} if action=='deny' else {})}}}}
 
-def matches(rule,req,ctx):
- if rule.get('expires',0) and rule['expires']<time.time():return False
- if rule.get('account')!=ctx.get('account') or rule.get('tool')!=req.get('tool_name'):return False
- folder=rule.get('cwd');cwd=ctx.get('cwd','')
- if folder and not (cwd==folder or cwd.startswith(folder+os.sep)):return False
- if rule.get('scope') in ('space','task') and (not rule.get('space') or rule['space']!=ctx.get('space')):return False
+def matches(rule,req,ctx,words=None,pipeline=False):
+ if not isinstance(rule,dict) or not is_permission(req) or expired(rule,time.time()):return False
+ if rule.get('tool')!=req.get('tool_name') or rule.get('scope') not in ('global','account','space','task'):return False
+ if rule.get('scope')!='global':
+  if rule.get('account')!=ctx.get('account'):return False
+  folder=rule.get('cwd');cwd=ctx.get('cwd','')
+  if not folder or not (cwd==folder or cwd.startswith(folder.rstrip(os.sep)+os.sep)):return False
+  if rule.get('scope') in ('space','task') and (not rule.get('space') or rule['space']!=ctx.get('space')):return False
  if rule.get('scope')=='task':
   if rule.get('task'): 
    if rule['task']!=ctx.get('task'):return False
   elif rule.get('session')!=ctx.get('session'):return False
- if rule.get('match')=='request':return rule.get('action_key')==action_key(req)
- words=plain_command((req.get('tool_input') or {}).get('command'))
+ if rule.get('match')=='tool':return req.get('tool_name') not in SHELL_TOOLS
+ if rule.get('match')=='request':
+  # A legacy whole-pipeline payload cannot stand in for stage grants.
+  return not pipeline and not pipeline_syntax(shell_value(req)) and rule.get('action_key')==action_key(req)
+ if words is None:
+  stages=request_stages(req)
+  words=stages[0] if stages and len(stages)==1 else None
  if not words:return False
  pattern=rule.get('pattern') or []
- return words==pattern if rule.get('match')=='exact' else bool(pattern) and words[:len(pattern)]==pattern
+ return words==pattern if rule.get('match')=='exact' else rule.get('match')=='prefix' and bool(pattern) and not unsafe_prefix(pattern) and words[:len(pattern)]==pattern
+
+def matching_decision(saved,req,ctx):
+ stages=request_stages(req) if req.get('tool_name') in SHELL_TOOLS else None
+ # Keep unrelated legacy exact payload grants, but never allow a whole-pipeline
+ # hash (even malformed/unsupported pipelines) to bypass stage checks.
+ if req.get('tool_name') in SHELL_TOOLS and not stages and pipeline_syntax(shell_value(req)):return None,None
+ groups=stages or [None];allows=[];missing=None
+ for i,words in enumerate(groups):
+  applicable=[r for r in saved if matches(r,req,ctx,words,len(groups)>1)]
+  denied=next((r for r in applicable if r.get('decision')=='deny'),None)
+  if denied:return response('deny',f'{denied["scope"]} {denied["match"]} rule {denied["id"]}'+(f' · stage {i+1}' if len(groups)>1 else ''),'rule'),None
+  allowed=next((r for r in applicable if r.get('decision')=='allow'),None)
+  if allowed:allows.append(allowed)
+  elif missing is None:missing=i
+ if missing is not None:return None,missing if len(groups)>1 else None
+ reason='; '.join(f'{r["scope"]} {r["match"]} rule {r["id"]}'+(f' · stage {i+1}' if len(groups)>1 else '') for i,r in enumerate(allows))
+ return response('allow',reason,'rule'),None
+
+def inspect_request(req,ctx):
+ stages=request_stages(req)
+ saved=rules() or []
+ selected=next((i for i,w in enumerate(stages or []) if not any(r.get('decision')=='allow' and matches(r,req,ctx,w,len(stages)>1) for r in saved)),0)
+ words=stages[selected] if stages else None
+ return {'context':ctx,'command':summary(req),'tool':req.get('tool_name'),'tool_wide':is_permission(req) and req.get('tool_name') not in SHELL_TOOLS,
+         'words':words,'stages':stages,'stage':selected,'unsupported_pipeline':bool(not stages and pipeline_syntax(shell_value(req))),'stage_commands':[shlex.join(w) for w in stages or []],
+         'stage_prefixes':[suggested_prefix(w) for w in stages or []],'suggested_prefix':suggested_prefix(words or []),'permission':is_permission(req)}
 
 def request_context(path, terminal=None):
  path=Path(path);req=read(path)
@@ -213,30 +393,52 @@ def request_context(path, terminal=None):
   ctx=context(req,terminal);ctx['request_key']=request_key(req);write(side,ctx)
  return req,ctx
 
-def grant(path, terminal=None, scope='task', match='exact', prefix=None, hours=1, decision='allow'):
+def grant(path, terminal=None, scope='task', match='exact', prefix=None, hours=1, decision='allow', stage=None):
  req,ctx=request_context(path,terminal)
  if not is_permission(req):raise ValueError('Plans and questions cannot receive execution approval rules.')
- words=plain_command((req.get('tool_input') or {}).get('command'))
+ stages=request_stages(req)
+ if not stages and pipeline_syntax(shell_value(req)):raise ValueError('This pipeline contains unsupported shell syntax. Use Allow once or Ask Assistant.')
+ if stages and len(stages)>1 and stage is None:raise ValueError('Select a pipeline stage to create a rule.')
+ if stage is not None and (not stages or not 0<=stage<len(stages)):raise ValueError('Invalid pipeline stage.')
+ words=stages[stage or 0] if stages else None
  rule=save_rule(ctx,req['tool_name'],words,action_key(req),summary(req),scope,match,prefix,hours,decision)
- audit(req,ctx,decision,'Saved '+scope+' '+match+' rule','user-rule')
+ audit(req,ctx,'saved' if stages and len(stages)>1 else decision,('Saved stage '+str((stage or 0)+1)+' ' if stages and len(stages)>1 else 'Saved ')+scope+' '+match+' rule','user-rule')
  return rule
 
+def grant_task(path,terminal=None):
+ # Freeze one request/context for all exact stage rules. Never re-read a changed
+ # request between stages and accidentally remember parts of its replacement.
+ req,ctx=request_context(path,terminal)
+ if not is_permission(req):raise ValueError('Plans and questions cannot receive execution approval rules.')
+ stages=request_stages(req)
+ if not stages and pipeline_syntax(shell_value(req)):raise ValueError('This pipeline contains unsupported shell syntax. Use Allow once or Ask Assistant.')
+ created=[save_rule(ctx,req['tool_name'],words,action_key(req),summary(req),'task','exact',None,24,'allow') for words in stages or [None]]
+ audit(req,ctx,'saved' if stages and len(stages)>1 else 'allow','Saved exact rules for this task/session','user-rule')
+ return created[-1]
+
 def save_rule(ctx,tool,words,action,command,scope='task',match='exact',prefix=None,hours=1,decision='allow'):
+ if not execution_tool(tool):raise ValueError('Plans and questions cannot receive execution approval rules.')
+ tool_match=match=='tool' and tool not in SHELL_TOOLS
  request_match=not words and scope=='task' and match=='exact'
- if not words and not request_match:raise ValueError('Starting-with rules require one plain command. Use exact action for this task or Ask Assistant for scripts.')
- if scope not in ('task','space','account') or match not in ('exact','prefix') or decision not in ('allow','deny'):raise ValueError('Invalid rule scope, match or decision.')
+ if not words and not request_match and not tool_match:raise ValueError('Starting-with rules require one plain command. Use an exact task action or a named tool rule for non-shell tools.')
+ if scope not in ('task','space','account','global') or match not in ('exact','prefix','tool') or match=='tool' and not tool_match or decision not in ('allow','deny'):raise ValueError('Invalid rule scope, match or decision.')
  if scope=='space' and not ctx.get('space'):raise ValueError('This agent has no space. Use task/session scope instead.')
- pattern=plain_command(prefix) if match=='prefix' else words if words else [command]
- if not pattern or not request_match and words[:len(pattern)]!=pattern:raise ValueError('The prefix must match the pending command’s argument list.')
- if match=='prefix' and (len(pattern)<2 or pattern[0].split('/')[-1] in ('sh','bash','zsh','env') or pattern[0].split('/')[-1] in ('python','python3','node','ruby','perl') and pattern[1].startswith('-')):raise ValueError('That prefix grants arbitrary commands. Choose a more specific command or Allow once.')
+ pattern=[] if tool_match else plain_command(prefix) if match=='prefix' else words if words else [command]
+ if not tool_match and (not pattern or not request_match and words[:len(pattern)]!=pattern):raise ValueError('The prefix must match the pending command’s argument list.')
+ if match=='prefix' and unsafe_prefix(pattern):raise ValueError('That prefix grants arbitrary commands. Choose a more specific command or Allow once.')
  if '[redacted]' in redact(shlex.join(pattern)):raise ValueError('Do not save credentials in approval rules. Use Allow once.')
- rule={'id':secrets.token_hex(8),'created':int(time.time()*1000),'expires':time.time()+max(0.01,min(float(hours),24*365))*3600,
-       'scope':scope,'match':'request' if request_match else match,'action_key':action if request_match else None,'pattern':pattern,'tool':tool,'decision':decision,'cwd':ctx['cwd'],'account':ctx['account'],
-       'space':ctx['space'] if scope!='account' else '', 'task':ctx['task'] if scope=='task' else '', 'session':ctx['session'] if scope=='task' and not ctx['task'] else ''}
+ hours=float(hours)
+ if not math.isfinite(hours) or hours<0:raise ValueError('Choose a finite lifetime or Forever (zero hours).')
+ now=time.time();expires=0 if hours==0 else now+max(.01,min(hours,24*365))*3600
+ rule={'id':secrets.token_hex(8),'created':int(now*1000),'expires':expires,
+       'scope':scope,'match':'request' if request_match else match,'action_key':action if request_match else None,'pattern':pattern,'tool':tool,'decision':decision,'cwd':ctx['cwd'] if scope!='global' else '', 'account':ctx['account'] if scope!='global' else '',
+       'space':ctx['space'] if scope in ('task','space') else '', 'task':ctx['task'] if scope=='task' else '', 'session':ctx['session'] if scope=='task' and not ctx['task'] else ''}
  with locked():
-  rules=read(store()/'rules.json',[]) or [];write(store()/'rules.json',[r for r in rules if not r.get('expires') or r['expires']>time.time()]+[rule])
+  saved=for_update('rules.json',[]);overrides=for_update('overrides.json',{})
+  write(store()/'rules.json',[r for r in saved if not expired(r,now)]+[rule])
   # Explicitly remembering an approval activates rules for this task/session, without widening global defaults.
-  overrides=read(store()/'overrides.json',{}) or {};overrides[session_key(ctx)]={'mode':'rules','expires':rule['expires']};write(store()/'overrides.json',overrides)
+  overrides={k:v for k,v in overrides.items() if not expired(v,now)}
+  overrides[session_key(ctx)]={'mode':'rules','expires':min(expires or now+24*3600,now+24*3600)};write(store()/'overrides.json',overrides)
  return rule
 
 def history_rows(space=''):
@@ -260,12 +462,21 @@ def history_inspect(ident):
     break
  if not seed or not seed.get('context',{}).get('cwd') or not seed.get('context',{}).get('account'):
   raise ValueError('This older or redacted entry has no reusable account/folder context. Create a rule from a new approval.')
- return {'context':seed['context'],'command':row.get('command',''),'words':seed.get('words'),
-         'suggested_prefix':shlex.join((seed.get('words') or [])[:2]),'permission':True,'history':True,'seed':seed}
+ if not execution_tool(seed.get('tool')):raise ValueError('Plans and questions cannot receive execution approval rules.')
+ stages=seed.get('stages') or ([seed['words']] if seed.get('words') and seed['tool'] in SHELL_TOOLS else None)
+ words=stages[0] if stages else None
+ return {'context':seed['context'],'command':row.get('command',''),'words':words,'tool':seed['tool'],'tool_wide':seed['tool'] not in SHELL_TOOLS,'stages':stages,'stage':0,'unsupported_pipeline':bool(seed.get('pipeline') and not stages),
+         'stage_commands':[shlex.join(w) for w in stages or []],'stage_prefixes':[suggested_prefix(w) for w in stages or []],
+         'suggested_prefix':suggested_prefix(words or []),'permission':True,'history':True,'seed':seed}
 
-def grant_history(ident,scope='task',match='exact',prefix=None,hours=1,decision='allow'):
+def grant_history(ident,scope='task',match='exact',prefix=None,hours=1,decision='allow',stage=None):
  info=history_inspect(ident);seed=info['seed']
- rule=save_rule(seed['context'],seed['tool'],seed.get('words'),seed['action_key'],info['command'],scope,match,prefix,hours,decision)
+ if info['unsupported_pipeline']:raise ValueError('This pipeline contains unsupported shell syntax. Use Allow once or Ask Assistant on a new request.')
+ stages=info['stages']
+ if stages and len(stages)>1 and stage is None:raise ValueError('Select a pipeline stage to create a rule.')
+ if stage is not None and (not stages or not 0<=stage<len(stages)):raise ValueError('Invalid pipeline stage.')
+ words=stages[stage or 0] if stages else None
+ rule=save_rule(seed['context'],seed['tool'],words,seed['action_key'],info['command'],scope,match,prefix,hours,decision)
  # Saving a rule is distinct from answering/replaying the original action.
  return {'rule':rule,'reason':'Rule saved for future matching requests. The original action was not run or answered.'}
 
@@ -332,7 +543,7 @@ def decide(ident, token, decision, reason, terminal=None):
  return {'decision':decision,'reason':reason}
 
 def own_review_command(req,ctx):
- words=plain_command((req.get('tool_input') or {}).get('command')) or []
+ words=plain_command(shell_value(req)) or []
  helper=str(app_home()/'mods/chat/approval-policy.py')
  if words and words[0] in ('python3','python') and len(words)>1:words=words[1:]
  if len(words)<3 or words[:2]!=[helper,'decide']:return False
@@ -345,7 +556,7 @@ def own_review_command(req,ctx):
 
 def own_feature_name(req,ctx):
  if ctx.get('role')!='feature' or not ctx.get('feature'):return False
- words=plain_command((req.get('tool_input') or {}).get('command')) or []
+ words=plain_command(shell_value(req)) or []
  if words and words[0] in ('python','python3'):words=words[1:]
  if len(words)!=3 or words[:2]!=[str(app_home()/'mods/workspace-launchers/bin/workspace-state'),'feature-name']:return False
  try:
@@ -362,7 +573,7 @@ def evaluate(path, terminal=None, audit_decision=True):
  try:
   out=_evaluate(path,terminal)
   if audit_decision and (out.get('source')=='rule' or out['action']=='native'):
-   audit_result(req,request_context(path,terminal)[1],out)
+   with contextlib.suppress(OSError,ValueError):audit_result(req,request_context(path,terminal)[1],out)
   return out
  except Exception:
   if is_permission(req):status(path,req,'person','policy-error')
@@ -377,15 +588,12 @@ def _evaluate(path, terminal=None):
  if not is_permission(req):return {'action':'wait','reason':'Plans and questions require their own answer.'}
  if own_feature_name(req,ctx):return response('allow','Feature Assistant may name its own feature.','feature-name')
  if own_review_command(req,ctx):return response('allow','Designated Assistant may submit this exact review decision.','review-control')
- opts=settings(ctx)
- rules_read_error=False
+ saved=rules();opts=settings(ctx);missing=None
+ if opts.get('_read_error') or saved is None:
+  return waiting(path,req,'policy-error','Approval policy could not be read. You can decide here.')
  if opts['mode']!='manual':
-  saved=read(store()/'rules.json');rules_read_error=saved is None and (store()/'rules.json').exists()
-  rules=[r for r in saved or [] if matches(r,req,ctx)]
-  rules.sort(key=lambda r:r.get('decision')!='deny')
-  if rules:
-   rule=rules[0];reason=f'{rule["scope"]} {rule["match"]} rule {rule["id"]}'
-   return response(rule['decision'],reason,'rule')
+  result,missing=matching_decision(saved or [],req,ctx)
+  if result:return result
  if opts['mode']=='assistant':return review_ticket(path,req,ctx)
  if opts['mode']=='codex-review':
   if ctx['agent']=='codex' and ctx.get('native_review'):
@@ -395,7 +603,7 @@ def _evaluate(path, terminal=None):
  existing=review_status(path,req)
  if existing:return existing
  if opts['mode']=='codex-review':return waiting(path,req,'native-unavailable','Native Auto-review requires a new or restarted Codex agent. Other agents use manual approval.')
- return waiting(path,req,'policy-error' if opts.get('_read_error') or rules_read_error else 'manual' if opts['mode']=='manual' else 'no-rule','Waiting for your decision.')
+ return waiting(path,req,'manual' if opts['mode']=='manual' else 'pipeline-stage' if missing is not None else 'no-rule','Waiting for your decision.',stage=missing)
 
 
 def launch_argv(argv, space='', role='worker', cwd='', mode=None):

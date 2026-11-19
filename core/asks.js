@@ -65,7 +65,7 @@ export function permissionStatus(req, metadata) {
     const who = v.reviewer === 'feature' ? 'Feature Assistant' : v.reviewer === 'space' ? 'Space Assistant' : 'Assistant';
     return { state: 'assistant', text: `Waiting for ${who} review`, attention: false };
   }
-  if (v.state === 'person') return { state: 'person', text: 'Waiting for your decision', detail: STATUS_DETAILS[v.reason] ?? 'You can decide here.', attention: true };
+  if (v.state === 'person') return { state: 'person', text: 'Waiting for your decision', detail: v.reason === 'pipeline-stage' && Number.isInteger(v.stage) && v.stage >= 0 && v.stage < 1000 ? `Stage ${v.stage+1} needs an allow rule. Every pipeline stage must be allowed.` : STATUS_DETAILS[v.reason] ?? 'You can decide here.', attention: true };
   return unknown;
 }
 // A file as the person knows it: from the agent's folder, else from home, else whole; just its

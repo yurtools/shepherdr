@@ -210,7 +210,7 @@ class ApprovalLifecycle(unittest.TestCase):
 class FeatureNaming(unittest.TestCase):
  def test_only_the_feature_owner_can_name_its_own_record(self):
   helper=str(A.app_home()/'mods/workspace-launchers/bin/workspace-state')
-  req={'tool_input':{'command':['python3',helper,'feature-name',json.dumps({'id':'one','name':'Browser tabs'})]}}
+  req={'tool_name':'Bash','tool_input':{'command':['python3',helper,'feature-name',json.dumps({'id':'one','name':'Browser tabs'})]}}
   self.assertTrue(A.own_feature_name(req,{'role':'feature','feature':'one'}))
   self.assertFalse(A.own_feature_name(req,{'role':'worker','feature':'one'}))
   self.assertFalse(A.own_feature_name(req,{'role':'feature','feature':'two'}))

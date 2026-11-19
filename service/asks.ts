@@ -4,14 +4,14 @@
 // whichever answers first wins (the hook reads one answer, then the card closes everywhere). Another machine's agents
 // (the web served from a machine other than theirs) ask in that machine's data/chat-asks: read and answered through
 // herdr-core's link.
-import { watch, readdirSync, readFileSync, writeFileSync, renameSync, existsSync, statSync } from "node:fs";
+import { watch, readdirSync, readFileSync, writeFileSync, renameSync, existsSync, statSync, linkSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { DATA, appHome, writable } from "./paths.ts";
 import * as A from "../core/asks.js";
 import type { Hub } from "./hub.ts";
 import { note as noteUsage } from "./usage.ts";
 
-const { words, allow, deny, answers, annotationsOf, howAnswered, release, chatAbout, dismiss } = A as any;
+const { words, permissionStatus, requestHash, allow, deny, answers, annotationsOf, howAnswered, release, chatAbout, dismiss } = A as any;
 const dir = () => join(appHome(), "data", "chat-asks");
 const ID = /^[\w.-]+$/;
 const MACHINE = /^[\w.-]+$/;
@@ -20,15 +20,18 @@ const MACHINE = /^[\w.-]+$/;
 const THERE = 'd="${HERDR_APP_HOME:-$HOME/.config/herdr-app}/data/chat-asks"';
 const LIST = `${THERE}
 for f in "$d"/req/*.json; do [ -f "$f" ] || continue; n=\${f##*/}; n=\${n%.json}; [ -f "$d/ans/$n.json" ] && continue
-  printf 'req\\t%s\\t' "$n"; tr '\\n\\t' '  ' < "$f"; echo; done
+  printf 'req\\t%s\\t' "$n"; tr '\\n\\t' '  ' < "$f"; echo
+  if [ -f "$d/req/$n.status" ]; then printf 'status\\t%s\\t' "$n"; tr '\\n\\t' '  ' < "$d/req/$n.status"; echo; fi; done
 for n in "$@"; do [ -f "$d/end/$n" ] && printf 'end\\t%s\\t%s\\n' "$n" "$(head -n 1 "$d/end/$n")"; done; exit 0`;
 // An answer there, as answer() writes one here: how it went (end/<id>), then the answer (stdin) in place at once.
 const ANSWER = `${THERE}; mkdir -p "$d/ans" "$d/end"; [ -f "$d/req/$1.json" ] || exit 3
-[ -z "$2" ] || printf '%s\\n' "$2" > "$d/end/$1"
-cat > "$d/ans/$1.json.tmp" && mv "$d/ans/$1.json.tmp" "$d/ans/$1.json"`;
+python3 -c 'import json,sys; sys.exit(0 if json.load(open(sys.argv[1])) == json.loads(sys.argv[2]) else 3)' "$d/req/$1.json" "$3" || exit 3
+tmp="$d/ans/$1.$$.tmp"; cat > "$tmp" || exit 1
+ln "$tmp" "$d/ans/$1.json"; result=$?; rm -f "$tmp"; [ "$result" = 0 ] || exit 3
+[ -z "$2" ] || printf '%s\\n' "$2" > "$d/end/$1"`;
 
 /** machine and local: another machine's ask, by that machine's name and its own id there (its id here: <machine>/<local>) */
-export type Ask = { id: string; terminal: string; at: number; req: any; words: any; machine?: string; local?: string };
+export type Ask = { id: string; terminal: string; at: number; req: any; words: any; approval?: any; machine?: string; local?: string };
 
 /** An ask that closed, as the window's chat keeps it for its quiet line ("✓ Run: npm test · Allowed in the chat"):
  *  what it asked and how it went (the hook's end/<id>, else "No longer waiting"), at its moment. */
@@ -92,20 +95,21 @@ export class Asks {
         const r = await this.hub.call<{ code: number; stdout: string }>("machine.exec", { on: m, argv: ["sh", "-c", LIST, "sh", ...asked, ...late], timeout: 10 }, 15_000).catch(() => null);
         // out of reach: what is open stays as it was
         if (r?.code !== 0) continue;
-        const reqs = new Map<string, string>(), ends = new Map<string, string>();
+        const reqs = new Map<string, string>(), ends = new Map<string, string>(), statuses = new Map<string, string>();
         for (const line of Buffer.from(r.stdout, "base64").toString("utf8").split("\n")) {
           const [kind, id, ...rest] = line.split("\t");
           if (!id || !ID.test(id)) continue;
           if (kind === "req") reqs.set(id, rest.join("\t"));
+          else if (kind === "status") statuses.set(id, rest.join("\t"));
           else if (kind === "end" && rest.join("\t").trim()) ends.set(id, rest.join("\t").trim());
         }
         for (const [local, body] of reqs) {
           const id = `${m}/${local}`;
-          if (this.open.has(id)) continue;
           try {
             const req = JSON.parse(body);
-            this.open.set(id, { id, terminal: `${m}/${local.split(".")[0]}`, at: askAt(local), req, words: words(req), machine: m, local });
-            changed = true;
+            const old = this.open.get(id), approval = permissionStatus(req, statuses.get(local));
+            const next = { id, terminal: `${m}/${local.split(".")[0]}`, at: old?.at ?? askAt(local), req, words: words(req), approval, machine: m, local };
+            if (JSON.stringify(old) !== JSON.stringify(next)) { this.open.set(id, next); changed = true; }
           } catch {}
         }
         for (const local of asked) if (!reqs.has(local)) {
@@ -132,14 +136,14 @@ export class Asks {
     for (const n of names) {
       const id = n.slice(0, -5);
       if (!ID.test(id) || existsSync(join(dir(), "ans", n))) continue;
-      const old = this.open.get(id);
-      if (old) { next.set(id, old); continue; }
       try {
         const req = JSON.parse(readFileSync(join(dir(), "req", n), "utf8"));
-        next.set(id, { id, terminal: id.split(".")[0], at: statSync(join(dir(), "req", n)).mtimeMs, req, words: words(req) });
+        let metadata; try { metadata = readFileSync(join(dir(), "req", `${id}.status`), "utf8"); } catch {}
+        if (existsSync(join(dir(), "ans", n)) || !existsSync(join(dir(), "req", n))) continue;
+        next.set(id, { id, terminal: id.split(".")[0], at: this.open.get(id)?.at ?? statSync(join(dir(), "req", n)).mtimeMs, req, words: words(req), approval: permissionStatus(req, metadata) });
       } catch {}
     }
-    const changed = next.size !== this.open.size || [...next.keys()].some((k) => !this.open.has(k));
+    const changed = next.size !== this.open.size || [...next].some(([k, v]) => JSON.stringify(this.open.get(k)) !== JSON.stringify(v));
     // gone: its quiet line, with how it went
     for (const [id, a] of this.open) if (!next.has(id)) this.ended(a);
     // the hook writes how a moment after the request goes: a line still saying "No longer waiting" learns it
@@ -186,7 +190,7 @@ export class Asks {
     // As the window's answerAsk(): first how it went (end/<id>, for every other copy of the card), then the answer.
     const how = howAnswered(ask, out, "on the web");
     if (ask.machine) {
-      const r = await this.hub?.call<{ code: number }>("machine.exec", { on: ask.machine, argv: ["sh", "-c", ANSWER, "sh", ask.local!, how ?? ""], input: Buffer.from(out).toString("base64"), timeout: 10 }, 15_000).catch(() => null);
+      const r = await this.hub?.call<{ code: number }>("machine.exec", { on: ask.machine, argv: ["sh", "-c", ANSWER, "sh", ask.local!, how ?? "", JSON.stringify(ask.req)], input: Buffer.from(out).toString("base64"), timeout: 10 }, 15_000).catch(() => null);
       if (r?.code === 3) { this.open.delete(id); this.ended(ask); for (const fn of this.listeners) fn(); throw new Error("That question was answered already."); }
       if (r?.code !== 0) throw new Error(`It didn't reach ${ask.machine}: try again.`);
       this.open.delete(id);
@@ -194,10 +198,13 @@ export class Asks {
       for (const fn of this.listeners) fn();
       return;
     }
-    if (how) writeFileSync(writable(join(dir(), "end", id)), `${how}\n`);
+    let fresh; try { fresh = JSON.parse(readFileSync(join(dir(), "req", `${id}.json`), "utf8")); } catch {}
+    if (!fresh || requestHash(fresh) !== requestHash(ask.req)) throw new Error("That request changed or closed. Refresh it before deciding.");
     const file = writable(join(dir(), "ans", `${id}.json`));
-    writeFileSync(`${file}.tmp`, out);
-    renameSync(`${file}.tmp`, file);
+    const tmp = `${file}.${crypto.randomUUID()}.tmp`;
+    try { writeFileSync(tmp, out); linkSync(tmp, file); }
+    finally { if (existsSync(tmp)) unlinkSync(tmp); }
+    if (how) writeFileSync(writable(join(dir(), "end", id)), `${how}\n`);
     this.open.delete(id);
     this.ended(ask);
     for (const fn of this.listeners) fn();

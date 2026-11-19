@@ -4,7 +4,7 @@ import {readShepherdr} from './coordinator.js';
 import LinkedMarkdown from './linked-markdown.js';
 import { chatLink, hasChatLink } from './core/chat-links.js';
 import { startFeature, workspaceCall } from "./features.js";
-import { approvalArgv } from "./approval.js";
+import { approvalArgv, answerPermission } from "./approval.js";
 import { measuredHeight, viewportScroll, hoverMessage, measureOrder, pendingMarkdownHeight, messageChunks } from "./core/chat-layout.js";
 // Chat: an agent's conversation as a chat, read from the agent's own session log, with a
 // box to write to it. The agent keeps running in its terminal; this only shows it another way.
@@ -40,7 +40,7 @@ import { FIND, LOG, Conversation, records, resultText, summary, excerpt, names, 
 import { BgJobs } from "./core/bg-jobs.js";
 import { ChatReader } from "./core/chat-reader.js";
 import { preview } from "./core/recipe.js";
-import { words, howAnswered, codexOnScreen, codexSteps } from "./core/asks.js";
+import { words, permissionStatus, requestHash, howAnswered, codexOnScreen, codexSteps } from "./core/asks.js";
 // The rows' words and rules the web app's chat draws by too (core/chat-view.js).
 import { WORDS, clock, bgGroups, subagentsOf, subagentWord, senderName, briefLabel, firstUser, firstKeys, literal, fromName, sentTo, selfName, initialOf, newsWords, resolveArtifacts, unsigned, ownWords, fitThumbs, bandActs, bandOrder, imagesLine, questionsBelow, notSent, published, artifactLine, videoLine, mediaIn, elapsed, reportMsg, doingWords, LOST, lostMessage, shellWord, sessionStarted, sessionFailed } from "./core/chat-view.js";
 // Sending the person's words, as the web app does (core/send.js).
@@ -194,7 +194,8 @@ const threadOf = (terminal) => Object.entries(threads()).find(([, v]) => v?.term
 // An answer to a waiting hook (ask-hook.sh prints it as Claude's decision), the one way every
 // copy of a card delivers. First how it went (the hook's end/<id>), for the ask's other copies:
 // they read it once the request is gone.
-async function answerAsk(dir, id, text, how) {
+async function answerAsk(dir, id, text, how, req) {
+  if (req && words(req).kind === "permission") return answerPermission(`${dir}/req/${id}.json`, requestHash(req), text, how);
   if (how) await writeTextFile(`${dir}/end/${id}`, `${how}\n`, null).catch(() => {});
   await writeTextFile(`${dir}/ans/${id}.json`, text, null).catch(() => {});
 }
@@ -204,14 +205,18 @@ async function answerAsk(dir, id, text, how) {
 const ASKS_THERE = 'd="${HERDR_APP_HOME:-$HOME/.config/herdr-app}/data/chat-asks"';
 const REMOTE_LIST = `${ASKS_THERE}; t=$1; shift
 for f in "$d/req/$t".*.json; do [ -f "$f" ] || continue; n=\${f##*/}; n=\${n%.json}; [ -f "$d/ans/$n.json" ] && continue
-  kill -0 "\${n##*.}" 2>/dev/null || continue; printf 'req\\t%s\\t' "$n"; tr '\\n\\t' '  ' < "$f"; echo; done
+  kill -0 "\${n##*.}" 2>/dev/null || continue; printf 'req\\t%s\\t' "$n"; tr '\\n\\t' '  ' < "$f"; echo
+  if [ -f "$d/req/$n.status" ]; then printf 'status\\t%s\\t' "$n"; tr '\\n\\t' '  ' < "$d/req/$n.status"; echo; fi; done
 for n in "$@"; do [ -f "$d/end/$n" ] && printf 'end\\t%s\\t%s\\n' "$n" "$(head -n 1 "$d/end/$n")"; done; exit 0`;
 // An answer there: how it went, then the answer ($3) in place at once.
 const REMOTE_ANSWER = `${ASKS_THERE}; mkdir -p "$d/ans" "$d/end"; [ -f "$d/req/$1.json" ] || exit 3
-[ -z "$2" ] || printf '%s\\n' "$2" > "$d/end/$1"
-printf '%s' "$3" > "$d/ans/$1.json.tmp" && mv "$d/ans/$1.json.tmp" "$d/ans/$1.json"`;
-async function answerRemote(machine, id, text, how) {
-  await exec("hc", ["exec", "--on", machine, "sh", "-c", REMOTE_ANSWER, "x", id, how ?? "", text]).catch(() => {});
+python3 -c 'import json,sys; sys.exit(0 if json.load(open(sys.argv[1])) == json.loads(sys.argv[2]) else 3)' "$d/req/$1.json" "$4" || exit 3
+tmp="$d/ans/$1.$$.tmp"; printf '%s' "$3" > "$tmp" || exit 1
+ln "$tmp" "$d/ans/$1.json"; result=$?; rm -f "$tmp"; [ "$result" = 0 ] || exit 3
+[ -z "$2" ] || printf '%s\\n' "$2" > "$d/end/$1"`;
+async function answerRemote(machine, id, text, how, req) {
+  const r = await exec("hc", ["exec", "--on", machine, "sh", "-c", REMOTE_ANSWER, "x", id, how ?? "", text, JSON.stringify(req)]);
+  if (r.code !== 0) throw new Error('The request closed or could not be answered.');
 }
 // The person's words keep the line breaks they typed: markdown joins single lines, so each one
 // becomes a hard break (outside code fences, which keep theirs). A "<word>" they typed shows as
@@ -718,28 +723,31 @@ export default class Chat extends View {
   // and how each card shown here ended, in one call (as the service's poll, service/asks.ts).
   // Ids stay that machine's own (<terminal>.<time>.<pid>); its replies go back the same way.
   async readRemoteAsks(cx) {
-    const machine = this.machine, local = this.addr.slice(machine.length + 1);
+    const machine = this.machine, address = this.addr, local = address.slice(machine.length + 1);
     const r = await exec("hc", ["exec", "--on", machine, "sh", "-c", REMOTE_LIST, "x", local, ...this.asks.map((a) => a.id)]);
-    if (r.code !== 0 || this.machine !== machine) return;
-    const reqs = new Map(), ends = new Map();
+    if (r.code !== 0 || this.machine !== machine || this.addr !== address) return;
+    const reqs = new Map(), ends = new Map(), statuses = new Map();
     for (const line of String(r.stdout ?? "").split("\n")) {
       const [kind, id, ...rest] = line.split("\t");
       if (!id || !/^[\w.-]+$/.test(id)) continue;
       if (kind === "req") reqs.set(id, rest.join("\t"));
+      else if (kind === "status") statuses.set(id, rest.join("\t"));
       else if (kind === "end" && rest.join("\t").trim()) ends.set(id, rest.join("\t").trim());
     }
-    const kept = this.asks.filter((a) => reqs.has(a.id));
+    const kept = [];
     for (const a of this.asks.filter((a) => !reqs.has(a.id))) this.askEnded(a, ends.get(a.id) || "No longer waiting");
     let added = false;
     for (const [id, text] of reqs) {
-      if (kept.some((a) => a.id === id) || !text.trim()) continue;
+      if (this.replyingAsks?.has(id)) continue;
+      if (!text.trim()) continue;
       let req = null;
       try { req = JSON.parse(text); } catch {}
       const w = req ? words(req) : { kind: "permission", title: UNREAD_APPROVAL, detail: "", unread: true };
-      kept.push({ id, req, words: w, machine });
-      added = true;
+      const approval = permissionStatus(req, statuses.get(id)), old = this.asks.find(a => a.id === id);
+      kept.push({ id, req, words: w, approval, machine });
+      if ((!old || old.approval?.attention === false) && approval?.attention !== false) added = true;
     }
-    if (added || kept.length !== this.asks.length) {
+    if (JSON.stringify(kept) !== JSON.stringify(this.asks)) {
       this.asks = kept;
       this.cards.keep(kept.map((a) => a.id));
       if (added) this.askAlert();
@@ -748,11 +756,13 @@ export default class Chat extends View {
   }
 
   async readAsks(cx) {
+    const address = this.addr;
     // Each request is named <terminal>.<time>.<hook pid>: one whose hook was killed (Claude or
     // Codex stopped it) is gone, so drop its file.
-    const r = await exec("sh", ["-c", 'cd "$1/req" 2>/dev/null || exit 0; for f in "$2".*.json; do [ -f "$f" ] || continue; p=${f%.json}; p=${p##*.}; if kill -0 "$p" 2>/dev/null; then echo "$f"; else rm -f "$f"; fi; done; true', "x", this.askDir, this.addr]);
+    const r = await exec("sh", ["-c", 'cd "$1/req" 2>/dev/null || exit 0; for f in "$2".*.json; do [ -f "$f" ] || continue; [ -f "../ans/$f" ] && continue; p=${f%.json}; p=${p##*.}; if kill -0 "$p" 2>/dev/null; then echo "$f"; else rm -f "$f" "${f%.json}.status" "${f%.json}.context"; fi; done; true', "x", this.askDir, this.addr]);
     const ids = r.stdout.split("\n").filter((f) => f.endsWith(".json")).map((f) => f.slice(0, -5));
-    const kept = this.asks.filter((a) => ids.includes(a.id));
+    if (this.addr !== address) return;
+    const kept = [];
     // Gone without an answer from here: the hook says how (data/chat-asks/end/<id>: answered
     // or declined in the terminal, the agent stopped), else Claude stopped waiting on it.
     for (const a of this.asks.filter((a) => !ids.includes(a.id))) {
@@ -761,7 +771,7 @@ export default class Chat extends View {
     }
     let added = false;
     for (const id of ids) {
-      if (kept.some((a) => a.id === id)) continue;
+      if (this.replyingAsks?.has(id)) continue;
       const text = await readTextFile(`${this.askDir}/req/${id}.json`).catch(() => null);
       // Auto-review can hand off and remove the request after it was listed.
       // A missing request is already closed, not an unreadable new approval.
@@ -770,10 +780,15 @@ export default class Chat extends View {
       try { req = JSON.parse(text ?? ""); } catch {}
       // Unreadable here: it can only be allowed in the terminal.
       const w = req ? words(req) : { kind: "permission", title: UNREAD_APPROVAL, detail: "", unread: true };
-      kept.push({ id, req, words: w });
-      added = true;
+      const metadata = await readTextFile(`${this.askDir}/req/${id}.status`).catch(() => null);
+      // Recheck after the async reads: a handoff/answer may have closed it in between.
+      if (await readTextFile(`${this.askDir}/ans/${id}.json`).catch(() => null) !== null || await readTextFile(`${this.askDir}/req/${id}.json`).catch(() => null) !== text) continue;
+      const approval = permissionStatus(req, metadata), old = this.asks.find(a => a.id === id);
+      kept.push({ id, req, words: w, approval });
+      if ((!old || old.approval?.attention === false) && approval?.attention !== false) added = true;
     }
-    if (added || kept.length !== this.asks.length) {
+    if (this.addr !== address) return;
+    if (JSON.stringify(kept) !== JSON.stringify(this.asks)) {
       this.asks = kept;
       this.cards.keep(kept.map((a) => a.id));
       if (added) this.askAlert();
@@ -815,11 +830,38 @@ export default class Chat extends View {
   reply(ask, text, cx) {
     this.asks = this.asks.filter((a) => a !== ask);
     const how = howAnswered(ask, text, "in the chat");
-    if (how) this.askEnded(ask, how);
+    const permission = ask.words.kind === "permission" && ask.req;
+    if (permission) (this.replyingAsks ??= new Set()).add(ask.id);
+    if (how && !permission) this.askEnded(ask, how);
     cx.notify();
     // A task worker's ask may show in its Assistant's chat too: that copy reads how it went.
     const where = howAnswered(ask, text, this.thread || this.t?.labels?.["herdr.task"] ? "in the task's chat" : "in its chat");
-    cx.spawn(async () => ask.machine ? answerRemote(ask.machine, ask.id, text, where) : answerAsk(this.askDir, ask.id, text, where));
+    if (permission) cx.spawn(async () => this.replyPermission(ask, text, where, cx));
+    else cx.spawn(async () => ask.machine ? answerRemote(ask.machine, ask.id, text, where, ask.req) : answerAsk(this.askDir, ask.id, text, where, ask.req));
+  }
+
+  // Only report our decision after the exclusive claim succeeded. In particular, a native
+  // handoff that won this race must keep its truthful quiet line rather than "Allowed".
+  async replyPermission(ask, text, how, cx, worker = false) {
+    let sent = false;
+    try {
+      if (ask.machine) await answerRemote(ask.machine, ask.id, text, how, ask.req);
+      else await answerAsk(this.askDir, ask.id, text, how, ask.req);
+      sent = true;
+    } catch {
+      if (!ask.machine && await readTextFile(`${this.askDir}/req/${ask.id}.json`).catch(() => null) !== null && await readTextFile(`${this.askDir}/ans/${ask.id}.json`).catch(() => null) === null) {
+        if (worker) { ask.answered = false; this.answeredAsks.delete(ask.id); }
+        else if (!this.asks.some(a => a.id === ask.id)) this.asks.push(ask);
+        this.replyingAsks?.delete(ask.id);
+        toast({title:'Permission was not answered',body:'Refresh the request and try again.',level:'error'});
+        cx.notify(); return;
+      }
+    }
+    const ended = !ask.machine ? (await readTextFile(`${this.askDir}/end/${ask.id}`).catch(() => null))?.trim() : null;
+    const outcome = ended || (sent ? how : null) || "No longer waiting";
+    this.replyingAsks?.delete(ask.id);
+    if (worker) this.workerAskEnded(ask, outcome); else this.askEnded(ask, outcome);
+    cx.notify();
   }
 
   // ---- a task worker's asks (an Assistant's chat) ---------------------------------------------
@@ -848,10 +890,15 @@ export default class Chat extends View {
   workerAsks(cx) {
     const by = this.workerTasks();
     const listed = (shared("inbox.asks") ?? []).filter((a) => by.has(a.terminal));
+    // Inbox refreshes the request-bound status even when this card was read earlier.
+    for (const a of listed) {
+      const old = this.shownAsks.get(a.id);
+      if (old) old.approval = a.requestHash === old.requestHash ? a.approval : permissionStatus(old.req, undefined);
+    }
     const ids = new Set(listed.map((a) => a.id));
     for (const id of [...this.answeredAsks]) if (!ids.has(id)) this.answeredAsks.delete(id);
     const gone = [...this.shownAsks.values()].filter((a) => !ids.has(a.id));
-    const unread = listed.filter((a) => !this.shownAsks.has(a.id) && !this.readingAsks.has(a.id));
+    const unread = listed.filter((a) => (!this.shownAsks.has(a.id) || a.requestHash && a.requestHash !== this.shownAsks.get(a.id).requestHash) && !this.readingAsks.has(a.id));
     if (gone.length || unread.length) {
       for (const a of gone) this.shownAsks.delete(a.id);
       for (const a of unread) this.readingAsks.add(a.id);
@@ -870,7 +917,7 @@ export default class Chat extends View {
           let req = null;
           try { req = JSON.parse(text); } catch {}
           const w = req ? words(req) : { kind: "permission", title: UNREAD_APPROVAL, detail: "", unread: true };
-          if ((shared("inbox.asks") ?? []).some((b) => b.id === a.id)) this.shownAsks.set(a.id, { id: a.id, terminal: a.terminal, req, words: w, ref: x.ref, title: x.title, at: Date.now() });
+          if ((shared("inbox.asks") ?? []).some((b) => b.id === a.id)) this.shownAsks.set(a.id, { id: a.id, terminal: a.terminal, req, requestHash: requestHash(req), words: w, approval: a.requestHash === requestHash(req) ? a.approval : permissionStatus(req, undefined), ref: x.ref, title: x.title, at: this.shownAsks.get(a.id)?.at ?? Date.now() });
         }
         cx.notify();
       }));
@@ -895,14 +942,17 @@ export default class Chat extends View {
     this.answeredAsks.add(ask.id);
     ask.answered = true;
     const how = howAnswered(ask, text, "here");
-    if (how) {
+    const permission = ask.words.kind === "permission" && ask.req;
+    if (how && !permission) {
       // Questions say what was answered (the worker's log isn't in this chat).
       let picked = "";
       try { picked = Object.values(JSON.parse(text).hookSpecificOutput?.decision?.updatedInput?.answers ?? {}).join("; "); } catch {}
       this.workerAskEnded(ask, picked ? `${how}: ${picked}` : how);
     }
     cx.notify();
-    cx.spawn(async () => answerAsk(this.askDir, ask.id, text, howAnswered(ask, text, "in the Assistant's chat")));
+    const where = howAnswered(ask, text, "in the Assistant's chat");
+    if (permission) cx.spawn(async () => this.replyPermission(ask, text, where, cx, true));
+    else cx.spawn(async () => answerAsk(this.askDir, ask.id, text, where, ask.req));
   }
 
   // A worker's ask closed: its quiet line here, with its task.

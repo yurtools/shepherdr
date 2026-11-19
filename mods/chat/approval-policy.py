@@ -11,16 +11,41 @@ except ImportError:
  sys.path.insert(0,os.path.realpath(entry));from herdr_task import approvals as A
 
 def parser():
- p=argparse.ArgumentParser();p.add_argument('command',choices=['evaluate','inspect','grant','history-inspect','history-grant','list','history','revoke','clear-history','review','decide','launch','override','record'])
+ p=argparse.ArgumentParser();p.add_argument('command',choices=['evaluate','answer','status-error','inspect','grant','history-inspect','history-grant','list','history','revoke','clear-history','review','decide','launch','override','record'])
  p.add_argument('--request');p.add_argument('--terminal');p.add_argument('--space',default='');p.add_argument('--role',default='agent');p.add_argument('--cwd',default='')
  p.add_argument('--scope',choices=['task','space','account'],default='task');p.add_argument('--match',choices=['exact','prefix'],default='exact');p.add_argument('--prefix');p.add_argument('--hours',type=float,default=1)
  p.add_argument('--id');p.add_argument('--token');p.add_argument('--decision',choices=['allow','deny','ask'],default='allow');p.add_argument('--reason',default='')
- p.add_argument('--respond',action='store_true');p.add_argument('--argv');p.add_argument('--mode',choices=[*A.MODES,'inherit']);return p
+ p.add_argument('--respond',action='store_true');p.add_argument('--hash');p.add_argument('--answer');p.add_argument('--argv');p.add_argument('--mode',choices=[*A.MODES,'inherit']);return p
 
 def main(a):
  if a.command=='history-inspect':return A.history_inspect(a.id)
  if a.command=='history-grant':return A.grant_history(a.id,a.scope,a.match,a.prefix,a.hours,a.decision)
- if a.command=='evaluate':return A.evaluate(a.request,a.terminal)
+ if a.command=='status-error':
+  req=A.read(a.request)
+  if isinstance(req,dict) and A.is_permission(req):A.status(a.request,req,'person','policy-error')
+  return {'ok':True}
+ if a.command in ('evaluate','answer'):
+  req=A.read(a.request)
+  if not isinstance(req,dict):raise ValueError('This request closed.')
+  out=A.evaluate(a.request,a.terminal,audit_decision=not a.respond) if a.command=='evaluate' else {'action':'answer'}
+  if a.command=='answer' or a.respond and out['action'] in ('allow','deny','native'):
+   if A.read(a.request)!=req or a.command=='answer' and A.status_key(req)!=a.hash:raise ValueError('This request changed or closed.')
+   ctx=A.request_context(a.request,a.terminal or Path(a.request).stem.split('.')[0])[1] if A.is_permission(req) else None
+   answer=Path(a.request).parent.parent/'ans'/Path(a.request).name
+   value=a.answer if a.command=='answer' else '' if out['action']=='native' else out['response']
+   A.answer_once(answer,value)
+   reason=a.reason if a.command=='answer' else 'Sent to Codex Auto-review · final result not reported' if out['action']=='native' else out.get('reason','Approval policy decision')
+   if reason:
+    end=Path(a.request).parent.parent/'end'/Path(a.request).stem;end.parent.mkdir(parents=True,exist_ok=True);end.write_text(reason+'\n')
+   if ctx:
+    try:
+     if a.command=='evaluate':A.audit_result(req,ctx,out)
+     else:
+      decision=json.loads(value).get('hookSpecificOutput',{}).get('decision',{}).get('behavior')
+      if decision in ('allow','deny'):A.audit(req,ctx,decision,'Decided by the person in Chat','user')
+    except (ValueError,OSError):pass
+   return {'action':'answered'}
+  return out
  if a.command=='inspect':
   req,ctx=A.request_context(a.request,a.terminal);words=A.plain_command((req.get('tool_input') or {}).get('command'))
   return {'context':ctx,'settings':A.settings(ctx),'command':A.summary(req),'words':words,'suggested_prefix':__import__('shlex').join((words or [])[:2]),'permission':A.is_permission(req)}
@@ -60,5 +85,12 @@ def main(a):
    A.write(A.store()/'overrides.json',rows)
   return {'mode':a.mode}
 if __name__=='__main__':
- try:print(json.dumps(main(parser().parse_args()),ensure_ascii=False))
- except Exception as e:print(json.dumps({'error':str(e)}));sys.exit(1)
+ a=parser().parse_args()
+ try:print(json.dumps(main(a),ensure_ascii=False))
+ except Exception as e:
+  if a.command in ('evaluate','review'):
+   req=A.read(a.request)
+   if isinstance(req,dict) and A.is_permission(req):
+    try:A.status(a.request,req,'person','policy-error')
+    except OSError:pass
+  print(json.dumps({'error':str(e)}));sys.exit(1)

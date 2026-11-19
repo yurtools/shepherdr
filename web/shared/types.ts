@@ -404,6 +404,8 @@ export interface Question {
   id: string
   title: string
   kind: 'Form' | 'Question' | 'Plan'
+  /** Execution permission lifecycle; absent on ordinary questions, plans and older sources. */
+  approval?: { state: string; text: string; detail?: string; attention: boolean }
   steps?: string[]
   /** several questions on one card (3.0's): a step for each, then one to check the answers and Submit */
   parts?: { title: string; header?: string; multi?: boolean; choices: Choice[] }[]

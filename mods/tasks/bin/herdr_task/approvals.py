@@ -1,7 +1,7 @@
 """Shepherdr approval policy: explicit grants, bounded delegation and a local audit trail.
 The requesting CLI remains responsible for its sandbox and managed policy enforcement.
 """
-import contextlib, hashlib, json, os, re, secrets, shlex, subprocess, tempfile, time
+import contextlib, hashlib, json, os, re, secrets, shlex, struct, subprocess, tempfile, time
 from pathlib import Path
 MODES = ('manual','rules','assistant','codex-review')
 DEFAULT_POLICY = ('Approve only reversible local work inside the stated project that is necessary for the user\'s task. '
@@ -30,7 +30,9 @@ def answer_once(path, value):
  path=Path(path);path.parent.mkdir(parents=True,exist_ok=True)
  fd,tmp=tempfile.mkstemp(prefix='.'+path.name,dir=path.parent)
  try:
-  with os.fdopen(fd,'w') as f:json.dump(value,f,ensure_ascii=False)
+  with os.fdopen(fd,'w') as f:
+   if isinstance(value,str):f.write(value)
+   else:json.dump(value,f,ensure_ascii=False)
   try:os.link(tmp,path)
   except FileExistsError:raise ValueError('This request has already been answered.')
  finally:
@@ -75,6 +77,47 @@ def plain_command(value):
 def action_key(req):return hashlib.sha256(json.dumps([req.get('tool_name'),req.get('tool_input')],sort_keys=True,ensure_ascii=False).encode()).hexdigest()
 
 def request_key(req):return hashlib.sha256(json.dumps(req,sort_keys=True,ensure_ascii=False).encode()).hexdigest()
+
+def status_key(req):
+ # Separate UI correlation hash: do not change the policy/ticket's original request_key.
+ # Numbers use their JSON reader's double representation, avoiding Python/JS differences
+ # such as 1.0/1 and 1e-07/1e-7. Type markers cannot collide with JSON strings.
+ def stable(v):
+  if isinstance(v,bool) or v is None or isinstance(v,str):return json.dumps(v,ensure_ascii=True)
+  if isinstance(v,(int,float)):return 'n'+struct.pack('>d',float(v) if v else 0.).hex()
+  if isinstance(v,list):return '['+','.join(stable(x) for x in v)+']'
+  return '{'+','.join(json.dumps(k,ensure_ascii=True)+':'+stable(v[k]) for k in sorted(v,key=lambda k:k.encode('utf-16-be','surrogatepass')))+'}'
+ return hashlib.sha256(stable(req).encode()).hexdigest()
+
+def status(path, req, state, reason='', reviewer=''):
+ """Publish only bounded lifecycle codes, never the ticket, token, context or tool input."""
+ path=Path(path);answer=path.parent.parent/'ans'/path.name
+ if read(path)!=req or answer.exists():return
+ value={'version':1,'request_hash':status_key(req),'state':state,'reason':reason}
+ if reviewer in ('feature','space'):value['reviewer']=reviewer
+ write(path.with_suffix('.status'),value)
+ # A late callback must not leave a live-looking status after the hook has closed.
+ if read(path)!=req or answer.exists():
+  with contextlib.suppress(FileNotFoundError):path.with_suffix('.status').unlink()
+
+def waiting(path, req, reason, detail, reviewer=''):
+ status(path,req,'assistant' if reason=='review-pending' else 'person',reason,reviewer)
+ return {'action':'wait','reason':detail}
+
+def review_status(path, req, retry_unavailable=False):
+ """Read an existing request's ticket; this never delivers or evaluates a review."""
+ ticket=read(store()/'pending'/(Path(path).stem+'.json'))
+ if not ticket or ticket.get('key')!=request_key(req):return None
+ state=ticket.get('status')
+ if state=='ask':return waiting(path,req,'assistant-asked','Assistant asks you: '+ticket.get('reason',''))
+ if state=='unavailable':
+  if retry_unavailable:return None
+  return waiting(path,req,'review-unavailable','Assistant review is unavailable. You can decide here.')
+ if state=='pending':
+  if ticket.get('expires',0)<=time.time():return waiting(path,req,'review-expired','Assistant review expired. You can decide here or ask for review again.')
+  if hc_get(ticket.get('reviewer')).get('state')!='live':return waiting(path,req,'review-unavailable','Assistant review is unavailable. You can decide here.')
+  return waiting(path,req,'review-pending','Waiting for Assistant review.',ticket.get('reviewer_type',''))
+ return None
 def redact(text):
  text=re.sub(r'(?i)((?:token|password|secret|api[_-]?key|authorization)[=:\s]+)([^\s]+)',r'\1[redacted]',text)
  return text[:500]
@@ -106,7 +149,8 @@ def context(req, terminal=None, metadata=None):
 def settings(ctx):
  from .layout import Where
  path=os.environ.get('HERDR_TASK_SETTINGS') or Where().path('settings')
- cfg=read(path,{}) or {};out={'mode':'manual','policy':DEFAULT_POLICY}
+ cfg=read(path);unread=cfg is None and Path(path).exists();cfg=cfg or {};out={'mode':'manual','policy':DEFAULT_POLICY}
+ if unread:out['_read_error']=True
  for layer in [cfg.get('everywhere',{}),cfg.get('spaces',{}).get(ctx.get('space'),{})]:out.update(layer.get('approvals') or {})
  role=out.get(ctx.get('role'))
  if role and role!='inherit':out['mode']=role
@@ -226,6 +270,11 @@ def grant_history(ident,scope='task',match='exact',prefix=None,hours=1,decision=
  return {'rule':rule,'reason':'Rule saved for future matching requests. The original action was not run or answered.'}
 
 def review_ticket(path, req, ctx, force=False):
+ if not force:
+  existing=review_status(path,req,retry_unavailable=True)
+  if existing:return existing
+ if read(path)!=req or (Path(path).parent.parent/'ans'/Path(path).name).exists():raise ValueError('This request has changed, closed or already been answered.')
+ status(path,req,'processing','review-requested')
  opts=settings(ctx);reviewer=ctx.get('reviewer')
  if reviewer and hc_get(reviewer).get('state')!='live':reviewer=None
  if not reviewer:
@@ -238,13 +287,14 @@ def review_ticket(path, req, ctx, force=False):
      if labels.get('herdr.feature')==ctx['feature'] and labels.get('herdr.role')=='feature':reviewer=row['address'];break
     elif labels.get('herdr.coordinator.space')==ctx.get('space') and ctx.get('space') and labels.get('herdr.role')=='coordinator':reviewer=row['address'];break
   except (OSError,ValueError,subprocess.TimeoutExpired):pass
- if not reviewer or reviewer==ctx.get('terminal'):return {'action':'wait','reason':'No other running space Assistant is available to review this request.'}
+ if not reviewer or reviewer==ctx.get('terminal'):return waiting(path,req,'review-unavailable','No other running Assistant is available to review this request.')
  folder=store()/'pending';ticket_path=folder/(Path(path).stem+'.json');old=read(ticket_path)
  if old and old.get('key')==request_key(req) and old.get('status') in ('pending','ask'):
-  if old.get('status')=='pending' and old.get('expires',0)>time.time():return {'action':'wait','reason':'Waiting for the space Assistant’s review.'}
-  if not force:return {'action':'wait','reason':('Assistant asks you: '+old.get('reason','')) if old.get('status')=='ask' else 'Assistant review expired. You can decide here or ask for review again.'}
+  if old.get('status')=='pending' and old.get('expires',0)>time.time():return review_status(path,req)
  token=secrets.token_hex(24);ident=Path(path).stem
- ticket={'id':ident,'token':token,'key':request_key(req),'request':str(path),'context':ctx,'reviewer':reviewer,'expires':time.time()+600,'status':'pending'}
+ labels=hc_get(reviewer).get('labels') or {}
+ reviewer_type='feature' if labels.get('herdr.role')=='feature' and labels.get('herdr.feature')==ctx.get('feature') and ctx.get('feature') else 'space' if labels.get('herdr.role')=='coordinator' and labels.get('herdr.coordinator.space')==ctx.get('space') and ctx.get('space') else ''
+ ticket={'id':ident,'token':token,'key':request_key(req),'request':str(path),'context':ctx,'reviewer':reviewer,'reviewer_type':reviewer_type,'expires':time.time()+600,'status':'pending'}
  write(ticket_path,ticket)
  helper=app_home()/'mods/chat/approval-policy.py'
  message=('Shepherdr approval review (explicitly delegated by the person via approval settings or Ask Assistant). '
@@ -260,8 +310,9 @@ def review_ticket(path, req, ctx, force=False):
   r=subprocess.run(['hc','send',reviewer,message],capture_output=True,text=True,timeout=5)
   if r.returncode:raise ValueError('Assistant could not receive the review request.')
  except (OSError,subprocess.TimeoutExpired,ValueError):
-  ticket['status']='unavailable';write(ticket_path,ticket);return {'action':'wait','reason':'Assistant review is unavailable. You can decide here.'}
- return {'action':'wait','reason':'Waiting for the space Assistant’s review.'}
+  ticket['status']='unavailable';write(ticket_path,ticket);return waiting(path,req,'review-unavailable','Assistant review is unavailable. You can decide here.')
+ # A very fast reviewer can already have answered during send. Never restore its pending state.
+ return review_status(path,req) or {'action':'wait','reason':'Assistant review answered.'}
 
 def decide(ident, token, decision, reason, terminal=None):
  if not re.fullmatch(r'[\w.-]+',ident):raise ValueError('Invalid approval review ID.')
@@ -270,11 +321,13 @@ def decide(ident, token, decision, reason, terminal=None):
  if not secrets.compare_digest(str(ticket.get('token','')),str(token)) or ticket.get('reviewer')!=(terminal or os.environ.get('HC_TERMINAL_ID')):raise ValueError('Only the designated Assistant may answer this review.')
  req=read(ticket['request'])
  if not req or request_key(req)!=ticket['key']:raise ValueError('The underlying request has changed or closed.')
+ if (Path(ticket['request']).parent.parent/'ans'/(ident+'.json')).exists():raise ValueError('This request has already been answered.')
  if decision not in ('allow','deny','ask') or not str(reason).strip():raise ValueError('A decision and rationale are required.')
  if decision!='ask':
   answer=app_home()/'data/chat-asks/ans'/(ident+'.json')
   answer_once(answer,response(decision,reason,'assistant')['response'])
  ticket.update(status=decision,reason=str(reason)[:1000]);write(path,ticket)
+ if decision=='ask':status(ticket['request'],req,'person','assistant-asked')
  audit(req,ticket['context'],decision,reason,'assistant')
  return {'decision':decision,'reason':reason}
 
@@ -301,13 +354,26 @@ def own_feature_name(req,ctx):
  except (ValueError,TypeError,KeyError):return False
 
 def evaluate(path, terminal=None):
+ req=read(path)
+ if not isinstance(req,dict):raise ValueError('This approval request is no longer available.')
+ if is_permission(req):
+  old=read(Path(path).with_suffix('.status')) or {}
+  if old.get('request_hash')!=status_key(req):status(path,req,'checking')
+ try:return _evaluate(path,terminal)
+ except Exception:
+  if is_permission(req):status(path,req,'person','policy-error')
+  raise
+
+def _evaluate(path, terminal=None):
  req,ctx=request_context(path,terminal)
  if not is_permission(req):return {'action':'wait','reason':'Plans and questions require their own answer.'}
  if own_feature_name(req,ctx):return response('allow','Feature Assistant may name its own feature.','feature-name')
  if own_review_command(req,ctx):return response('allow','Designated Assistant may submit this exact review decision.','review-control')
  opts=settings(ctx)
+ rules_read_error=False
  if opts['mode']!='manual':
-  rules=[r for r in read(store()/'rules.json',[]) or [] if matches(r,req,ctx)]
+  saved=read(store()/'rules.json');rules_read_error=saved is None and (store()/'rules.json').exists()
+  rules=[r for r in saved or [] if matches(r,req,ctx)]
   rules.sort(key=lambda r:r.get('decision')!='deny')
   if rules:
    rule=rules[0];reason=f'{rule["scope"]} {rule["match"]} rule {rule["id"]}'
@@ -317,8 +383,12 @@ def evaluate(path, terminal=None):
   if ctx['agent']=='codex' and ctx.get('native_review'):
    audit(req,ctx,'delegated','Sent to Codex Auto-review; its final decision is not reported to Shepherdr.','codex-review')
    return {'action':'native','reason':'Continue through Codex native Auto-review.'}
-  return {'action':'wait','reason':'Native Auto-review requires a new or restarted Codex agent. Other agents use manual approval.'}
- return {'action':'wait','reason':'Waiting for your decision.'}
+ # A pending manual review can supply status for a wait without changing rule/native
+ # decision precedence. A compatible native launch still hands off exactly as before.
+ existing=review_status(path,req)
+ if existing:return existing
+ if opts['mode']=='codex-review':return waiting(path,req,'native-unavailable','Native Auto-review requires a new or restarted Codex agent. Other agents use manual approval.')
+ return waiting(path,req,'policy-error' if opts.get('_read_error') or rules_read_error else 'manual' if opts['mode']=='manual' else 'no-rule','Waiting for your decision.')
 
 
 def launch_argv(argv, space='', role='worker', cwd='', mode=None):

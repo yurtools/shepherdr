@@ -24,3 +24,9 @@ class ApprovalHook(unittest.TestCase):
  @unittest.skipUnless(shutil.which('jq'),'jq is required by the existing hook protocol')
  def test_scoped_rule_produces_a_real_hook_allow_without_running_the_command(self):
   result,app=self.run_hook('rules',[{'id':'rule','scope':'space','space':'space','tool':'Bash','decision':'allow','match':'prefix','pattern':['git','status'],'expires':0}]);self.assertEqual(result.returncode,0,result.stderr);self.assertEqual(json.loads(result.stdout)['hookSpecificOutput']['decision']['behavior'],'allow');history=json.loads((app/'data/approvals/history.json').read_text());self.assertEqual(history[-1]['source'],'rule')
+  self.assertFalse(list((app/'data/chat-asks/req').iterdir()))
+ @unittest.skipUnless(shutil.which('jq'),'jq is required by the existing hook protocol')
+ def test_rule_deny_closes_and_cleans_status_without_a_transient_person_prompt(self):
+  result,app=self.run_hook('rules',[{'id':'deny','scope':'space','space':'space','tool':'Bash','decision':'deny','match':'prefix','pattern':['git','status'],'expires':0}])
+  self.assertEqual(json.loads(result.stdout)['hookSpecificOutput']['decision']['behavior'],'deny')
+  self.assertFalse(list((app/'data/chat-asks/req').iterdir()))

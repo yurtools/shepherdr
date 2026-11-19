@@ -108,6 +108,94 @@ class ApprovalEnhancements(unittest.TestCase):
  def test_non_shell_action_can_be_remembered_exactly_for_one_task(self):
   req={**self.req,'tool_name':'apply_patch','tool_input':{'patch':'*** Add File: a\n+hello'}};A.write(self.path,req)
   rule=A.grant(self.path);self.assertEqual(rule['match'],'request');self.assertEqual(A.evaluate(self.path)['action'],'allow')
+
+class ApprovalLifecycle(unittest.TestCase):
+ setUp=ApprovalPolicy.setUp
+ mode=ApprovalPolicy.mode
+ def state(self):return A.read(self.path.with_suffix('.status'))
+ def review(self,mode='assistant',kind='feature',delivery=0):
+  self.mode(mode)
+  self.meta['labels'].update({'herdr.feature':'feature-one','herdr.owner':'assistant'}) if kind=='feature' else None
+  worker=self.meta.copy()
+  reviewer={'state':'live','labels':{'herdr.role':kind if kind=='feature' else 'coordinator','herdr.feature':'feature-one','herdr.coordinator.space':'space'}}
+  A.hc_get.side_effect=lambda terminal:reviewer if terminal=='assistant' else worker
+  with mock.patch.object(A.subprocess,'run',return_value=mock.Mock(returncode=delivery,stdout='{}')):
+   if mode=='manual':
+    req,ctx=A.request_context(self.path);A.review_ticket(self.path,req,ctx,True)
+   else:A.evaluate(self.path)
+  return A.read(A.store()/'pending'/self.path.name),reviewer
+ def test_new_request_is_checking_during_policy_work_then_becomes_manual_or_unmatched(self):
+  def metadata(terminal):
+   self.assertEqual(self.state()['state'],'checking');return self.meta
+  A.hc_get.side_effect=metadata
+  A.evaluate(self.path);self.assertEqual(self.state()['reason'],'manual')
+  A.hc_get.side_effect=None;self.mode('rules');A.evaluate(self.path)
+  self.assertEqual(self.state()['reason'],'no-rule');self.assertEqual(self.state()['request_hash'],A.status_key(self.req))
+ def test_feature_and_space_reviews_use_only_authoritative_reviewer_types(self):
+  for kind in ('feature','space'):
+   with self.subTest(kind=kind):
+    self.path.with_suffix('.context').unlink(missing_ok=True)
+    (A.store()/'pending'/self.path.name).unlink(missing_ok=True)
+    ticket,_=self.review(kind=kind);self.assertEqual(self.state()['state'],'assistant');self.assertEqual(self.state()['reviewer'],kind)
+    public=json.dumps(self.state());self.assertNotIn(ticket['token'],public);self.assertNotIn('tool_input',public);self.assertNotIn(self.req['tool_input']['command'],public)
+ def test_explicit_review_in_manual_mode_updates_and_survives_later_hook_evaluation(self):
+  A.evaluate(self.path);self.assertEqual(self.state()['state'],'person')
+  ticket,_=self.review('manual');self.assertEqual(self.state()['state'],'assistant')
+  with mock.patch.object(A.subprocess,'run',side_effect=AssertionError('must not redeliver')):A.evaluate(self.path)
+  self.assertEqual(self.state()['state'],'assistant')
+  A.decide(ticket['id'],ticket['token'],'ask','Please decide',terminal='assistant')
+  A.evaluate(self.path);self.assertEqual(self.state()['reason'],'assistant-asked')
+  self.assertFalse((self.path.parent.parent/'ans'/self.path.name).exists())
+ def test_failed_delivery_recovers_on_later_evaluation_without_a_new_person_prompt(self):
+  ticket,_=self.review(delivery=1);self.assertEqual(ticket['status'],'unavailable');self.assertEqual(self.state()['reason'],'review-unavailable')
+  with mock.patch.object(A.subprocess,'run',return_value=mock.Mock(returncode=0,stdout='{}')) as send:
+   A.evaluate(self.path);A.evaluate(self.path);self.assertEqual(send.call_count,1)
+  self.assertEqual(self.state()['state'],'assistant');self.assertEqual(A.read(A.store()/'pending'/self.path.name)['status'],'pending')
+  self.assertFalse((self.path.parent.parent/'ans'/self.path.name).exists())
+ def test_reviewer_disappearing_recovers_but_expired_review_stays_with_person(self):
+  ticket,reviewer=self.review();reviewer['state']='gone';A.evaluate(self.path);self.assertEqual(self.state()['reason'],'review-unavailable')
+  reviewer['state']='live';A.evaluate(self.path);self.assertEqual(self.state()['state'],'assistant')
+  ticket['expires']=time.time()-1;A.write(A.store()/'pending'/self.path.name,ticket)
+  with mock.patch.object(A.subprocess,'run',side_effect=AssertionError('expired review must not redeliver')):A.evaluate(self.path)
+  self.assertEqual(self.state()['reason'],'review-expired')
+ def test_policy_read_errors_leave_person_status_and_questions_get_no_status(self):
+  (self.base/'settings.json').write_text('{bad json');A.evaluate(self.path);self.assertEqual(self.state()['reason'],'policy-error')
+  with mock.patch.object(A,'settings',side_effect=OSError('private error details')):
+   with self.assertRaises(OSError):A.evaluate(self.path)
+  self.assertNotIn('private error details',json.dumps(self.state()))
+  self.path.with_suffix('.status').unlink()
+  for tool in ('AskUserQuestion','ExitPlanMode','request_user_input'):
+   A.write(self.path,{**self.req,'tool_name':tool});A.evaluate(self.path);self.assertIsNone(self.state())
+ def test_native_unavailable_and_stale_or_closed_request_status(self):
+  self.mode('codex-review');A.evaluate(self.path);self.assertEqual(self.state()['reason'],'native-unavailable')
+  before=self.state();A.write(self.path,{**self.req,'tool_input':{'command':'different'}})
+  A.status(self.path,self.req,'assistant',reviewer='feature');self.assertEqual(self.state(),before)
+  self.path.unlink();A.status(self.path,self.req,'checking');self.assertEqual(self.state(),before)
+ def test_hook_answer_claim_rejects_a_closed_native_handoff_and_preserves_manual_takeover(self):
+  import importlib.util
+  spec=importlib.util.spec_from_file_location('approval_ui',ROOT/'mods/chat/approval-policy.py');ui=importlib.util.module_from_spec(spec);spec.loader.exec_module(ui)
+  args=ui.parser().parse_args(['evaluate','--request',str(self.path),'--respond'])
+  def closed(*_):self.path.unlink();return {'action':'native'}
+  with mock.patch.object(A,'evaluate',side_effect=closed):
+   with self.assertRaisesRegex(ValueError,'changed or closed'):ui.main(args)
+  self.assertFalse((self.path.parent.parent/'ans'/self.path.name).exists())
+  A.write(self.path,self.req);answer=self.path.parent.parent/'ans'/self.path.name
+  A.answer_once(answer,A.response('deny','The person decided')['response'])
+  with mock.patch.object(A,'evaluate',return_value={'action':'native'}):
+   with self.assertRaisesRegex(ValueError,'already been answered'):ui.main(args)
+  self.assertEqual(A.read(answer)['hookSpecificOutput']['decision']['behavior'],'deny')
+  self.assertFalse((self.path.parent.parent/'end'/self.path.stem).exists())
+ def test_unreadable_saved_rules_explain_the_manual_fallback_without_changing_mode(self):
+  self.mode('rules');folder=A.store();folder.mkdir(parents=True,exist_ok=True);(folder/'rules.json').write_text('{bad')
+  self.assertEqual(A.evaluate(self.path)['action'],'wait');self.assertEqual(self.state()['reason'],'policy-error')
+ def test_manual_takeover_audits_only_after_winning_the_answer(self):
+  import importlib.util
+  spec=importlib.util.spec_from_file_location('approval_ui',ROOT/'mods/chat/approval-policy.py');ui=importlib.util.module_from_spec(spec);spec.loader.exec_module(ui)
+  args=ui.parser().parse_args(['answer','--request',str(self.path),'--hash',A.status_key(self.req),'--answer',json.dumps(A.response('allow')['response']),'--reason','Allowed in Chat'])
+  A.request_context(self.path);self.assertEqual(ui.main(args)['action'],'answered')
+  self.assertEqual(A.history_rows()[-1]['source'],'user')
+  with self.assertRaisesRegex(ValueError,'already been answered'):ui.main(args)
+  self.assertEqual(len(A.history_rows()),1)
 class FeatureNaming(unittest.TestCase):
  def test_only_the_feature_owner_can_name_its_own_record(self):
   helper=str(A.app_home()/'mods/workspace-launchers/bin/workspace-state')

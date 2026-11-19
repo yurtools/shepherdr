@@ -17,7 +17,7 @@
 
 import { div, svg } from "gpui-kit";
 import { h_flex, v_flex, Input } from "gpui-base";
-import { button, red, RADIUS, TEXT } from "./ui.js";
+import { button, red, amber, RADIUS, TEXT } from "./ui.js";
 
 const PAD = 12, LINK_GAP = 12;
 const GAPS = { controls: 6, pill: 4 };
@@ -61,13 +61,17 @@ function body(t, s, pre) {
     case "head":
       return h_flex().w_full().min_h(18).gap(LINK_GAP).items_center()
         .child(h_flex().flex_1().min_w(0).gap(8).items_center()
-          .child(div().size(8).flex_none().rounded(4).bg(s.dot ?? red()))
-          .child(div().min_w(0).truncate().text_size(TEXT.label).font_medium().text_color(s.dot ? t.muted : red()).child(s.who)))
+          .when(!s.neutral, el => el.child(div().size(8).flex_none().rounded(4).bg(s.dot ?? red())))
+          .child(div().min_w(0).truncate().text_size(TEXT.label).font_medium().text_color(s.neutral || s.dot ? t.muted : red()).child(s.who)))
         .when((s.links ?? []).length > 0, (el) => el.child(h_flex().flex_none().gap(LINK_GAP).items_center().children(s.links.map((c) => ctlEl(t, c, pre)))));
     case "title":
       return div().min_w(0).text_size(TEXT.body).font_medium().text_color(t.foreground).child(s.text);
     case "text":
       return div().min_w(0).text_size(TEXT.label).line_height("18px").text_color(tone(t, s.tone)).child(s.text);
+    case "status":
+      return h_flex().w_full().gap(7).items_start()
+        .child(svg(`mods/chat/${s.attention ? 'approval-warning' : s.state === 'assistant' ? 'approval-review' : 'clock'}.svg`).size(16).flex_none().text_color(s.attention ? amber() : t.muted))
+        .child(div().min_w(0).text_size(TEXT.label).font_medium().text_color(t.muted).child(s.text));
     case "detail":
       return div().w_full().px(8).py(6).rounded(RADIUS.control).bg(t.background).overflow_hidden()
         .when(s.clip != null, (el) => el.max_h(s.clip))

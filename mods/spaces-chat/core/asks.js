@@ -11,6 +11,63 @@ const PREVIEW = 8000;
 const clip = (s, n) => { s = String(s ?? ""); return s.length > n ? s.slice(0, n - 1) + "…" : s; };
 const base = (p) => String(p ?? "").split("/").filter(Boolean).pop() ?? "";
 const firstLine = (s) => String(s ?? "").split("\n")[0];
+
+// SHA-256 of sorted ASCII JSON, for UI correlation only. The approval engine keeps its
+// original request/ticket hash. Plain JS also runs in the native window (no node:crypto).
+export function requestHash(req) {
+  const number = v => { const d = new DataView(new ArrayBuffer(8)); d.setFloat64(0, v || 0); return 'n' + Array.from({length:8}, (_,i) => d.getUint8(i).toString(16).padStart(2,'0')).join(''); };
+  const sorted = v => typeof v === 'number' ? number(v) : Array.isArray(v) ? `[${v.map(sorted).join(',')}]` : v && typeof v === 'object'
+    ? `{${Object.keys(v).sort().map(k => `${JSON.stringify(k)}:${sorted(v[k])}`).join(',')}}` : JSON.stringify(v);
+  const text = sorted(req).replace(/[^\x00-\x7f]/g, c => `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`);
+  const k = [], initial = [];
+  for (let n = 2; k.length < 64; n++) {
+    let prime = true;
+    for (let d = 2; d * d <= n; d++) if (n % d === 0) { prime = false; break; }
+    if (prime) { if (initial.length < 8) initial.push((Math.sqrt(n) % 1 * 0x100000000) | 0); k.push((Math.cbrt(n) % 1 * 0x100000000) | 0); }
+  }
+  const bytes = [...text].map(c => c.charCodeAt(0)), bits = bytes.length * 8;
+  bytes.push(128); while (bytes.length % 64 !== 56) bytes.push(0);
+  for (let i = 7; i >= 0; i--) bytes.push(i >= 4 ? 0 : (bits >>> (i * 8)) & 255);
+  const h = [...initial], r = (v, n) => (v >>> n) | (v << (32 - n));
+  for (let at = 0; at < bytes.length; at += 64) {
+    const w = [];
+    for (let i = 0; i < 64; i++) w[i] = i < 16 ? (bytes[at+i*4]<<24 | bytes[at+i*4+1]<<16 | bytes[at+i*4+2]<<8 | bytes[at+i*4+3])
+      : (w[i-16] + (r(w[i-15],7)^r(w[i-15],18)^(w[i-15]>>>3)) + w[i-7] + (r(w[i-2],17)^r(w[i-2],19)^(w[i-2]>>>10))) | 0;
+    let [a,b,c,d,e,f,g,j] = h;
+    for (let i = 0; i < 64; i++) {
+      const t = (j + (r(e,6)^r(e,11)^r(e,25)) + ((e&f)^(~e&g)) + k[i] + w[i]) | 0;
+      const u = ((r(a,2)^r(a,13)^r(a,22)) + ((a&b)^(a&c)^(b&c))) | 0;
+      j=g; g=f; f=e; e=(d+t)|0; d=c; c=b; b=a; a=(t+u)|0;
+    }
+    [a,b,c,d,e,f,g,j].forEach((v,i) => h[i]=(h[i]+v)|0);
+  }
+  return h.map(v => (v>>>0).toString(16).padStart(8,'0')).join('');
+}
+
+const STATUS_DETAILS = {
+  manual: 'Ask me mode is on.', 'no-rule': 'No saved rule matched this request.',
+  'assistant-asked': 'Assistant asked you to decide.', 'review-expired': 'Assistant review expired. You can decide or ask again.',
+  'review-unavailable': 'Assistant review is unavailable. You can decide here.',
+  'policy-error': 'Approval policy could not be read. You can decide here.',
+  'native-unavailable': 'Codex Auto-review needs a compatible new or restarted Codex launch.',
+};
+
+// Readers accept only known codes bound to this exact request. No tokens, payloads,
+// arbitrary error messages, configured modes or inferred elapsed-time progress reach a card.
+export function permissionStatus(req, metadata) {
+  if (!req || ['request_user_input','EnterPlanMode'].includes(req.tool_name) || words(req).kind !== 'permission') return undefined;
+  const unknown = { state: 'unknown', text: 'Approval status unavailable', detail: 'You can decide here.', attention: true };
+  let v; try { v = typeof metadata === 'string' ? JSON.parse(metadata) : metadata; } catch { return unknown; }
+  if (v?.version !== 1 || v.request_hash !== requestHash(req)) return unknown;
+  if (v.state === 'checking') return { state: 'checking', text: 'Checking saved rules…', attention: false };
+  if (v.state === 'processing') return { state: 'processing', text: 'Requesting Assistant review…', attention: false };
+  if (v.state === 'assistant') {
+    const who = v.reviewer === 'feature' ? 'Feature Assistant' : v.reviewer === 'space' ? 'Space Assistant' : 'Assistant';
+    return { state: 'assistant', text: `Waiting for ${who} review`, attention: false };
+  }
+  if (v.state === 'person') return { state: 'person', text: 'Waiting for your decision', detail: STATUS_DETAILS[v.reason] ?? 'You can decide here.', attention: true };
+  return unknown;
+}
 // A file as the person knows it: from the agent's folder, else from home, else whole; just its
 // name when that would be long (a reason is at most 40 characters).
 function rel(p, cwd) {

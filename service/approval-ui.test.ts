@@ -6,6 +6,9 @@ mock.module('herdr',()=>fakeHerdr({theme:()=>new Proxy({},{get:()=> '#111111'}),
 mock.module('gpui-kit',()=>fakeGpuiKit());mock.module('gpui-base',()=>fakeGpuiBase());
 const { approvalsInit, approvalsSection, approvalsFlush }=await import('../mods/shepherdr-settings/approval-section.js');
 const { rememberedControls }=await import('../mods/chat/approval-cards.js');
+const { AskCards }=await import('../mods/chat/cards.js');
+const { words, permissionStatus, requestHash }=await import('../core/asks.js');
+const { strip }=await import('../mods/chat/strips.js');
 const { default: Approvals }=await import('../mods/workspace-approvals/main.js');
 beforeEach(()=>{state.clear();writes=[];built.length=0;});
 test('Agents exposes a manual default plus role overrides without changing settings on render',()=>{
@@ -22,6 +25,21 @@ test('remembered execution grants are absent for plans/questions and bind the re
  const controls=rememberedControls({id:'id',words:{kind:'permission'},req:{tool_input:{command:'git status'}}},host);
  expect(controls.map((x:any)=>x.label)).toEqual(['Allow for this task','Create rule…','Ask Assistant']);
  const remote=rememberedControls({id:'id',machine:'remote',words:{kind:'permission'}},host);expect(remote.every((x:any)=>x.disabled)).toBe(true);
+});
+
+test('native permission strips keep visible status, distinct icons and manual keyboard actions',()=>{
+ const replies:any[]=[],req={tool_name:'Bash',tool_input:{command:'git status'}},ask:any={id:'card',req,words:words(req)};
+ const cards=new AskCards({reply:(_a:any,text:string)=>replies.push(text)},{});
+ for(const state of ['checking','assistant','person']){
+  ask.approval=permissionStatus(req,{version:1,request_hash:requestHash(req),state,reason:'no-rule'});
+  const strips:any[]=cards.strips(ask),status=strips.find((s:any)=>s.kind==='status');expect(status.text).toBe(ask.approval.text);expect(strips[0].neutral).toBe(true);
+  built.length=0;strip({muted:'#888'},status,false,false);
+  expect(built.some((e:any)=>e.calls.some(([n,a]:any)=>n==='text_color'&&a[0]===(state==='person'?'#f5b544':'#888')))).toBe(true);
+  expect(strips.find((s:any)=>s.key==='actions').ctls.map((c:any)=>c.label)).toEqual(['Allow once','Deny']);
+ }
+ cards.key(ask,{key:'escape'},{stop_propagation(){},notify(){}});expect(JSON.parse(replies[0]).hookSpecificOutput.decision.behavior).toBe('deny');
+ const plan={id:'plan',req:{tool_name:'ExitPlanMode'},words:{kind:'plan',title:'Plan',detail:''}};
+ expect(cards.strips(plan).some((s:any)=>s.kind==='status')).toBe(false);
 });
 test('the approval manager holds and releases dialog keyboard ownership',()=>{
  const c:any=new Approvals(),cx:any={focus_handle:()=>({focus(){}}),spawn(){},timer:{every(){}}};c.init({},cx);expect(state.get('keyboard.holder').who).toContain('dialog:approvals:');c.close();expect(state.get('keyboard.holder').who).toBeNull();

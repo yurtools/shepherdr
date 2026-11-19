@@ -51,7 +51,7 @@ export async function profiles(machine = null) {
   const r = await exec("sh", ["-c", "f=\"${HERDR_APP_HOME:-$HOME/.config/herdr-app}/data/agent-profiles.json\"; if [ -f \"$f\" ]; then cat \"$f\"; else printf '{\"profiles\":[]}'; fi"], { on: machine });
   if (r.code !== 0) throw new Error("Cannot read agent profiles");
   const data = JSON.parse(r.stdout);
-  return (data.profiles ?? []).filter((x) => typeof x.id === "string" && /^[\w-]+$/.test(x.id)
+  return (Array.isArray(data?.profiles) ? data.profiles : []).filter((x) => x && typeof x.id === "string" && /^[\w-]+$/.test(x.id)
     && x.agent === "codex" && typeof x.home === "string" && x.home.startsWith("/") && !/[\0\r\n]/.test(x.home));
 }
 export async function profilePick(pick, machine = null) {

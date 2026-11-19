@@ -364,7 +364,7 @@ function stripSession(kind, argv) {
 // How to start the chosen agent: { argv, resume } (resume: argv already continues the session).
 // `session`: the old conversation's id when it can be resumed (same agent only).
 export function argvFor(pick, old) {
-  if (pick.profile && !pick.launch) throw new Error("Resolve the assigned account profile on the destination machine before launch.");
+  if (pick.profile != null && pick.profile !== "" && !pick.launch) throw new Error("Resolve the assigned account profile on the destination machine before launch.");
   const same = pick.agent === old.agent;
   const flags = same ? kept(pick.agent, old.argv ?? []) : [];
   const prefix = pick.launch ?? (!same && pick.agent === "codex" ? profileLaunch(pick, []) : launchPrefix(pick.agent, same ? old.argv ?? [] : [], same ? old.home : null));
@@ -442,7 +442,7 @@ export const FORK_LIVE = {
 };
 
 export function profileLaunch(pick, profiles) {
-  if (!pick?.profile) return pick?.agent === "codex" ? ["env", "-u", "CODEX_HOME", "-u", "CODEX_API_KEY", "-u", "OPENAI_API_KEY", "-u", "CODEX_ACCESS_TOKEN", "-u", "CODEX_SQLITE_HOME", "codex"] : null;
+  if (pick?.profile == null || pick.profile === "") return pick?.agent === "codex" ? ["env", "-u", "CODEX_HOME", "-u", "CODEX_API_KEY", "-u", "OPENAI_API_KEY", "-u", "CODEX_ACCESS_TOKEN", "-u", "CODEX_SQLITE_HOME", "codex"] : null;
   const profile = Array.isArray(profiles) && profiles.find(x => x && x.id === pick.profile);
   if (typeof pick.profile !== "string" || !/^[\w-]+$/.test(pick.profile) || !profile || profile.agent !== "codex" || pick.agent !== "codex" || typeof profile.home !== "string" || !profile.home.startsWith("/") || /[\0\r\n]/.test(profile.home))
     throw new Error("The assigned account profile is unavailable on this machine.");

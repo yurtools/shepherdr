@@ -61,7 +61,10 @@ def pick_words(p, unset):
     if not isinstance(p, dict) or not (p.get("agent") or p.get("argv")):
         return unset
     agent = p.get("agent") or agent_key([str(x) for x in p["argv"]])
-    return agent + (f", model {p['model']}" if p.get("model") else "") + (f", effort {p['effort']}" if p.get("effort") else "")
+    return agent + (f", account {p['profile']}" if p.get('profile') else '') + \
+        (f", model {p['model']}" if p.get("model") else "") + (f", effort {p['effort']}" if p.get("effort") else "") + \
+        (f", Fast {'on' if p['fast'] else 'off'}" if isinstance(p.get('fast'), bool) else '') + \
+        (f", permissions {p['perm']}" if p.get('perm') else '')
 
 
 def autopilot_of(space, cfg):
@@ -104,8 +107,9 @@ def rows(space, d=None, auto=None):
             ("merge", "Merge", MERGE_SHORT[merge], merge, [("tasks", "merge")]),
             ("proof", "Proof", "on" if t.get("proof") is not False else "off (tasks show no proof artifact)",
              "off" if t.get("proof") is False else "on", [("tasks", "proof")]),
-            ("agent", "Task agent", pick_words(cfg.get("worker"), "claude, its own default model and effort"),
-             pick_words(cfg.get("worker"), "claude").replace(", model ", "/").replace(", effort ", "/"), [("worker", None)]),
+            ("agent", "Task agent", pick_words(cfg.get("worker") or cfg.get('coordinator'), "claude, its own default model and effort"),
+             pick_words(cfg.get("worker") or cfg.get('coordinator'), "claude").replace(", model ", "/").replace(", effort ", "/"),
+             [("worker", None)] if cfg.get('worker') else [("coordinator", None)]),
             ("base", "Base branch", f"{t['base']} (new tasks branch from it and merge into it)" if str(t.get("base") or "").strip()
              else "the folder's checked-out branch", str(t.get("base") or "").strip(), [("tasks", "base")]),
             ("worktrees", "Worktrees", "on (in a git repo, a worktree and branch per task)" if t.get("worktrees") is not False

@@ -4978,7 +4978,9 @@ class CodexAsksOnTheCard(unittest.TestCase):
         # its review: the reviewer the brief's Reviewer line gives, read-only, and its own helpers only
         from herdr_task.settings import reviewer_command
         rv = reviewer_command("codex", folder=tempfile.mkdtemp())
-        with mock.patch.dict(os.environ, {"HERDR_BROWSER_TASK": "demo#1"}):
+        from herdr_task import store
+        fixture = {'folder': '/synthetic/project', 'tasks': [{'id': 1, 'reviewer': 'codex', 'set': {'review': 'on'}}]}
+        with mock.patch.dict(os.environ, {"HERDR_BROWSER_TASK": "demo#1"}), mock.patch.object(store, 'read_list', return_value=fixture):
             own = lambda c, sb=True: launch.own_command("/x/herdr-task", c, sb)  # noqa: E731
             yes = [f"hc run --bg --name demo-1-review --label \"herdr.task=$HERDR_BROWSER_TASK\" --label herdr.role=reviewer "
                    f"--label herdr.agent=codex -- {rv} 'Review it: \"ok\" & $x'",

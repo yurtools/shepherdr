@@ -207,9 +207,31 @@ separate ChatGPT logins separate; the account definitions contain no credentials
 
 In **Space settings → Agents**, select Codex and choose the account beside the
 Assistant's model control. The account is assigned there, not in the chat composer.
-A worker inherits the Assistant's account unless its role explicitly selects
-another account. The regular Herdr program entries still determine which account
-opens when starting a normal agent tab.
+Worker and Reviewer choices come from the space, then its legacy machine settings,
+then Everywhere. Each role is a whole choice: selecting plain Codex uses the default
+account, even when an inherited role or Assistant uses a named account. Resetting a
+role (unset or null) inherits the role above; unset fields inside a chosen role use
+CLI defaults. If no Worker choice exists, the space Assistant's choice is used,
+then Claude's defaults. Feature Assistants share these Worker/Reviewer choices;
+their own account never replaces them. The regular Herdr program entries still
+determine which account opens when starting a normal agent tab.
+
+Tasks retain their space ID, including across project-folder changes and worktrees.
+Without a space ID, a folder identifies a space only when exactly one matches.
+Task agent/model/effort overrides win; changing CLI resets incompatible role fields.
+Queued starts keep their captured Worker command; edits to the task's agent choices
+refresh it unless it was an explicit custom command. Moving a queued start to a
+different space resolves that space's Worker. Reviewer settings and notes are read
+when the brief is built. A missing or deleted named profile blocks launch rather
+than selecting another login; remote starts resolve only destination-local profiles.
+
+Resume, switch, fix and crash recovery retain the recorded session's account and
+launch choices. An explicit account change starts a new session with a handoff.
+New tasks use current settings. An automatic Reviewer fallback to the worker's CLI
+also keeps the worker's account, and the brief explains the fallback. Explicit
+plain or named Codex Reviewer choices select their own account. A missing named
+reviewer never falls back; an unavailable model can fall back to that same account's
+default model. Reviewers remain read-only regardless of role permission settings.
 
 The chat composer shows the assigned account as a label, with separate **Model**,
 **Thinking** and **Permissions** dropdowns. For a running agent, make the selections

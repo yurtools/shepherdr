@@ -172,7 +172,7 @@ def worktrees_on(s, space=None):
 
 def profile_launch(pick):
     """Machine-local account binding. Missing named profiles fail instead of changing login."""
-    if not pick.get("profile"):
+    if pick.get("profile") in (None, ""):
         return None
     path = os.path.join(os.environ.get("HERDR_APP_HOME") or os.path.join(HOME, ".config", "herdr-app"),
                         "data", "agent-profiles.json")
@@ -235,8 +235,7 @@ def argv_for(pick):
     argv), as the chat's agent picker builds it (mods/chat/agent.js argvFor). None: no setting."""
     if not pick:
         return None
-    if pick.get("profile"):
-        profile_launch(pick)  # also reject a profile assigned to the wrong CLI or a custom argv
+    profile_launch(pick)  # also reject malformed profiles or a profile assigned to the wrong CLI
     if pick.get("argv"):
         return [str(x) for x in pick["argv"]]
     agent = pick.get("agent")
@@ -391,7 +390,7 @@ def set_task(t, key, value):
         t.pop("set", None)
 
 
-def set_opts(t, args):
+def set_opts(t, args, s=None):
     """add/edit's --set pairs and --agent, --model, --effort, --reviewer, --reviewer-model,
     --reviewer-effort, in that order (a --set pair wins over its flag)."""
     mode=getattr(args,"approval_mode",None)
@@ -409,7 +408,7 @@ def set_opts(t, args):
         set_task(t, k, v)
     if getattr(args, "reviewer_model", None) or getattr(args, "reviewer", None) or any(
             SET_KEYS.get(p.split("=", 1)[0].strip().lower()) in ("reviewer", "reviewer_model") for p in getattr(args, "set", None) or []):
-        check_reviewer_model(t)
+        check_reviewer_model(t, s)
 
 
 def by_layer(s, space, section, key, value, default):
@@ -459,12 +458,15 @@ def codex_lacks(model, profile=None):
 CLAUDE_MODEL = re.compile(r"^(claude-|opus|sonnet|haiku|fable)", re.I)
 
 
-def check_reviewer_model(t):
+def check_reviewer_model(t, s=None):
     """add/edit: a reviewer model Codex here can't use is refused when it is set (#948), not found at review time."""
     m = t.get("reviewer_model")
-    if not m or t.get("reviewer") == "claude" or (not t.get("reviewer") and CLAUDE_MODEL.match(m)):
+    rv = dict(settings_for(s, t.get('space')).get('reviewer') or {}) if s is not None else {}
+    if t.get('reviewer') and t['reviewer'] != rv.get('agent'):
+        rv = {'agent': t['reviewer']}
+    if not m or rv.get("agent") == "claude" or (not rv.get("agent") and CLAUDE_MODEL.match(m)):
         return
-    ids = codex_lacks(m)
+    ids = codex_lacks(m, rv['profile']) if rv.get('profile') else codex_lacks(m)
     if ids:
         raise Fail(f"Codex here doesn't offer {m} for the account it is signed in with: pick one of {', '.join(ids)} "
                    "(or leave the reviewer model unset for Codex's own default).")
@@ -568,8 +570,7 @@ def task_settings(s, t, space=None, argv=None, live=False):
         for f in ("model", "effort"):
             if t.get(f"reviewer_{f}"):
                 rv[f] = t[f"reviewer_{f}"]
-        if rv.get("profile"):
-            profile_launch(rv)
+        profile_launch(rv)
         other = {"claude": "codex", "codex": "claude"}.get(agent)
         want = rv.get("agent") or (other if other and shutil.which(other) else agent)
         who, said = want, ""

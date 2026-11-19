@@ -213,9 +213,92 @@ class LaunchSettings(unittest.TestCase):
              mock.patch.object(L, 'agent_name', return_value='test-worker'), mock.patch.object(L, 'track'), \
              mock.patch.object(L, 'own_codex_hooks', return_value={}), mock.patch.object(L, 'trust_roots', return_value=[]):
             L.launch(self.s, self.task, argv, 'sp1', message='Synthetic prompt')
+            L.launch(self.s, self.task, shlex.split(self.reviewer()['command']), 'sp1', role='reviewer')
         self.assertIn('herdr.task.space=sp1', calls[0])
         self.assertIn('approvals_reviewer="auto_review"', calls[0])
         self.assertIn('CODEX_HOME=' + str(self.account), self.task['agents'][-1]['argv'])
+        self.assertIn('herdr.role=reviewer', calls[1])
+        self.assertIn('read-only', calls[1])
+        self.assertIn('CODEX_HOME=' + str(self.account), self.task['reviewers'][-1]['argv'])
+
+    def test_same_cli_reviewer_can_use_another_named_account_or_explicit_default(self):
+        third = self.root / 'review account'
+        third.mkdir()
+        self.manifest.write_text(json.dumps({'profiles': [
+            {'id': 'two', 'agent': 'codex', 'home': str(self.account)},
+            {'id': 'review', 'agent': 'codex', 'home': str(third)}]}))
+        for selection, home in (({'agent': 'codex', 'profile': 'review'}, third),
+                                ({'agent': 'codex'}, Path(S.HOME) / '.codex'),
+                                ({'agent': 'codex', 'profile': None}, Path(S.HOME) / '.codex')):
+            with self.subTest(selection=selection):
+                self.cfg['spaces']['sp1']['reviewer'] = selection; self.save()
+                result = self.execute(shlex.split(self.reviewer()['command']))
+                self.assertEqual(result['home'], str(home))
+                self.assertIn('read-only', result['argv'])
+
+    def test_unavailable_other_cli_fallback_keeps_worker_account_and_explains_it(self):
+        self.cfg['spaces']['sp1']['reviewer'] = None; self.save()
+        for installed, state, reason in ((False, None, 'no other is installed'),
+                                         (True, 'signed-out', "isn't signed in")):
+            with self.subTest(installed=installed, state=state), \
+                 mock.patch.object(S.shutil, 'which', return_value='/fake/other' if installed else None), \
+                 mock.patch.object(S, 'cli_here', return_value=state):
+                row = next(r for r in S.task_settings(self.s, self.task) if r['label'] == 'Reviewer')
+                self.assertIn(reason, row['text'])
+                self.assertEqual(self.execute(shlex.split(row['value']['command']))['home'], str(self.account))
+
+    def test_model_fallback_changes_only_model_and_missing_named_reviewer_never_falls_back(self):
+        self.cfg['spaces']['sp1']['reviewer'].update(model='unavailable-model', effort='high')
+        self.save()
+        with mock.patch.object(S, 'codex_lacks', return_value=['available-model']), \
+             mock.patch.object(S, 'cli_here', return_value='signed-out'):
+            row = next(r for r in S.task_settings(self.s, self.task) if r['label'] == 'Reviewer')
+        result = self.execute(shlex.split(row['value']['command']))
+        self.assertIn("doesn't offer unavailable-model", row['text'])
+        self.assertNotIn('-m', result['argv'])
+        self.assertEqual(result['home'], str(self.account))
+        self.assertIn('model_reasoning_effort="high"', result['argv'])
+        self.manifest.write_text('{"profiles":[]}')
+        with mock.patch.object(S, 'cli_here', return_value='signed-out'), self.assertRaises(Fail):
+            self.reviewer(argv=['claude'])
+
+    def test_deleted_queued_account_preserves_queue_and_crash_recovery_sends_nothing(self):
+        argv = S.worker_argv(self.s, self.task)
+        self.task.update(state='queued', queue={'space': 'sp1', 'argv': argv})
+        self.account.rmdir()
+        with mock.patch.object(C, 'folder_for') as folder, self.assertRaises(Fail):
+            C.begin(self.s, self.task, argv, 'sp1')
+        folder.assert_not_called()
+        self.assertEqual(self.task['state'], 'queued')
+        self.assertEqual(self.task['queue']['argv'], argv)
+        term = {'address': 'fake-worker', 'state': 'live', 'pid': 1}
+        report = {}
+        with mock.patch.object(revive, 'hc_json', side_effect=[{'terminals': [term]}, term]), \
+             mock.patch.object(revive, 'watched', return_value=True), mock.patch.object(revive, 'agent_running', return_value=False), \
+             mock.patch.object(revive, 'restarted', return_value=True), mock.patch.object(revive, 'read_record', return_value={}), \
+             mock.patch.object(revive, 'plan', return_value=('resume', argv, False)), mock.patch.object(revive, 'run') as run:
+            revive.revive_pass(report)
+        run.assert_not_called()
+        self.assertIn('unavailable', report['revive_failed'][0]['why'])
+
+    def test_reviewer_model_validation_uses_selected_account_cache(self):
+        (self.account / 'models_cache.json').write_text(json.dumps({'models': [{'slug': 'account-only-model'}]}))
+        with mock.patch.object(S, 'codex_models', wraps=S.codex_models) as models:
+            S.set_opts(self.task, SimpleNamespace(reviewer_model='account-only-model'), self.s)
+        models.assert_called_with('two')
+        self.assertEqual(self.task['reviewer_model'], 'account-only-model')
+
+    def test_account_and_fast_permission_changes_reach_assistant_notices(self):
+        from herdr_task import assistant_settings as A
+        before = A.rows('sp1', self.cfg, auto=(False, '', ''))
+        self.cfg['spaces']['sp1']['worker'].update(profile=None, fast=True, perm='read-only')
+        after = A.rows('sp1', self.cfg, auto=(False, '', ''))
+        old = next(r for r in before if r['key'] == 'agent')
+        new = next(r for r in after if r['key'] == 'agent')
+        self.assertIn('account two', old['text'])
+        self.assertNotEqual(A.digest([old]), A.digest([new]))
+        self.assertIn('Fast on', new['text'])
+        self.assertIn('permissions read-only', new['text'])
 
 
 class TaskSpaceIdentity(unittest.TestCase):
@@ -237,4 +320,35 @@ class TaskSpaceIdentity(unittest.TestCase):
         self.assertEqual(self.task(v['id'])['queue']['space'], 'sp-owned')
         self.tick_at(self.task(v['id'])['scheduled_for'] + 1)
         self.assertEqual(self.started[-1][2], 'sp-owned')
+
+    def test_queue_snapshot_survives_settings_change_and_explicit_space_reselects(self):
+        cfg = {'everywhere': {'worker': {'agent': 'claude'}}, 'spaces': {
+            'sp1': {'folder': self.folder, 'worker': {'agent': 'codex', 'model': 'queued-model'}},
+            'sp2': {'folder': self.folder, 'worker': {'agent': 'claude', 'model': 'other-space'}}}}
+        file = Path(self.tmp) / 'settings.json'
+        file.write_text(json.dumps(cfg))
+        with mock.patch.object(C, 'worker_argv', S.worker_argv), mock.patch.object(self.tick, 'worker_argv', S.worker_argv):
+            v = self.run_cmd(C.cmd_add, title='snapshot', space='sp1')
+            self.run_cmd(C.cmd_start, id=v['id'], in_='1h')
+            at = self.task(v['id'])['scheduled_for']
+            cfg['spaces']['sp1']['worker'] = {'agent': 'claude', 'model': 'changed-after-queue'}
+            file.write_text(json.dumps(cfg))
+            self.tick_at(at + 1)
+            self.assertIn('queued-model', self.started[-1][1])
+            v = self.run_cmd(C.cmd_add, title='move', space='sp1')
+            self.run_cmd(C.cmd_start, id=v['id'], in_='1h')
+            self.run_cmd(C.cmd_start, id=v['id'], space='sp2', now=True)
+            self.assertIn('other-space', self.started[-1][1])
+            self.assertEqual(self.started[-1][2], 'sp2')
+
+    def test_automation_captures_space_and_uses_same_worker_resolver(self):
+        from herdr_task import automations as A
+        cfg = {'everywhere': {'worker': {'agent': 'claude'}}, 'spaces': {'sp-auto': {
+            'folder': '/old-folder', 'worker': {'agent': 'codex', 'model': 'automation-model'}, 'tasks': {'worktrees': False}}}}
+        (Path(self.tmp) / 'settings.json').write_text(json.dumps(cfg))
+        with self.store_mod.Store(self.store_mod.locate(self.folder)) as s, \
+             mock.patch.object(A, 'begin') as begin, mock.patch.object(A, 'queue_reason', return_value=None):
+            t = A.fire(s, {'id': 1, 'title': 'automation', 'space': 'sp-auto'}, 'manual')
+            self.assertEqual((t['space'], t['mode']), ('sp-auto', 'here'))
+            self.assertIn('automation-model', begin.call_args.args[2])
 

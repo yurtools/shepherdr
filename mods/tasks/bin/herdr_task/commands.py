@@ -14,7 +14,7 @@ from . import sandbox
 from .base import Fail, git, guard, now, run, STORE, stop_note, VERSION
 from .settings import (
     agent_argv, agent_key, bare, merge_policy, review_limits, set_opts, settings_block, settings_for, space_base,
-    task_settings, worker_argv, worktrees_on, bind_account, codex_home,
+    task_settings, worker_argv, worktrees_on, bind_account, codex_home, validate_account,
 )
 from .agents import (
     agent_log, agent_running, background_jobs, busy_again, detail, fit, LINE_MAX, live_agents, ready_turns, STATUSES, SUMMARY_MAX,
@@ -113,7 +113,7 @@ def cmd_add(args):
             t["space"] = bare(space)
         feature = caller_labels().get("herdr.feature")
         if feature: t["feature"] = feature
-        set_opts(t, args)
+        set_opts(t, args, s)
         set_base(s, t, args.base, space, new=True)
         set_branch(s, t, getattr(args, "branch", None))
         set_notes(t, args)
@@ -270,6 +270,9 @@ def cmd_show(args):
 
 def begin(s, t, argv, space, parent=None):
     """Starts the task's first agent. Returns its record."""
+    argv = bind_account(argv)
+    validate_account(argv)  # A failed delayed start keeps its queue and identity intact.
+    t["space"] = bare(space)
     t["state"], t["started"] = "running", now()
     # Its brief teaches `reviewed`: ready waits for a review of its final commit (review_refusal).
     t["review_gate"] = True
@@ -282,7 +285,6 @@ def begin(s, t, argv, space, parent=None):
         # The folder's commit as it starts: still there, and nothing tracked changed, at ready means
         # it changed nothing, so there is nothing to review (review_refusal, #744).
         t["folder_start"] = git(s.loc["folder"], "rev-parse", "HEAD")[1] or None
-    t["space"] = bare(space)
     parent = parent_for(parent, space, t.get("feature"))
     return launch(s, t, argv, space, brief(s, t, parent, space, argv), parent=parent)
 
@@ -313,10 +315,12 @@ def cmd_start(args):
         elif args.worktree and worktrees_on(s, space):
             t["mode"] = "worktree"
         set_branch(s, t, getattr(args, "branch", None))
+        reuse_queue = not args.space or bare(args.space) == q.get("space")
         argv = agent_argv(None, args.argv) if args.argv else worker_argv(s, t, space, args.agent) if args.agent else \
-            (q.get("argv") or worker_argv(s, t, space))
+            ((q.get("argv") if reuse_queue else None) or worker_argv(s, t, space))
         parent = args.parent or q.get("parent")
-        plan = {"argv": argv, "space": space, "parent": parent, **({"custom": True} if args.argv else {})}
+        plan = {"argv": argv, "space": space, "parent": parent,
+                **({"custom": True} if args.argv or (reuse_queue and q.get("custom")) else {})}
         at = scheduled_at(args)
         if at:
             # start --at / --in: it starts by itself then, as this start would now.
@@ -854,7 +858,7 @@ def cmd_edit(args):
             with open(args.prompt_file) as f:
                 t["prompt"] = f.read()
         pick = [t.get(k) for k in ("agent", "model", "effort")]
-        set_opts(t, args)
+        set_opts(t, args, s)
         if [t.get(k) for k in ("agent", "model", "effort")] != pick:
             # The next agent started for it runs on the new choice (start_again), a queued one too.
             t["pick_at"] = now()

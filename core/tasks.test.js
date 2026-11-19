@@ -242,3 +242,11 @@ describe("Needs-you items the task's own status has moved past (SHEP-195)", () =
     expect(holdingItems(items, truthOf(done))).toHaveLength(3);
   });
 });
+
+test('a postponed Ready decision leaves active attention but remains reviewable', () => {
+  const task = { state: 'ready', ready_at: 123, deferred_ready_at: 123 };
+  expect(place({}, task).section).toBe('deferred');
+  expect(place({}, { ...task, progress: { text: 'Unrelated update' } }).section).toBe('deferred');
+  expect(place({}, { ...task, ready_at: 124 }).section).toBe('ready');
+  expect(task.state).toBe('ready');
+});

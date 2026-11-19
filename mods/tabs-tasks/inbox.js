@@ -34,6 +34,7 @@
 
 import { LINE_MAX, REASONS, fit, reqReason, reportReason } from "./core/needs.js";
 import { SH } from "./core/paths.js";
+import { permissionStatus, requestHash } from "./core/asks.js";
 import { dirsReady } from "./dirs.js";
 import { notifies, spaceOfTerminal } from "./notify.js";
 import { toast, toastWho as whoOf } from "./ui.js";
@@ -116,7 +117,11 @@ async function flags() {
 async function readAsks() {
   const r = await exec("sh", ["-c", 'cd "$1/req" 2>/dev/null || exit 0; for f in *.json; do [ -f "$f" ] || continue; p=${f%.json}; p=${p##*.}; if kill -0 "$p" 2>/dev/null; then echo "$f"; else rm -f "$f"; fi; done; true', "x", ASKS()]);
   const ids = r.stdout.split("\n").filter((f) => f.endsWith(".json")).map((f) => f.slice(0, -5)).sort();
-  const asks = ids.map((id) => ({ id, terminal: id.split(".")[0] }));
+  const asks = await Promise.all(ids.map(async (id) => {
+    let req; try { req = JSON.parse(await readTextFile(`${ASKS()}/req/${id}.json`)); } catch {}
+    const metadata = await readTextFile(`${ASKS()}/req/${id}.status`).catch(() => null);
+    return { id, terminal: id.split(".")[0], ...(req ? { requestHash: requestHash(req), approval: permissionStatus(req, metadata) } : {}) };
+  }));
   // Codex's (it waits on the hook) that came on screen as a terminal goes back to it; Claude's
   // terminal shows its prompt anyway, and releasing it would close its card on the web too.
   const shown = asks.filter((a) => onScreen(a.terminal));
@@ -129,7 +134,7 @@ async function readAsks() {
   const now = Date.now();
   for (const a of left) {
     if (!seenAt.has(a.id)) seenAt.set(a.id, now);
-    else if (now - seenAt.get(a.id) >= 3000 && !alerted.has(a.id)) { alerted.add(a.id); alert(a).catch(() => {}); }
+    else if (a.approval?.attention !== false && now - seenAt.get(a.id) >= 3000 && !alerted.has(a.id)) { alerted.add(a.id); alert(a).catch(() => {}); }
   }
   for (const id of seenAt.keys()) if (!left.some((a) => a.id === id)) { seenAt.delete(id); alerted.delete(id); }
   put("inbox.asks", left);
@@ -243,13 +248,13 @@ async function readTasksNow() {
       // "asks": its agent waits (a live blocked terminal, an item of its own): kept for its reason.
       // "provider": cut off by its model's provider, the tries used up (herdr-task tick).
       // A problem its agent is on (herdr-task's on_it(): Working, not Needs you) is no item.
-      const kind = x.attention ? (x.needs === "attention" ? "check" : null) : x.state === "ready" ? (x.status === "ready" ? "merge" : null)
+      const kind = x.attention ? (x.needs === "attention" ? "check" : null) : x.state === "ready" ? (x.status === "ready" ? "merge" : x.status === "deferred" ? "deferred" : null)
         : x.needs === "stopped" || x.status === "stopped" ? "stopped" : x.needs === "reply" || x.needs === "provider" ? "waiting"
         : x.needs === "asks" ? "asks" : null;
       if (!kind) continue;
       const last = x.agents?.[x.agents.length - 1];
       tasks.push({ kind, machine, folder: g.folder, name: g.name, ref: x.ref ?? `#${x.id}`, title: x.title, attention: x.attention ?? null, why: x.why ?? null,
-        pr: x.pr ?? null, space: pre(machine, x.space), tab: pre(machine, x.tab), live: (x.live ?? []).map((a) => pre(machine, a.address)),
+        feature: x.feature ?? null, status: x.status, pr: x.pr ?? null, space: pre(machine, x.space), tab: pre(machine, x.tab), live: (x.live ?? []).map((a) => pre(machine, a.address)),
         merging: Boolean(x.merge_requested && x.live?.length), at: x.ready_at ?? last?.ended ?? last?.at ?? x.started ?? x.created ?? 0 });
     }
     const auto = await json(CLI(), [...on, "auto", "list", "--all", "--json"]);
@@ -300,14 +305,14 @@ async function json(cmd, args) {
 export function items() {
   const asks = shared("inbox.asks") ?? [];
   const asking = new Set(asks.map((a) => a.terminal));
-  const out = asks.map((a) => ({ key: `ask:${a.id}`, kind: "ask", id: a.id, terminal: a.terminal, at: Number(a.id.split(".")[1]) * 1000 || 0 }));
+  const out = asks.filter(a => a.approval?.attention !== false).map((a) => ({ key: `ask:${a.id}`, kind: "ask", id: a.id, terminal: a.terminal, at: Number(a.id.split(".")[1]) * 1000 || 0 }));
   const all = terminals();
   forgetUnblocked(all);
   for (const k of all)
     if (k.state === "live" && k.status === "blocked" && !asking.has(k.address))
       out.push({ key: `blocked:${k.address}`, kind: "blocked", terminal: k.address, at: blockedSince(k.address) });
   const tasks = shared("inbox.tasks") ?? [];
-  for (const x of tasks) if (x.kind !== "merge" && x.kind !== "asks") out.push({ key: `${x.kind}:${x.machine ?? ""}:${x.folder}:${x.ref}`, ...x });
+  for (const x of tasks) if (x.kind !== "merge" && x.kind !== "deferred" && x.kind !== "asks") out.push({ key: `${x.kind}:${x.machine ?? ""}:${x.folder}:${x.ref}`, ...x });
   for (const p of shared("inbox.provider") ?? []) if (!asking.has(p.terminal)) out.push({ key: `provider:${p.terminal}`, kind: "provider", ...p });
   for (const a of shared("inbox.autos") ?? []) out.push({ key: `auto:${a.machine ?? ""}:${a.id}`, kind: "auto", ...a, at: a.error?.at ?? 0 });
   return out;

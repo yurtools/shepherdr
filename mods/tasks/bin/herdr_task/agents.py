@@ -118,7 +118,7 @@ def status_of(task, live):
 IN_QUEUE_LINE = "In GitHub's merge queue"
 APPROVAL_LINE = "Merges once it's approved"
 STATUSES = {"todo": "To do", "scheduled": "Scheduled", "queued": "Queued", "working": "Working", "needs": "Needs you",
-            "ready": "Ready", "merging": "Merging", "done": "Done"}
+            "ready": "Ready", "deferred": "Deferred", "merging": "Merging", "done": "Done"}
 
 
 def task_status(task, live):
@@ -170,7 +170,8 @@ def task_status(task, live):
         # Said ready but not at rest yet (SHEP-148): Working until it is, and only then Ready.
         if live and not_at_rest(task, live):
             return "working", None, None
-        return "ready", None, None
+        from .decisions import deferred
+        return ("deferred" if deferred(task) else "ready"), None, None
     # An agent that hasn't reported yet is starting: working.
     if any(x not in ("idle", "done", "blocked") for x in states):
         return "working", None, None

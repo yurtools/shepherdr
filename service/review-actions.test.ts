@@ -1,0 +1,30 @@
+import { afterAll, expect, test } from 'bun:test';
+import { mkdtempSync, writeFileSync, readFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { act } from './actions';
+const dir = mkdtempSync(join(tmpdir(), 'shep-review-cli-'));
+const cli = join(dir, 'herdr-task'), calls = join(dir, 'calls'), reply = join(dir, 'reply');
+writeFileSync(cli, `#!/usr/bin/env bun\nimport { appendFileSync, readFileSync } from 'node:fs';\nappendFileSync(${JSON.stringify(calls)}, JSON.stringify(process.argv.slice(2))+'\\n');\nconst x=JSON.parse(readFileSync(${JSON.stringify(reply)},'utf8'));\nconsole.log(JSON.stringify(x)); process.exit(x.error?1:0);\n`, { mode: 0o755 });
+const was = process.env.SHEPHERDR_HERDR_TASK;
+afterAll(() => { if (was === undefined) delete process.env.SHEPHERDR_HERDR_TASK; else process.env.SHEPHERDR_HERDR_TASK = was; });
+const hub: any = { terminals: new Map() };
+const compat: any = { taskOf: (id: string) => id === 'qualified' ? { ref: 'APP-1', folder: '/correct', machine: 'vm' } : null };
+const run = (body: any) => { process.env.SHEPHERDR_HERDR_TASK = cli; return act(hub, body, compat); };
+test('service forwards the reviewed identity, token and predecessor receipts to the existing protected accept command', async () => {
+  writeFileSync(reply, JSON.stringify({ state: 'ready', accepted: 'checks' }));
+  const result: any = await run({ type: 'accept', task: 'qualified', ref: 'WRONG-2', folder: '/wrong', expect: 'a'.repeat(64), preceding: ['b'.repeat(64)] });
+  expect(result.state).toBe('ready');
+  const args = JSON.parse(readFileSync(calls, 'utf8').trim().split('\n').at(-1)!);
+  expect(args).toEqual(['--on', 'vm', 'accept', 'APP-1', '--expect', 'a'.repeat(64), '--after-accept', 'b'.repeat(64), '--folder', '/correct', '--json']);
+  await expect(run({ type: 'accept', task: 'missing' })).rejects.toThrow("isn't here");
+  await expect(run({ type: 'accept', task: 'qualified', expect: 'invalid' })).rejects.toThrow('Invalid review');
+  writeFileSync(reply, JSON.stringify({ error: 'Checks failed' }));
+  await expect(run({ type: 'accept', task: 'qualified', expect: 'a'.repeat(64) })).rejects.toThrow('Checks failed');
+});
+test('service Later/restore never routes to completion or merge', async () => {
+  writeFileSync(reply, JSON.stringify({ state: 'ready' }));
+  await run({ type: 'later', task: 'qualified', restore: true });
+  const args = JSON.parse(readFileSync(calls, 'utf8').trim().split('\n').at(-1)!);
+  expect(args).toEqual(['--on', 'vm', 'later', 'APP-1', '--restore', '--folder', '/correct', '--json']);
+});

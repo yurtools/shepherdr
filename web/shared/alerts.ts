@@ -88,7 +88,7 @@ export function openCards(chat: Chat | undefined): Card[] {
     // what you sent that waits for the menu to be answered
     if (m.who === 'you' && m.waiting) continue
     if (!m.question) break
-    if (m.question.sent === undefined) out.unshift(m as Card)
+    if (m.question.sent === undefined && !m.question.closed && m.question.approval?.attention !== false) out.unshift(m as Card)
   }
   return out
 }

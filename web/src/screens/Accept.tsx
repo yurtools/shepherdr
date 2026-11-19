@@ -6,7 +6,7 @@
 // (ArtifactFrame): beside the rest on a wide screen, its own scroll; under the summary on a narrow one, all in one
 // scroll. Accept stays in view under it either way.
 import clsx from 'clsx'
-import { useEffect, useState, useSyncExternalStore } from 'react'
+import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { act, closeArtifact, getState, openArtifact, taskOf, useStore } from '../kernel.ts'
 import { Dialog } from '../rowmenu.tsx'
 import type { Artifact } from '@shared/types.ts'
@@ -15,6 +15,9 @@ import { Markdown } from '@plugins/chat/markdown.tsx'
 import { ArtifactFrame } from '@plugins/artifacts/client.tsx'
 // the card's words, the summary's cut and the details as bullets: the window's own (core/accept.js)
 import * as A from '@core/accept.js'
+import { inReviewScope, reviewBatch, reviewKey, reviewLabel, reviewEligible, activeReviewSelection, reviewResultsLine, retryableReview } from '@core/review.js'
+import type { Place, Task } from '@shared/types.ts'
+import { HeadButton } from '../ui.tsx'
 
 type Evidence = {
   summary?: string
@@ -27,9 +30,12 @@ type Evidence = {
   diff?: { files: number; added: number; removed: number; list: { path: string; added: number; removed: number }[] } | null
   checks?: { state: 'passed' | 'failed' | 'running' | 'none' | 'unknown'; text: string }
   /** Accept merges its branch first (it has work to merge): the button says "Accept and merge" */
+  destination?: string | null
+  decision_token?: string
+  decision_error?: string | null
   merges?: boolean
 }
-type Shown = { ref: string; title: string; state: string; status_text?: string; accepted_at?: number; evidence?: Evidence }
+type Shown = { status?: string; deferred_ready_at?: number; ready_at?: number; ref: string; title: string; state: string; status_text?: string; accepted_at?: number; evidence?: Evidence }
 
 // Which task's card is open (one at a time): a small store of its own, so any row or header can open it.
 let open: string | null = null
@@ -125,34 +131,36 @@ function ArtifactRow({ a }: { a: { id: string; title: string } }) {
   )
 }
 
-export function AcceptCard() {
+function IndividualAcceptCard() {
   const task = useOpen()
   const named = useStore((s) => (task && s.snap ? taskOf(s.snap, task)?.name : undefined))
   const artifacts = useStore((s) => s.snap?.artifacts)
   const [t, setT] = useState<Shown | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  const locked = useRef(false)
   const [details, setDetails] = useState(false)
 
   useEffect(() => {
     setT(null); setError(null); setBusy(false); setDetails(false)
     if (!task) return
     let gone = false
-    act({ type: 'evidence', task } as never).then((x) => !gone && setT(x as Shown), (e) => !gone && setError(String(e?.message ?? e)))
+    act({ type: 'evidence', task }).then((x) => !gone && setT(x as Shown), (e) => !gone && setError(String(e?.message ?? e)))
     return () => { gone = true }
   }, [task])
 
   if (!task) return null
-  const ready = t?.state === 'ready'
+  const ready = t?.state === 'ready' && (!t.status || ['ready', 'deferred'].includes(t.status))
   const e = t?.evidence ?? {}
   // its proof as the app knows it, to draw in the card; one it doesn't know (yet) stays a row that opens it
   const proofArt = e.proof ? artifacts?.find((a) => a.id === e.proof!.id) : undefined
 
   const accept = async () => {
-    if (!ready || busy) return
+    if (!ready || busy || locked.current || !e.decision_token || e.decision_error) return
+    locked.current = true
     setBusy(true); setError(null); setAccepting(task, true)
     try {
-      await act({ type: 'accept', task } as never)
+      await act({ type: 'accept', task, expect: e.decision_token })
       // done: the next snapshot moves it out of Ready; until then its row still says Accepting…
       setTimeout(() => setAccepting(task, false), 15000)
       close()
@@ -160,18 +168,25 @@ export function AcceptCard() {
       setAccepting(task, false)
       setError(String((err as Error)?.message ?? err))
       // accepted (or changed) from elsewhere meanwhile: show where it is now, not the refusal
-      const now = (await act({ type: 'evidence', task } as never).catch(() => null)) as Shown | null
+      const now = (await act({ type: 'evidence', task }).catch(() => null)) as Shown | null
       if (now && now.state !== 'ready') { setT(now); setError(null) }
       setBusy(false)
-    }
+    } finally { locked.current = false }
   }
 
+  const later = async (restore = false) => {
+    if (locked.current || busy) return
+    locked.current = true; setBusy(true)
+    try { await act({ type: 'later', task, restore }); close() }
+    catch (err) { setError(String((err as Error)?.message ?? err)) }
+    finally { locked.current = false; setBusy(false) }
+  }
   // as the window's card: "Accept HERD-4?" while it can be accepted, only its ref once settled; its name under it
   const ref = t?.ref ?? task
   const settled = !!t && !ready
   const w = A.words(e) as { summary: string; details: string }
   // Escape over the proof (the viewer sits over this card) closes the proof, back to the card as it was
-  const cancel = () => (getState().ui.viewer ? closeArtifact() : close())
+  const cancel = () => { if (!locked.current) getState().ui.viewer ? closeArtifact() : close() }
   // what follows the summary (and the proof, when it shows in the card)
   const rest = (
     <>
@@ -216,7 +231,11 @@ export function AcceptCard() {
         </>
       ) : null}
       // Accept shows while it is read too, not yet pressable; once settled only Close is left
-      buttons={settled ? null : <Primary disabled={!ready || busy} onClick={accept}>{busy ? A.ACCEPT.accepting : A.acceptLabel(e)}</Primary>}>
+      buttons={settled ? null : <>
+        <button className="px-3 py-2 text-fg2" disabled={!ready || busy} onClick={() => later(t?.status === 'deferred')}>{t?.status === 'deferred' ? 'Restore to review' : 'Later'}</button>
+        <Primary disabled={!ready || busy || !e.decision_token || !!e.decision_error} onClick={accept}>{busy ? A.ACCEPT.accepting : A.acceptLabel(e)}</Primary>
+      </>}>
+      {t ? <p className="py-2 text-sm text-fg2">{e.decision_error || A.consequence(e)}{t.status === 'deferred' ? ' Deferred · still Ready and unaccepted.' : ''}</p> : null}
       {!t ? (
         <div className="pt-2 pb-1"><p className={error ? 'text-need-fg' : 'text-fg3'} role={error ? 'alert' : undefined}>{error ?? A.ACCEPT.reading}</p></div>
       ) : proofArt ? (
@@ -250,3 +269,83 @@ if (typeof window !== 'undefined') {
   fromLink((window as { shepherdrLink?: string }).shepherdrLink ?? '')
   addEventListener('hashchange', () => fromLink(location.hash))
 }
+
+// A scope is supplied by the saved space/feature owner, never inferred from the visible task rows.
+type Scope = { kind: 'space' | 'feature'; space: string; folder: string; machine: string | null; feature?: string; name?: string }
+let batchScope: Scope | null = null
+const batchListeners = new Set<() => void>()
+export const openReview = (scope: Scope) => { batchScope = scope; for (const f of batchListeners) f() }
+const closeReview = () => { batchScope = null; for (const f of batchListeners) f() }
+const reviewTask = (t: Task) => ({ ...t, ref: t.ref ?? t.id.slice(t.id.lastIndexOf(':') + 1), folder: t.taskFolder, machine: t.reviewMachine ?? null, space: t.reviewSpace })
+export function ReviewReady({ place, scope = place.reviewScope }: { place: Place; scope?: Scope }) {
+  const tasks = useStore(s => s.snap?.tasks ?? [])
+  if (!scope) return null
+  const own = tasks.filter(t => !t.archived && inReviewScope(scope, reviewTask(t)))
+  const active = own.filter(t => t.status === 'ready').length, later = own.filter(t => t.status === 'deferred').length
+  if (!active && !later) return null
+  return <HeadButton onClick={() => openReview(scope)} aria-label={scope.kind === 'feature' ? `Review ready (${active}), this feature only, Deferred ${later}` : `Review ready (${active}), covers this whole space, Deferred ${later}`}>Review ready ({active}){later ? ` · Deferred ${later}` : ''}</HeadButton>
+}
+function BatchReview() {
+  const scope = useSyncExternalStore(f => { batchListeners.add(f); return () => batchListeners.delete(f) }, () => batchScope)
+  const individual = useOpen()
+  const [items, setItems] = useState<any[]>([]), [selected, select] = useState<Set<string>>(new Set())
+  const [results, setResults] = useState<any[]>([]), [busy, setBusy] = useState(false), [loading, setLoading] = useState(false)
+  const locked = useRef(false), generation = useRef(0)
+  const refresh = async () => {
+    if (!scope || locked.current) return
+    const gen = ++generation.current
+    setLoading(true); setResults([]); select(new Set()); setItems([])
+    const candidates = (getState().snap?.tasks ?? []).filter(t => !t.archived && ['ready', 'deferred'].includes(t.status) && inReviewScope(scope, reviewTask(t)))
+    const read = await Promise.all(candidates.map(async t => {
+      try { const shown = await act({ type: 'evidence', task: t.id }) as Shown; return { ...reviewTask(t), ...shown, webId: t.id, deferred: shown.status === 'deferred' } }
+      catch (e) { return { ...reviewTask(t), webId: t.id, deferred: t.status === 'deferred', error: String((e as Error)?.message ?? e) } }
+    }))
+    if (generation.current !== gen) return
+    setItems(read); setLoading(false)
+  }
+  useEffect(() => { void refresh(); return () => { generation.current++ } }, [scope])
+  if (!scope || individual) return null
+  const eligible = reviewEligible
+  const chosen = items.filter(x => selected.has(reviewKey(x)))
+  const accept = async () => {
+    if (locked.current || !chosen.length) return
+    locked.current = true; setBusy(true)
+    await reviewBatch(chosen, async (x: any, preceding: string[]) => {
+      setAccepting(x.webId, true)
+      try { return await act({ type: 'accept', task: x.webId, expect: x.evidence.decision_token, preceding }) }
+      finally { setAccepting(x.webId, false) }
+    }, setResults)
+    select(new Set()); setBusy(false); locked.current = false
+  }
+  return <Dialog title="Review ready" sub={scope.kind === 'feature' ? `Feature: ${scope.name ?? scope.feature} · this feature only` : `Space: ${scope.name ?? scope.space} · covers the whole space`} closer wide safe cancel="Close" foot={results.length ? <p role="status">{reviewResultsLine(results)}</p> : null} onCancel={() => { if (!busy) closeReview() }}
+    buttons={<Primary disabled={busy || loading || !chosen.length} onClick={accept}>{busy ? 'Accepting in order…' : reviewLabel(chosen)}</Primary>}>
+    <div className="flex max-h-[65dvh] flex-col gap-3 overflow-y-auto py-2">
+      <p className="text-sm text-fg2">Choose the exact tasks to accept. Each task is checked again in order. Waiting merges stay open until they finish.</p>
+      <div className="flex flex-wrap gap-3 text-sm">
+        <button disabled={busy || loading} onClick={() => select(activeReviewSelection(retryableReview(items, results)))}>Select all eligible active</button>
+        <button disabled={busy || loading} onClick={() => void refresh()}>Refresh review</button>
+      </div>
+      {loading ? <p>Reading evidence…</p> : null}
+      {['Active Ready', 'Deferred · include only by choice'].map((label, group) => <section key={label} className="flex flex-col gap-2 border-t border-line pt-3">
+        <h3 className="font-medium">{label} ({items.filter(x => x.deferred === !!group).length})</h3>
+        {items.filter(x => x.deferred === !!group).map(x => {
+          const key = reviewKey(x), result = results.find(r => r.key === key)
+          return <div key={key} className="flex items-start gap-3 rounded-lg border border-line p-3">
+            <input aria-label={`Select ${x.ref}`} type="checkbox" className="mt-1 size-4 shrink-0" disabled={busy || !eligible(x) || !!result && result.state !== 'refused'} checked={selected.has(key)} onChange={() => select(old => { const next = new Set(old); next.has(key) ? next.delete(key) : next.add(key); return next })} />
+            <div className="flex min-w-0 flex-1 flex-col gap-1 text-sm">
+              <strong>{x.ref} · {x.title ?? x.name}</strong>
+              <p>{A.acceptLabel(x.evidence)}{x.evidence?.merges ? ` → ${x.evidence.destination}` : ' · record completed output'}</p>
+              <p className="text-fg2">{x.evidence?.checks?.text ?? x.error}</p>
+              {x.evidence?.decision_error ? <p className="text-need-fg">{x.evidence.decision_error}</p> : null}
+              {result ? <p role="status" className={result.state === 'refused' ? 'text-need-fg' : 'text-fg'}>{result.state === 'refused' ? 'Refused: ' : result.state === 'waiting' ? 'Waiting: ' : 'Success: '}{result.text}</p> : null}
+              <div className="flex flex-wrap gap-3"><button disabled={busy} onClick={() => openAccept(x.webId)}>Evidence & proof</button>
+                {x.deferred ? <button disabled={busy} onClick={async () => { try { await act({ type: 'later', task: x.webId, restore: true }); void refresh() } catch (e) { setResults(old => [...old.filter(r => r.key !== key), { key, state: 'refused', text: String((e as Error)?.message ?? e) }]) } }}>Restore to review</button> : null}</div>
+            </div>
+          </div>
+        })}
+      </section>)}
+    </div>
+  </Dialog>
+}
+
+export function AcceptCard() { return <><BatchReview /><IndividualAcceptCard /></> }

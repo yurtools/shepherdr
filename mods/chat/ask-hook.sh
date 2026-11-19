@@ -52,7 +52,7 @@ id="$t.$(date +%s).$$"
 req="$d/req/$id.json"
 ans="$d/ans/$id.json"
 end="$d/end/$id"
-done_() { rm -f "$req" "$req.tmp" "$ans" "${req%.json}.context"; exit 0; }
+done_() { rm -f "$req" "$req.tmp" "$ans" "${req%.json}.context" "${req%.json}.status" "$d/../approvals/pending/$id.json"; exit 0; }
 # Over without a decision from here: why, for the card's quiet line, then go.
 ended() { printf '%s\n' "$1" > "$end.tmp" 2>/dev/null && mv "$end.tmp" "$end" 2>/dev/null; done_; }
 # Claude stops the hook itself when its prompt is refused or interrupted in the terminal.
@@ -66,15 +66,11 @@ cat > "$req.tmp" 2>/dev/null && mv "$req.tmp" "$req" 2>/dev/null || done_
 policy="$(dirname "$0")/approval-policy.py"
 policy_check() {
   [ -f "$policy" ] || return
-  result=$(python3 "$policy" evaluate --request "$req" --terminal "$t" 2>/dev/null) || return
-  action=$(printf '%s' "$result" | jq -r '.action // "wait"' 2>/dev/null)
-  case "$action" in
-    allow|deny)
-      printf '%s' "$result" | jq -c '.response'
-      printf '%s' "$result" | jq -r '.reason // "Approval policy decision"' > "$end.tmp" && mv "$end.tmp" "$end"
-      done_ ;;
-    native) ended "Sent to Codex Auto-review" ;;
-  esac
+  # The helper publishes request-bound status and claims an answer exclusively. A person's
+  # concurrent answer wins unchanged, including against a native Auto-review handoff.
+  python3 "$policy" evaluate --request "$req" --terminal "$t" --respond >/dev/null 2>&1 ||
+    python3 "$policy" status-error --request "$req" >/dev/null 2>&1 || rm -f "${req%.json}.status"
+  if [ -f "$ans" ]; then cat "$ans" 2>/dev/null; done_; fi
 }
 policy_check
 

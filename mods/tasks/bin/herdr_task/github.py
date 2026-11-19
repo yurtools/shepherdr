@@ -222,15 +222,18 @@ def pr_adopt(task, repo):
     return task.get("pr") if found else None
 
 
-def pr_for_branch(task, repo):
+def pr_for_branch(task, repo, strict=False):
     """The open pull request from this repo for the task's branch into its base, whatever its head
     (opened by its agent, ready never knowing: #988), as gh lists it, or None."""
     ok, out, _ = gh("pr", "list", "--repo", repo, "--head", task["branch"], "--state", "open",
                     "--json", "number,url,isCrossRepository,baseRefName,headRefOid")
     try:
+        if strict and (not ok or not isinstance(json.loads(out), list)):
+            raise Fail("Could not read the branch's pull requests. Refresh before accepting.")
         return next((p for p in json.loads(out) if not p.get("isCrossRepository")
                      and p.get("baseRefName") == (task.get("base") or "main")), None) if ok and out else None
     except (ValueError, TypeError, AttributeError):
+        if strict: raise Fail("Could not read the branch's pull requests. Refresh before accepting.")
         return None
 
 
@@ -309,7 +312,7 @@ BAD = {"FAILURE", "ERROR", "CANCELLED", "TIMED_OUT", "ACTION_REQUIRED", "STARTUP
 PENDING = {"QUEUED", "IN_PROGRESS", "PENDING", "WAITING", "REQUESTED", "EXPECTED"}
 
 
-VIEW = "state,mergeable,headRefOid,mergeCommit,reviewDecision,mergeStateStatus"
+VIEW = "state,mergeable,baseRefName,baseRefOid,headRefOid,mergeCommit,reviewDecision,mergeStateStatus"
 # SHEP-179: a token that may read a pull request but not its checks (a fine-grained one without Checks: read, as
 # the exe.dev GitHub integration's) gets GitHub's "Resource not accessible" for them: a permission, never a blip.
 DENIED = ("resource not accessible", "http 403", "must have", "not have permission", "insufficient scope")

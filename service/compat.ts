@@ -16,7 +16,7 @@ const { senderName, briefLabel, firstUser, firstKeys, newsTimeline, resolveArtif
 import { mentionedIn } from "../core/send.js";
 import * as MEc from "../core/mentions.js";
 import * as SCc from "../core/screens.js";
-import { codexChoice } from "../core/asks.js";
+import { codexChoice, permissionStatus } from "../core/asks.js";
 const { SCREEN } = SCc as any;
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -40,7 +40,7 @@ const { ago } = T as any;
 export type Row = any;
 export type Space = any;
 
-const SECTION: Record<string, TaskStatus> = { needs: "need", working: "work", merging: "merging", ready: "ready", queued: "queued", scheduled: "scheduled", todo: "todo", done: "done" };
+const SECTION: Record<string, TaskStatus> = { needs: "need", working: "work", merging: "merging", ready: "ready", deferred: "deferred", queued: "queued", scheduled: "scheduled", todo: "todo", done: "done" };
 const AGENT: Record<string, Status> = { blocked: "need", working: "work", done: "idle", idle: "idle" };
 
 // Autopilot's words and picks: core/autopilot.js, the window's Settings › Autopilot's too
@@ -55,7 +55,7 @@ function headerPilot(a: any) {
 
 
 export const placeKey = (spaceId: string) => `p:${spaceId.replace("/", ":")}`;
-export const taskId = (r: Row) => (r.machine ? `${r.machine}:${r.ref}` : r.ref);
+export const taskId = (r: Row) => `${r.machine ? `${r.machine}:` : ""}${r.duplicate ? `${encodeURIComponent(r.folder)}:` : ""}${r.ref}`;
 
 /** What a space's tasks give its Assistant's news lines (newsTimeline: their status, ready and done): a chat is only
  *  read again when its conversation moves, so a task accepted or done since shows by this changing (SHEP-29: a
@@ -282,7 +282,7 @@ export class Compat {
     const detail = w.detail ? `${fence}text\n${w.detail}\n${fence}${w.cut ? cut : ""}` : undefined;
     return w.kind === "plan"
       ? { id: a.id, title: w.title, kind: "Plan", to: key, plan: `${w.detail ?? ""}${w.cut ? cut : ""}`, choices: [{ label: "Approve" }, { label: "Keep planning" }], noteRequiredFor: 1 }
-      : { id: a.id, title: w.title, kind: "Question", to: key, ...(detail ? { plan: detail } : {}), choices: [{ label: "Allow" }, { label: "Deny" }] };
+      : { id: a.id, title: w.title, kind: "Question", to: key, approval: a.approval ?? permissionStatus(a.req, undefined), ...(detail ? { plan: detail } : {}), choices: [{ label: "Allow" }, { label: "Deny" }] };
   }
   last: Snapshot | null = null;
   /** chat key -> the files its messages show (a chat's images): the only ones /api/file serves for it */
@@ -336,7 +336,10 @@ export class Compat {
           chats.set(`t:${t.addr}`, t.addr);
           const k: any = (this as any).terminalsOf?.(t.addr), cli = kindOfTerm(k), agent = agentIn(k);
           const prog = cli ? CLI_NAMES[cli] ?? cli : agent?.name ?? null;
-          return { id: t.id, name: (MNc as any).tabName(named(t.raw) ? t.raw : "", prog), named: named(t.raw), term: `t:${t.addr}`,
+          const reviewScope = k?.labels?.["herdr.role"] === "feature" && k.labels["herdr.feature"] ? { kind: "feature" as const,
+            feature: k.labels["herdr.feature"], space: k.labels["herdr.coordinator.space"] ?? k.labels["herdr.space"] ?? s.id,
+            machine: s.machine ?? null, folder: s.folder, name: t.raw || "Feature" } : undefined;
+          return { reviewScope, id: t.id, name: (MNc as any).tabName(named(t.raw) ? t.raw : "", prog), named: named(t.raw), term: `t:${t.addr}`,
             ...(cli ? { cli } : {}), ...(agent || cli ? { agent: agent?.key ?? cli } : {}), state: stateOf(k), where: shortHome(k?.foreground?.cwd ?? k?.cwd),
             // what its pane header calls it: the agent, else the program in front, else its title
             prog: prog ?? (k?.foreground?.name || k?.title || "Shell") };
@@ -357,11 +360,15 @@ export class Compat {
       // machine's too, as its own window shows it); the space's folder until it has one
       const live = ak?.foreground?.cwd ?? ak?.cwd;
       const cwd = live ? (s.machine ? SPc.tilde(live) : shortHome(live)) : null;
-      return { id: s.id, name, ...(!s.name || s.name === "~" ? { unnamed: true } : {}), ...(s.icon ? { emoji: s.icon } : {}),...(s.git ? { git: s.git.linked ? "linked" : "main", repo: s.git.repo, gitName: s.git.name, branch: s.git.branch ?? null } : {}), ...(s.git?.linked ? { worktree: true } : {}), machine: s.machine ?? host, level: 0, status: AGENT[s.assistantStatus] ?? "idle", mode: s.autopilot ? "autopilot" : "regular", chat: key, header, where, ...(cwd ? { cwd } : {}), assistantTab, ...(s.pilot ? { pilot: headerPilot(s.pilot) } : {}),store: artifactStore(s as any), ...((s as any).changedAt ? { changedAt: (s as any).changedAt } : {}),...(tabs.length ? { tabs } : {}) };
+      return { id: s.id, reviewScope: { kind: "space" as const, space: s.id, folder: s.folder, machine: s.machine ?? null, name }, name, ...(!s.name || s.name === "~" ? { unnamed: true } : {}), ...(s.icon ? { emoji: s.icon } : {}),...(s.git ? { git: s.git.linked ? "linked" : "main", repo: s.git.repo, gitName: s.git.name, branch: s.git.branch ?? null } : {}), ...(s.git?.linked ? { worktree: true } : {}), machine: s.machine ?? host, level: 0, status: AGENT[s.assistantStatus] ?? "idle", mode: s.autopilot ? "autopilot" : "regular", chat: key, header, where, ...(cwd ? { cwd } : {}), assistantTab, ...(s.pilot ? { pilot: headerPilot(s.pilot) } : {}),store: artifactStore(s as any), ...((s as any).changedAt ? { changedAt: (s as any).changedAt } : {}),...(tabs.length ? { tabs } : {}) };
     });
 
     // every agent's own helper agents (SHEP-54): their chats open by t:<address>, as a tab's
     for (const k of (this as any).terminalsAll?.() ?? []) if (isHelper(k)) chats.set(`t:${k.address}`, k.address);
+    // Qualify colliding refs by folder, and refuse the ambiguous legacy identity.
+    const refs = new Map<string, number>();
+    for (const r of rows) { const key = `${r.machine ?? ""}:${r.ref}`; refs.set(key, (refs.get(key) ?? 0) + 1); }
+    for (const r of rows) r.duplicate = (refs.get(`${r.machine ?? ""}:${r.ref}`) ?? 0) > 1;
     this.tasks = new Map(rows.map((r) => [taskId(r), { ref: r.ref, folder: r.folder, machine: r.machine ?? null, key: `${r.slug}#${r.id}`, pin: r.key,
       where: { folder: r.worktree, machine: r.machine ?? null, base: r.base, start: r.start, branch: r.branch, pr: r.pr } }]));
     // one older than 10 minutes was left by a quit (as the window reads it)
@@ -372,7 +379,7 @@ export class Compat {
       if (r.worker) chats.set(`${id}/worker`, r.worker);
       else if (r.lastLog) chats.set(`${id}/worker`, `log:${r.machine ?? ""}|${r.lastLog.kind}|${r.lastLog.path}`);
       const t: Task = {
-        id, name: r.title, status: SECTION[r.section] ?? "todo", place: placeOf(r), listName: placeName(r), age: r.started ? ago(r.started, false) : "",
+        id, ref: r.ref, feature: r.feature ?? undefined, reviewMachine: r.machine ?? null, reviewSpace: r.space ?? undefined, name: r.title, status: SECTION[r.section] ?? "todo", place: placeOf(r), listName: placeName(r), age: r.started ? ago(r.started, false) : "",
         state: r.section, on: r.machine ?? host, created: "", ...(r.folder ? { taskFolder: r.folder } : {}),
         // its latest news (ms), as Jump orders tasks newest first
         at: Math.max(0, ...[r.done_at, r.ready_at, r.started].filter((x: unknown): x is number => typeof x === "number")),
@@ -415,9 +422,11 @@ export class Compat {
 
     // hook asks waiting on the person: each a Need with its card
     const keyOf = new Map([...chats].map(([k, a]) => [a, k]));
+    const processing = new Set<string>();
     for (const a of this.asks?.open.values() ?? []) {
       const key = keyOf.get(a.terminal);
       if (!key) continue;
+      if (a.approval?.attention === false) { processing.add(key); continue; }
       const task = key.endsWith("/worker") ? key.slice(0, -7) : undefined;
       const place = task ? tasks.find((x) => x.id === task)?.place ?? "" : places.find((p) => p.chat === key)?.id ?? "";
       needs.push({ id: a.id, chat: key, place, ...(task ? { task } : {}), at: a.at, question: this.question(a, key) });
@@ -434,7 +443,7 @@ export class Compat {
     // 'attention' is an agent waiting with no card: one whose chat has a card (its question, a secret) needs you once,
     // not twice (one toast, one alert, one in the counts)
     const carded = new Set(needs.filter((x) => x.id !== "attention").map((x) => x.chat));
-    for (let i = needs.length - 1; i >= 0; i--) if (needs[i].id === "attention" && carded.has(needs[i].chat)) needs.splice(i, 1);
+    for (let i = needs.length - 1; i >= 0; i--) if (needs[i].id === "attention" && (carded.has(needs[i].chat) || processing.has(needs[i].chat))) needs.splice(i, 1);
 
     const pinned = spaces.filter((s) => s.pinned).map((s) => s.id);
     const sections: Section[] = [

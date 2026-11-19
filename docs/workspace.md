@@ -76,6 +76,33 @@ folder. Native Feature creation currently supports local spaces. Existing remote
 Assistant and task behavior is retained. Ordinary Sessions history still indexes
 Codex logs; named feature records also retain Claude sessions captured by a live view.
 
+## Review completed work
+
+**Review** opens a task’s evidence without approving it. The final button says
+**Accept & merge** when its branch still needs merging, or **Mark done** when the
+output only needs completion recorded. Both use the same acceptance checks; a
+merge must succeed before its task finishes. The card names the merge destination.
+
+**Later** keeps the task Ready and unaccepted, with its branch, pull request,
+proof and dependencies intact. It moves to **Deferred** and leaves the active
+green counts. Review it there, or choose **Restore to review**. Reloading and
+unrelated updates preserve Later. A new Ready cycle after further work brings it
+back; questions and errors still surface.
+
+**Review ready (N)** opens a list in the owning Assistant’s conversation. A Feature
+Assistant covers only its saved feature; the space Assistant’s list explicitly
+covers the whole space. Ordinary agent chats have no invented review scope.
+Select individual rows or **Select all eligible active**; Deferred rows need an
+explicit selection. Each row links to its evidence and proof. The final button
+states the chosen consequences, such as **Merge 2 and complete 1**.
+
+The selection stays fixed while tasks are checked and accepted one at a time.
+Changed work or destinations require a fresh review. Base advances caused by
+previously selected successful merges can continue, with fresh checks for the
+next task. Results distinguish completed work, waiting merges and refusals;
+refresh the review to inspect and retry remaining work. Retrying a recorded
+acceptance does not accept it twice.
+
 ## Browser tabs and web-chat shortcuts
 
 Use **+ → New browser tab…** for an editable URL, or choose a configured web-chat

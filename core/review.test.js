@@ -43,3 +43,14 @@ test('batch freezes selection, runs sequentially, reports partial results and pa
   expect(reviewLabel(items.slice(0, 1))).toBe('Merge 1 task');
   expect(reviewLabel(items.slice(2, 3))).toBe('Complete 1 task');
 });
+
+test('select-all excludes Deferred, failed evidence, and already accepted results', async () => {
+  const { activeReviewSelection, retryableReview, reviewResultsLine } = await import('./review.js');
+  const items = [1, 2, 3, 4].map(n => ({ ref: `APP-${n}`, folder: '/a', status: n === 2 ? 'deferred' : 'ready', deferred: n === 2,
+    evidence: { decision_token: `t${n}`, checks: { state: n === 3 ? 'failed' : 'passed' } } }));
+  expect([...activeReviewSelection(items)]).toEqual([reviewKey(items[0]), reviewKey(items[3])]);
+  const results = [{ key: reviewKey(items[0]), state: 'success' }, { key: reviewKey(items[3]), state: 'refused' }];
+  expect([...activeReviewSelection(retryableReview(items, results))]).toEqual([reviewKey(items[3])]);
+  expect(reviewResultsLine(results)).toBe('1 completed · 0 waiting · 1 refused');
+  expect(reviewLabel([])).toBe('Choose tasks');
+});

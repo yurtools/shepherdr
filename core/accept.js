@@ -107,4 +107,4 @@ export function readable(text) {
   return items.length < 2 ? codify(s) : items.map((x) => `- ${codify(x)}`).join("\n");
 }
 
-export const consequence = (e) => e?.merges ? `Approves merging this work into ${e.destination ?? "its base branch"}. Completion follows the protected merge checks.` : "Records completion of this output. The protected acceptance checks still run.";
+export const consequence = (e) => e?.merges ? `Approves merging this work into ${e.destination ?? "its base branch"}. It stays unfinished until the merge succeeds.` : "Records completion of this output. No merge is needed.";

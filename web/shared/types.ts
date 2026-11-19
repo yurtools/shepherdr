@@ -1240,6 +1240,9 @@ export interface Snapshot {
 }
 
 export type Action =
+  | { type: 'evidence'; task: string }
+  | { type: 'accept'; task: string; expect?: string; preceding?: string[] }
+  | { type: 'later'; task: string; restore?: boolean }
   | { type: 'plugin'; plugin: string; method: string; input?: unknown; cid: string }
   /** read every machine's plan limits again, unless they were read a moment ago */
   | { type: 'limits-check' }

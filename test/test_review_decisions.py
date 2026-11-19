@@ -204,3 +204,17 @@ class ReviewDecisions(unittest.TestCase):
         shown = self.run_cmd(self.commands.cmd_show, id=str(n), evidence=True)
         self.assertIn('decision_token', shown['evidence'])
         with open(path, 'rb') as f: self.assertEqual(f.read(), before)
+
+    def test_incomplete_worktree_evidence_never_offers_unprotected_completion(self):
+        self.no_live(); n = self.ready(mode='worktree', branch='unrecorded')
+        evidence = self.evidence(n)
+        self.assertTrue(evidence['merges']); self.assertIn('not recorded', evidence['decision_error'])
+        with self.assertRaisesRegex(self.Fail, 'not recorded'): self.accept(n, evidence['decision_token'])
+        self.assertEqual(self.task(n)['state'], 'ready'); self.assertNotIn('done_at', self.task(n))
+
+    def test_revised_report_ready_cycle_resurfaces_without_a_git_head(self):
+        n = self.ready(mode='here'); self.run_cmd(self.commands.cmd_later, id=str(n))
+        with self.store_mod.Store(self.store_mod.locate(self.folder)) as s:
+            t = s.find(n); t['summary'] = 'A revised completed report'; self.commands.finalize(s, t)
+        self.assertFalse(decisions.deferred(self.task(n)))
+        self.assertEqual(self.task(n)['state'], 'ready')

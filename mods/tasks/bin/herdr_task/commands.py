@@ -1121,7 +1121,13 @@ def merge_now(s, t, expected=None, preceding=()):
         # goes below, once GitHub says it merged (drop_branch()).
         if expected:
             from .decisions import validate
-            validate(s, t, expected, preceding)
+            latest = validate(s, t, expected, preceding).get("current_pr")
+            if latest:
+                problem = pr_problem(latest)
+                if problem: return problem
+                if pr_pending(latest): return CHECKS_RUNNING
+                if needs_approval(latest): return WAITS_APPROVAL
+                v = latest
             from .agents import task_status
             if task_status(t, [detail(k) for k in live_agents(s.key(t))])[0] not in ("ready", "deferred"):
                 return "The worker resumed; refresh its review."

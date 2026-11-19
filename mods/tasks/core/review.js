@@ -11,6 +11,7 @@ export function inReviewScope(scope, t) {
 }
 export const reviewKey = (t) => JSON.stringify([machine(t), t.folder, t.ref]);
 export const reviewLabel = (items) => {
+  if (!items.length) return "Choose tasks";
   const merges = items.filter(x => x.evidence?.merges).length, completes = items.length - merges;
   return merges && completes ? `Merge ${merges} and complete ${completes}` : merges ? `Merge ${merges} ${merges === 1 ? 'task' : 'tasks'}` : `Complete ${completes} ${completes === 1 ? 'task' : 'tasks'}`;
 };
@@ -34,3 +35,8 @@ export async function reviewBatch(selected, accept, report = (_results) => {}) {
 // Both clients offer the same checked selections; deferred rows are never selected by Select all.
 export const reviewEligible = (x) => ['ready', 'deferred'].includes(x.status) && !x.error && !!x.evidence?.decision_token && !x.evidence.decision_error && !['failed', 'unknown'].includes(x.evidence?.checks?.state);
 export const activeReviewSelection = (items) => new Set(items.filter(x => !x.deferred && reviewEligible(x)).map(reviewKey));
+
+export const reviewResultsLine = (results) => [
+  ["success", "completed"], ["waiting", "waiting"], ["refused", "refused"],
+].map(([state, word]) => `${results.filter(r => r.state === state).length} ${word}`).join(" · ");
+export const retryableReview = (items, results) => items.filter(x => !results.some(r => r.key === reviewKey(x) && r.state !== "refused"));

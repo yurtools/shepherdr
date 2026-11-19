@@ -15,7 +15,7 @@ import { Markdown } from '@plugins/chat/markdown.tsx'
 import { ArtifactFrame } from '@plugins/artifacts/client.tsx'
 // the card's words, the summary's cut and the details as bullets: the window's own (core/accept.js)
 import * as A from '@core/accept.js'
-import { inReviewScope, reviewBatch, reviewKey, reviewLabel, reviewEligible, activeReviewSelection } from '@core/review.js'
+import { inReviewScope, reviewBatch, reviewKey, reviewLabel, reviewEligible, activeReviewSelection, reviewResultsLine, retryableReview } from '@core/review.js'
 import type { Place, Task } from '@shared/types.ts'
 import { HeadButton } from '../ui.tsx'
 
@@ -145,7 +145,7 @@ function IndividualAcceptCard() {
     setT(null); setError(null); setBusy(false); setDetails(false)
     if (!task) return
     let gone = false
-    act({ type: 'evidence', task } as never).then((x) => !gone && setT(x as Shown), (e) => !gone && setError(String(e?.message ?? e)))
+    act({ type: 'evidence', task }).then((x) => !gone && setT(x as Shown), (e) => !gone && setError(String(e?.message ?? e)))
     return () => { gone = true }
   }, [task])
 
@@ -160,7 +160,7 @@ function IndividualAcceptCard() {
     locked.current = true
     setBusy(true); setError(null); setAccepting(task, true)
     try {
-      await act({ type: 'accept', task, expect: e.decision_token } as never)
+      await act({ type: 'accept', task, expect: e.decision_token })
       // done: the next snapshot moves it out of Ready; until then its row still says Accepting…
       setTimeout(() => setAccepting(task, false), 15000)
       close()
@@ -168,7 +168,7 @@ function IndividualAcceptCard() {
       setAccepting(task, false)
       setError(String((err as Error)?.message ?? err))
       // accepted (or changed) from elsewhere meanwhile: show where it is now, not the refusal
-      const now = (await act({ type: 'evidence', task } as never).catch(() => null)) as Shown | null
+      const now = (await act({ type: 'evidence', task }).catch(() => null)) as Shown | null
       if (now && now.state !== 'ready') { setT(now); setError(null) }
       setBusy(false)
     } finally { locked.current = false }
@@ -177,7 +177,7 @@ function IndividualAcceptCard() {
   const later = async (restore = false) => {
     if (locked.current || busy) return
     locked.current = true; setBusy(true)
-    try { await act({ type: 'later', task, restore } as never); close() }
+    try { await act({ type: 'later', task, restore }); close() }
     catch (err) { setError(String((err as Error)?.message ?? err)) }
     finally { locked.current = false; setBusy(false) }
   }
@@ -297,7 +297,7 @@ function BatchReview() {
     setLoading(true); setResults([]); select(new Set()); setItems([])
     const candidates = (getState().snap?.tasks ?? []).filter(t => !t.archived && ['ready', 'deferred'].includes(t.status) && inReviewScope(scope, reviewTask(t)))
     const read = await Promise.all(candidates.map(async t => {
-      try { const shown = await act({ type: 'evidence', task: t.id } as never) as Shown; return { ...reviewTask(t), ...shown, webId: t.id, deferred: shown.status === 'deferred' } }
+      try { const shown = await act({ type: 'evidence', task: t.id }) as Shown; return { ...reviewTask(t), ...shown, webId: t.id, deferred: shown.status === 'deferred' } }
       catch (e) { return { ...reviewTask(t), webId: t.id, deferred: t.status === 'deferred', error: String((e as Error)?.message ?? e) } }
     }))
     if (generation.current !== gen) return
@@ -312,17 +312,17 @@ function BatchReview() {
     locked.current = true; setBusy(true)
     await reviewBatch(chosen, async (x: any, preceding: string[]) => {
       setAccepting(x.webId, true)
-      try { return await act({ type: 'accept', task: x.webId, expect: x.evidence.decision_token, preceding } as never) }
+      try { return await act({ type: 'accept', task: x.webId, expect: x.evidence.decision_token, preceding }) }
       finally { setAccepting(x.webId, false) }
     }, setResults)
     select(new Set()); setBusy(false); locked.current = false
   }
-  return <Dialog title="Review ready" sub={scope.kind === 'feature' ? `Feature: ${scope.name ?? scope.feature} · this feature only` : `Space: ${scope.name ?? scope.space} · covers the whole space`} closer wide safe cancel="Close" onCancel={() => { if (!busy) closeReview() }}
+  return <Dialog title="Review ready" sub={scope.kind === 'feature' ? `Feature: ${scope.name ?? scope.feature} · this feature only` : `Space: ${scope.name ?? scope.space} · covers the whole space`} closer wide safe cancel="Close" foot={results.length ? <p role="status">{reviewResultsLine(results)}</p> : null} onCancel={() => { if (!busy) closeReview() }}
     buttons={<Primary disabled={busy || loading || !chosen.length} onClick={accept}>{busy ? 'Accepting in order…' : reviewLabel(chosen)}</Primary>}>
     <div className="flex max-h-[65dvh] flex-col gap-3 overflow-y-auto py-2">
       <p className="text-sm text-fg2">Choose the exact tasks to accept. Each task is checked again in order. Waiting merges stay open until they finish.</p>
       <div className="flex flex-wrap gap-3 text-sm">
-        <button disabled={busy || loading} onClick={() => select(activeReviewSelection(items))}>Select all eligible active</button>
+        <button disabled={busy || loading} onClick={() => select(activeReviewSelection(retryableReview(items, results)))}>Select all eligible active</button>
         <button disabled={busy || loading} onClick={() => void refresh()}>Refresh review</button>
       </div>
       {loading ? <p>Reading evidence…</p> : null}
@@ -339,7 +339,7 @@ function BatchReview() {
               {x.evidence?.decision_error ? <p className="text-need-fg">{x.evidence.decision_error}</p> : null}
               {result ? <p role="status" className={result.state === 'refused' ? 'text-need-fg' : 'text-fg'}>{result.state === 'refused' ? 'Refused: ' : result.state === 'waiting' ? 'Waiting: ' : 'Success: '}{result.text}</p> : null}
               <div className="flex flex-wrap gap-3"><button disabled={busy} onClick={() => openAccept(x.webId)}>Evidence & proof</button>
-                {x.deferred ? <button disabled={busy} onClick={async () => { try { await act({ type: 'later', task: x.webId, restore: true } as never); void refresh() } catch (e) { setResults(old => [...old.filter(r => r.key !== key), { key, state: 'refused', text: String((e as Error)?.message ?? e) }]) } }}>Restore to review</button> : null}</div>
+                {x.deferred ? <button disabled={busy} onClick={async () => { try { await act({ type: 'later', task: x.webId, restore: true }); void refresh() } catch (e) { setResults(old => [...old.filter(r => r.key !== key), { key, state: 'refused', text: String((e as Error)?.message ?? e) }]) } }}>Restore to review</button> : null}</div>
             </div>
           </div>
         })}

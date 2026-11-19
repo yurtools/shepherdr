@@ -862,6 +862,8 @@ function PhoneHome({ snap }: { snap: Snapshot }) {
   const keyboard = useUI((u) => u.keyboard)
   // the space's other agent tab picked in ⋯ and shown as its chat
   const tabChat = useUI((u) => (u.term?.startsWith('t:') && u.tabView?.[u.term] === 'chat' ? u.term : null))
+  const selectedTerm = useUI(u => u.term)
+  const selectedTab = place.tabs?.find(t => t.term === selectedTerm)
   const Chat = registry.views.chat
   const Tasks = registry.views.tasks
   const TasksMenu = registry.views.tasksMenu
@@ -888,6 +890,7 @@ function PhoneHome({ snap }: { snap: Snapshot }) {
           )
         }
       />
+      {tab === 'chat' && place.id && (!selectedTab || selectedTab.reviewScope) ? <div className="flex shrink-0 px-4 py-1"><ReviewReady place={place} scope={selectedTab?.reviewScope ?? place.reviewScope} /></div> : null}
       {tab === 'chat' && !place.id ? (
         <NoSpaces />
       ) : tab === 'chat' ? (

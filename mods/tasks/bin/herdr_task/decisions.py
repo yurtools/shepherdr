@@ -41,10 +41,13 @@ def _decision(s, t):
         reason = 'The pull request destination changed. Ask the worker to update the task.'
     if remote and tip and remote.get('headRefOid') != tip:
         reason = 'The pull request and local branch differ. Ask the worker to push and say ready again.'
+    if t.get('mode') == 'worktree' and not wt:
+        merges = True; data['merges'] = True
+        reason = 'The task worktree is not recorded. Ask the worker to restore its task evidence.'
     if dirty: reason = 'The worker has uncommitted changes. Ask it to finish and say ready again.'
     if wt and t.get('head') and tip != t['head']: reason = 'The task branch changed after Ready. Ask the worker to say ready again.'
     token = hashlib.sha256(json.dumps(data, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
-    return {'merges': merges, 'destination': base if merges else None, 'decision_token': token, 'decision_error': reason, 'decision_basis': basis(data)}, data
+    return {'merges': merges, 'destination': base if merges else None, 'decision_token': token, 'decision_error': reason, 'decision_basis': basis(data), 'current_pr': remote}, data
 
 
 def basis(data):
@@ -53,7 +56,9 @@ def basis(data):
 
 
 def decision(s, t):
-    return _decision(s, t)[0]
+    out = _decision(s, t)[0]
+    out.pop('current_pr', None)
+    return out
 
 
 def validate(s, t, expected, preceding=()):

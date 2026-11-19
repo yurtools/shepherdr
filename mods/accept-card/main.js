@@ -18,7 +18,7 @@ import { note } from "./usage.js";
 import { dialogFooter, green, red, amber, H, RADIUS, TEXT } from "./ui.js";
 // The card's words, the summary cut and the details as bullets: core/accept.js, shared with the web app's card.
 import { ACCEPT, acceptLabel, consequence, words, readable, commitsLine, filesLine, moreLine, proofTitle, whereNow } from "./core/accept.js";
-import { inReviewScope, reviewBatch, reviewKey, reviewLabel, reviewEligible, activeReviewSelection } from "./core/review.js";
+import { inReviewScope, reviewBatch, reviewKey, reviewLabel, reviewEligible, activeReviewSelection, reviewResultsLine, retryableReview } from "./core/review.js";
 import { button } from "./ui.js";
 import { settle } from "./core/pending.js";
 
@@ -257,7 +257,7 @@ export default class AcceptCard extends View {
       .child(div().child(this.scope.kind === "feature" ? `Feature: ${this.scope.name ?? this.scope.feature} · this feature only` : `Space: ${this.scope.name ?? this.scope.space} · covers the whole space`))
       .child(div().text_color(t.muted).child("Choose exact tasks. Each is checked again in order; waiting merges stay open."))
       .child(h_flex().gap(10)
-        .child(button("review-all", "Select all eligible active", { disabled: this.busy || this.loading, onClick: (_e, cx) => { this.selected = activeReviewSelection(this.items); cx.notify(); } }))
+        .child(button("review-all", "Select all eligible active", { disabled: this.busy || this.loading, onClick: (_e, cx) => { this.selected = activeReviewSelection(retryableReview(this.items, this.results)); cx.notify(); } }))
         .child(button("review-refresh", "Refresh review", { disabled: this.busy || this.loading, onClick: (_e, cx) => this.readBatch(cx) })))
       .child(v_flex().flex_1().min_h(0).overflow_y_scrollbar().gap(10)
         .when(Boolean(this.loading), el => el.child(div().child("Reading evidence…")))
@@ -265,6 +265,7 @@ export default class AcceptCard extends View {
           .child(div().font_medium().child(`${later ? "Deferred · include only by choice" : "Active Ready"} (${this.items.filter(x => !!x.deferred === later).length})`))
           .children(this.items.filter(x => !!x.deferred === later).map(row)))))
       .when(Boolean(this.error), el => el.child(div().text_color(red()).child(this.error)))
+      .when(this.results.length > 0, el => el.child(div().child(reviewResultsLine(this.results))))
       .child(dialogFooter({ cancelLabel: "Close", onCancel: () => { if (!this.busy) this.close(); }, primary: { label: this.busy ? "Accepting in order…" : reviewLabel(chosen), disabled: this.busy || !chosen.length, onClick: (_e, cx) => this.acceptBatch(cx) } }));
   }
 

@@ -435,6 +435,60 @@ else:sys.exit(1)
   history=A.history_rows();self.assertEqual(len(history),1);self.assertEqual(history[0]['source'],'assistant')
   ends=list((A.app_home()/'data/chat-asks/end').glob('worker.*'))
   self.assertEqual(len(ends),1);self.assertIn('Allowed by Assistant',ends[0].read_text())
+class RememberedReviewFallback(unittest.TestCase):
+ setUp=ApprovalPolicy.setUp
+ mode=ApprovalPolicy.mode
+ def test_remembering_one_action_preserves_inherited_assistant_review_for_an_unmatched_script(self):
+  self.mode('assistant');A.grant(self.path)
+  script={**self.req,'tool_input':{'command':"python3 - <<'PY'\nprint('inert fixture')\nPY"}};A.write(self.path,script)
+  with mock.patch.object(A.subprocess,'run',return_value=mock.Mock(returncode=0,stdout='{}')) as send:A.evaluate(self.path)
+  self.assertEqual(A.read(self.path.with_suffix('.status'))['state'],'assistant')
+  self.assertEqual(send.call_count,1)
+ def test_role_and_space_assistant_defaults_survive_a_bounded_rule_activation(self):
+  A.write(self.base/'settings.json',{'everywhere':{'approvals':{'mode':'manual'}},'spaces':{'space':{'approvals':{role:'assistant' for role in ('coordinator','feature','worker','reviewer')}}}})
+  A.grant(self.path);ctx=A.request_context(self.path)[1]
+  for role in ('coordinator','feature','worker','reviewer'):
+   self.assertEqual(A.settings({**ctx,'role':role})['mode'],'assistant')
+  self.assertEqual(A.evaluate(self.path)['action'],'allow')
+  with A.locked():activation=A.read(A.store()/'overrides.json')[A.session_key(ctx)]
+  self.assertEqual(activation['source'],'remembered-rule');self.assertLessEqual(activation['expires'],time.time()+86400)
+ def test_explicit_and_unmarked_session_modes_are_not_reinterpreted_or_overwritten_by_grants(self):
+  self.mode('assistant');ctx=A.request_context(self.path)[1];key=A.session_key(ctx)
+  for source in (None,'user'):
+   for mode in A.MODES:
+    with self.subTest(source=source,mode=mode):
+     row={'mode':mode,'expires':time.time()+3600,'preserved':'opaque display-independent metadata'}
+     if source:row['source']=source
+     A.write(A.store()/'overrides.json',{key:row})
+     with A.locked():before=A.read(A.store()/'overrides.json')
+     A.grant(self.path)
+     self.assertEqual(A.settings(ctx)['mode'],mode)
+     with A.locked():self.assertEqual(A.read(A.store()/'overrides.json'),before)
+ def test_explicit_task_modes_win_and_inherited_manual_grants_still_work(self):
+  self.mode('assistant');A.grant(self.path);ctx=A.request_context(self.path)[1]
+  for mode in ('manual','rules','assistant','codex-review'):
+   self.assertEqual(A.settings({**ctx,'task_mode':mode})['mode'],mode)
+  self.mode('manual');self.assertEqual(A.settings(ctx)['mode'],'rules');self.assertEqual(A.evaluate(self.path)['action'],'allow')
+  A.write(self.path,{**self.req,'tool_input':{'command':'git diff --stat'}})
+  self.assertEqual(A.evaluate(self.path)['action'],'wait');self.assertEqual(A.read(self.path.with_suffix('.status'))['reason'],'no-rule')
+ def test_explicit_override_helper_marks_user_choice_and_inherit_clears_only_that_session(self):
+  self.mode('assistant');ctx=A.request_context(self.path)[1];key=A.session_key(ctx)
+  ui=AssistantReviewRegression.ui
+  ui(self,'override','--request',str(self.path),'--mode','rules')
+  A.grant(self.path)
+  self.assertEqual(A.settings(ctx)['mode'],'rules')
+  with A.locked():self.assertEqual(A.read(A.store()/'overrides.json')[key]['source'],'user')
+  rows=A.read(A.store()/'overrides.json');rows['another-session']={'mode':'manual','expires':time.time()+3600};A.write(A.store()/'overrides.json',rows)
+  ui(self,'override','--request',str(self.path),'--mode','inherit')
+  self.assertEqual(A.settings(ctx)['mode'],'assistant')
+  self.assertEqual(A.read(A.store()/'overrides.json'),{'another-session':rows['another-session']})
+ def test_native_review_remains_separate_and_matching_denies_still_win(self):
+  self.mode('codex-review');self.meta['argv']+=['-c','approvals_reviewer="auto_review"'];A.grant(self.path)
+  A.write(self.path,{**self.req,'tool_input':{'command':'git diff --stat'}})
+  self.assertEqual(A.evaluate(self.path)['action'],'native')
+  self.mode('assistant');A.grant(self.path,decision='deny')
+  with mock.patch.object(A.subprocess,'run',side_effect=AssertionError('saved deny must not delegate')):
+   self.assertEqual(A.evaluate(self.path)['action'],'deny')
 class FeatureNaming(unittest.TestCase):
  def test_only_the_feature_owner_can_name_its_own_record(self):
   helper=str(A.app_home()/'mods/workspace-launchers/bin/workspace-state')

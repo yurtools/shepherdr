@@ -329,7 +329,13 @@ def settings(ctx):
  overrides=maintained('overrides.json',{})
  if overrides is None:out['_read_error']=True
  override=(overrides or {}).get(session_key(ctx))
- if override and override.get('expires',0)>time.time():out['mode']=override['mode']
+ if override and override.get('expires',0)>time.time():
+  # A remembered grant activates rules only in inherited manual mode. Assistant
+  # and native-review modes already apply saved rules before their own fallback.
+  # An explicit task choice, explicit session mode, or unmarked legacy override
+  # remains authoritative; never infer the origin of an existing record.
+  if override.get('source')!='remembered-rule' or out.get('mode')=='manual' and ctx.get('task_mode') not in MODES:
+   out['mode']=override['mode']
  if out.get('mode') not in MODES:out['mode']='manual'
  if not isinstance(out.get('policy'),str):out['policy']=DEFAULT_POLICY
  return out
@@ -464,9 +470,14 @@ def save_rule(ctx,tool,words,action,command,scope='task',match='exact',prefix=No
  with locked():
   saved=for_update('rules.json',[]);overrides=for_update('overrides.json',{})
   write(store()/'rules.json',[r for r in saved if not expired(r,now)]+[rule])
-  # Explicitly remembering an approval activates rules for this task/session, without widening global defaults.
+  # Distinguish bounded rule activation from a person's explicit mode selection.
+  # Preserve active explicit/legacy records byte-for-field; their origin cannot
+  # safely be inferred from mode=rules alone.
   overrides={k:v for k,v in overrides.items() if not expired(v,now)}
-  overrides[session_key(ctx)]={'mode':'rules','expires':min(expires or now+24*3600,now+24*3600)};write(store()/'overrides.json',overrides)
+  key=session_key(ctx);old=overrides.get(key)
+  if not old or old.get('source')=='remembered-rule':
+   overrides[key]={'mode':'rules','source':'remembered-rule','expires':min(expires or now+24*3600,now+24*3600)}
+  write(store()/'overrides.json',overrides)
  return rule
 
 def history_rows(space=''):

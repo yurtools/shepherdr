@@ -105,7 +105,7 @@ def main(a):
   with A.locked():
    rows=A.for_update('overrides.json',{});key=A.session_key(ctx)
    if a.mode=='inherit':rows.pop(key,None)
-   elif a.mode in A.MODES:rows[key]={'mode':a.mode,'expires':__import__('time').time()+24*3600}
+   elif a.mode in A.MODES:rows[key]={'mode':a.mode,'source':'user','expires':__import__('time').time()+24*3600}
    else:raise ValueError('Choose an approval mode.')
    A.write(A.store()/'overrides.json',rows)
   return {'mode':a.mode}

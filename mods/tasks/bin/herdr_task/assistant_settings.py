@@ -13,7 +13,7 @@ import os
 import sys
 
 from .base import addon_off, hc_json, MAX_RUNNING, now, run, STORE
-from .settings import DEFAULTS, LOCAL_MACHINE, MUST_WORDS, SETTINGS, agent_key, bare, read_settings
+from .settings import DEFAULTS, LOCAL_MACHINE, MUST_WORDS, SETTINGS, agent_key, bare, read_settings, resolve_layers
 from .launch import coordinators, is_coordinator
 from . import reactions
 
@@ -53,14 +53,7 @@ def layers(d, space):
 
 def resolve(ls):
     """The values that apply, from DEFAULTS and the layers (most specific wins)."""
-    out = {k: dict(v) for k, v in DEFAULTS.items()}
-    for _, layer in ls:
-        for k, v in layer.items():
-            if isinstance(v, dict) and isinstance(out.get(k), dict):
-                out[k].update({kk: vv for kk, vv in v.items() if vv is not None})
-            elif k in out and v is not None:
-                out[k] = v
-    return out
+    return resolve_layers(layer for _, layer in ls)
 
 
 def pick_words(p, unset):

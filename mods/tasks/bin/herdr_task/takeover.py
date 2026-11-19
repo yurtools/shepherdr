@@ -129,7 +129,9 @@ def backup_for(s, t, running):
     if want == "off":
         return None, "no backup"
     if want and want != running:
-        if want in NAMES and here_state(want) in ("missing", "signed-out"):
+        if pick.get('profile'):
+            argv_for(pick)  # Validate the named destination account; never check another login.
+        if want in NAMES and (here_state(want) == "missing" or (not pick.get('profile') and here_state(want) == "signed-out")):
             return None, f"backup {'signed out' if here_state(want) == 'signed-out' else 'not installed'}"
         return want, None
     if want == running:
@@ -141,12 +143,9 @@ def backup_for(s, t, running):
 
 
 def backup_argv(s, t, kind):
-    """The backup's CLI on its own defaults (its own model and permissions: they differ per CLI).
-    Settings' backup.argv (tests) starts it as given."""
+    """The configured Backup choice, else the other CLI's own defaults."""
     pick = settings_for(s, t.get("space")).get("backup") or {}
-    if pick.get("argv") and pick.get("agent") == kind:
-        return [str(x) for x in pick["argv"]]
-    return argv_for({"agent": kind}) or list(AGENTS.get(kind, [kind]))
+    return argv_for(pick if pick.get("agent") == kind else {"agent": kind}) or list(AGENTS.get(kind, [kind]))
 
 
 TAIL = 524288

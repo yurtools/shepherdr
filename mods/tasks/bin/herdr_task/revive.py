@@ -61,12 +61,12 @@ def base_argv(argv):
     kind, rest, out = kind_of(argv[at]), argv[at + 1:], [argv[at]]
     if kind == "codex":
         account = next((x for x in argv[:at] if x.startswith("CODEX_HOME=")), None)
-        if account:
-            clear = []
-            for i in range(at - 1):
-                if argv[i] == "-u" and argv[i + 1] in ("CODEX_API_KEY", "OPENAI_API_KEY", "CODEX_ACCESS_TOKEN", "CODEX_SQLITE_HOME"):
-                    clear += ["-u", argv[i + 1]]
-            out = ["env", *clear, account, argv[at]]
+        clear = []
+        for i in range(at - 1):
+            if argv[i] == "-u" and argv[i + 1] in ("CODEX_HOME", "CODEX_API_KEY", "OPENAI_API_KEY", "CODEX_ACCESS_TOKEN", "CODEX_SQLITE_HOME"):
+                clear += ["-u", argv[i + 1]]
+        if account or clear:
+            out = ["env", *clear, *([account] if account else []), argv[at]]
     i = 0
     while i < len(rest):
         a = rest[i]

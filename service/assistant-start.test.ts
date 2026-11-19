@@ -11,8 +11,10 @@ function machine(clis: string[]) {
   mkdirSync(bin); mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, "assistant.md"), "---\nname: assistant\ndescription: The Assistant\ncommand: claude\n---\nYou are the Assistant.\n");
   for (const c of clis) { writeFileSync(join(bin, c), "#!/bin/sh\n"); chmodSync(join(bin, c), 0o755); }
+  const calls: any[] = [];
   const hub: any = {
     call: async (_: string, a: { argv: string[] }) => {
+      calls.push(a);
       // hermetic: where agents install system-wide (core/clean-env.js AGENT_PATH) left out, this VM has them there
       if (a.argv[0] === "sh" && a.argv[2]?.includes("command -v")) {
         return { code: clis.includes(a.argv.at(-1)!) ? 0 : 1, stdout: "", stderr: "" };
@@ -24,7 +26,7 @@ function machine(clis: string[]) {
     },
   };
   const made = () => readdirSync(dir).filter((f) => f !== "assistant.md").map((f) => readFileSync(join(dir, f), "utf8"));
-  return { hub, made };
+  return { hub, made, home, calls };
 }
 const commandOf = (file: string) => /^command:(.*)$/m.exec(file)?.[1] ?? "";
 
@@ -32,7 +34,8 @@ test("the Assistant runs the agent its settings choose, with its model, effort a
   const { hub, made } = machine(["codex"]);
   const t = await execTemplate(hub, "assistant", null, { agent: "codex", model: "gpt-5.5", effort: "high", fast: false, perm: "full" });
   const [file] = made();
-  expect(commandOf(file)).toContain("exec codex --no-daemon -m gpt-5.5");
+  expect(commandOf(file)).toContain("exec env -u CODEX_HOME");
+  expect(commandOf(file)).toContain("codex --no-daemon -m gpt-5.5");
   expect(commandOf(file)).toContain("--dangerously-bypass-approvals-and-sandbox");
   expect(commandOf(file)).not.toMatch(/exec claude/);
   expect(t.words).toBe("You are the Assistant.");
@@ -56,4 +59,20 @@ test("the chosen agent missing there: the template's own; neither there: a plain
 test('a web-started Assistant receives global instructions followed by the space addition without changing the global template',async()=>{
  const {hub,made}=machine(['claude']);const t=await execTemplate(hub,'assistant',null,null,'Space-only instruction with literal $(printf ignored)');
  const file=made()[0];expect(t.words).toContain('You are the Assistant.\n\n## Space-specific instructions\n\nSpace-only instruction');expect(file).toContain('literal $(printf ignored)');expect(file.indexOf('You are the Assistant.')).toBeLessThan(file.indexOf('Space-only instruction'));
+});
+
+test('remote account selection uses destination profile metadata and refuses missing CLI or deleted profiles', async () => {
+  const m = machine(['codex']);
+  const data = join(m.home, '.config/herdr-app/data'), account = join(m.home, 'destination account');
+  mkdirSync(data, { recursive: true }); mkdirSync(account);
+  writeFileSync(join(data, 'agent-profiles.json'), JSON.stringify({ profiles: [{ id: 'two', agent: 'codex', home: account }] }));
+  await execTemplate(m.hub, 'assistant', 'destination', { agent: 'codex', profile: 'two', model: 'account-model' });
+  expect(commandOf(m.made()[0])).toContain(`CODEX_HOME=${account}`);
+  expect(m.calls.every(c => c.on === 'destination')).toBe(true);
+  await expect(execTemplate(m.hub, 'assistant', 'destination', { agent: 'codex', profile: 'missing' })).rejects.toThrow('unavailable');
+  writeFileSync(join(data, 'agent-profiles.json'), JSON.stringify({ profiles: [{ id: 'two', agent: 'codex', home: '/synthetic/deleted' }] }));
+  await expect(execTemplate(m.hub, 'assistant', 'destination', { agent: 'codex', profile: 'two' })).rejects.toThrow('unavailable');
+  const noCodex = machine(['claude']);
+  await expect(execTemplate(noCodex.hub, 'assistant', 'destination', { agent: 'codex', profile: 'two' })).rejects.toThrow("isn't installed");
+  expect(noCodex.made()).toEqual([]);
 });

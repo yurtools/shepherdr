@@ -55,6 +55,11 @@ export async function profiles(machine = null) {
     && x.agent === "codex" && typeof x.home === "string" && x.home.startsWith("/") && !/[\0\r\n]/.test(x.home));
 }
 export async function profilePick(pick, machine = null) {
-  if (!pick?.profile) return pick;
-  return { ...pick, launch: profileLaunch(pick, await profiles(machine)) };
+  const launch = profileLaunch(pick, pick?.profile ? await profiles(machine) : []);
+  if (pick?.profile) {
+    const home = launch.find(x => x.startsWith("CODEX_HOME=")).slice(11);
+    const result = await exec("test", ["-d", home], { on: machine });
+    if (result.code !== 0) throw new Error("The assigned account profile is unavailable on this machine.");
+  }
+  return launch ? { ...pick, launch } : pick;
 }

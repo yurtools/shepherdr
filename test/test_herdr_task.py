@@ -2857,8 +2857,11 @@ class ReviewerLine(unittest.TestCase):
     def test_codex_runs_on_its_own_server(self):
         r = self.line("ready")
         self.assertEqual(r["value"]["agent"], "codex")
-        self.assertTrue(r["value"]["command"].startswith("codex --no-daemon --sandbox read-only --ask-for-approval never"))
-        self.assertIn("(the other CLI); start it as `codex --no-daemon", r["text"])
+        import shlex
+        argv = shlex.split(r['value']['command'])
+        self.assertEqual(argv[argv.index('codex'):][:6], ['codex', '--no-daemon', '--sandbox', 'read-only', '--ask-for-approval', 'never'])
+        self.assertIn('CODEX_HOME=' + os.path.join(self.settings.HOME, '.codex'), argv)
+        self.assertIn("(the other CLI); start it as `env ", r["text"])
 
     def test_signed_out_codex_never_reviews(self):
         r = self.line("signed-out")
@@ -2911,7 +2914,12 @@ class ReviewerLine(unittest.TestCase):
         d = tempfile.mkdtemp()
         with open(os.path.join(d, "models_cache.json"), "w") as f:
             json.dump({"models": [{"slug": i, "display_name": i} for i in ids]}, f)
-        p = mock.patch.dict(os.environ, {"CODEX_HOME": d})
+        # The default account is explicit; cache fixtures belong under its .codex home.
+        import shutil
+        account = os.path.join(d, '.codex')
+        os.makedirs(account)
+        shutil.move(os.path.join(d, 'models_cache.json'), os.path.join(account, 'models_cache.json'))
+        p = mock.patch.object(self.settings, 'HOME', d)
         p.start()
         self.addCleanup(p.stop)
 

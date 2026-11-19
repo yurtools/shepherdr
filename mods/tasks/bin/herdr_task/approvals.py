@@ -353,16 +353,24 @@ def own_feature_name(req,ctx):
   return set(value)=={'id','name'} and value['id']==ctx['feature'] and isinstance(value['name'],str) and 0<len(value['name'].strip())<=80
  except (ValueError,TypeError,KeyError):return False
 
-def evaluate(path, terminal=None):
+def evaluate(path, terminal=None, audit_decision=True):
  req=read(path)
  if not isinstance(req,dict):raise ValueError('This approval request is no longer available.')
  if is_permission(req):
   old=read(Path(path).with_suffix('.status')) or {}
   if old.get('request_hash')!=status_key(req):status(path,req,'checking')
- try:return _evaluate(path,terminal)
+ try:
+  out=_evaluate(path,terminal)
+  if audit_decision and (out.get('source')=='rule' or out['action']=='native'):
+   audit_result(req,request_context(path,terminal)[1],out)
+  return out
  except Exception:
   if is_permission(req):status(path,req,'person','policy-error')
   raise
+
+def audit_result(req,ctx,out):
+ if out['action']=='native':audit(req,ctx,'delegated','Sent to Codex Auto-review; its final decision is not reported to Shepherdr.','codex-review')
+ elif out.get('source')=='rule':audit(req,ctx,out['action'],out['reason'],'rule')
 
 def _evaluate(path, terminal=None):
  req,ctx=request_context(path,terminal)
@@ -377,11 +385,10 @@ def _evaluate(path, terminal=None):
   rules.sort(key=lambda r:r.get('decision')!='deny')
   if rules:
    rule=rules[0];reason=f'{rule["scope"]} {rule["match"]} rule {rule["id"]}'
-   audit(req,ctx,rule['decision'],reason,'rule');return response(rule['decision'],reason,'rule')
+   return response(rule['decision'],reason,'rule')
  if opts['mode']=='assistant':return review_ticket(path,req,ctx)
  if opts['mode']=='codex-review':
   if ctx['agent']=='codex' and ctx.get('native_review'):
-   audit(req,ctx,'delegated','Sent to Codex Auto-review; its final decision is not reported to Shepherdr.','codex-review')
    return {'action':'native','reason':'Continue through Codex native Auto-review.'}
  # A pending manual review can supply status for a wait without changing rule/native
  # decision precedence. A compatible native launch still hands off exactly as before.

@@ -27,10 +27,10 @@ def main(a):
  if a.command in ('evaluate','answer'):
   req=A.read(a.request)
   if not isinstance(req,dict):raise ValueError('This request closed.')
-  out=A.evaluate(a.request,a.terminal) if a.command=='evaluate' else {'action':'answer'}
+  out=A.evaluate(a.request,a.terminal,audit_decision=not a.respond) if a.command=='evaluate' else {'action':'answer'}
   if a.command=='answer' or a.respond and out['action'] in ('allow','deny','native'):
-   ctx=A.request_context(a.request,a.terminal or Path(a.request).stem.split('.')[0])[1] if a.command=='answer' and A.is_permission(req) else None
    if A.read(a.request)!=req or a.command=='answer' and A.status_key(req)!=a.hash:raise ValueError('This request changed or closed.')
+   ctx=A.request_context(a.request,a.terminal or Path(a.request).stem.split('.')[0])[1] if A.is_permission(req) else None
    answer=Path(a.request).parent.parent/'ans'/Path(a.request).name
    value=a.answer if a.command=='answer' else '' if out['action']=='native' else out['response']
    A.answer_once(answer,value)
@@ -39,8 +39,10 @@ def main(a):
     end=Path(a.request).parent.parent/'end'/Path(a.request).stem;end.parent.mkdir(parents=True,exist_ok=True);end.write_text(reason+'\n')
    if ctx:
     try:
-     decision=json.loads(value).get('hookSpecificOutput',{}).get('decision',{}).get('behavior')
-     if decision in ('allow','deny'):A.audit(req,ctx,decision,'Decided by the person in Chat','user')
+     if a.command=='evaluate':A.audit_result(req,ctx,out)
+     else:
+      decision=json.loads(value).get('hookSpecificOutput',{}).get('decision',{}).get('behavior')
+      if decision in ('allow','deny'):A.audit(req,ctx,decision,'Decided by the person in Chat','user')
     except (ValueError,OSError):pass
    return {'action':'answered'}
   return out

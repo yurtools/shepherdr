@@ -175,7 +175,7 @@ class ApprovalLifecycle(unittest.TestCase):
   import importlib.util
   spec=importlib.util.spec_from_file_location('approval_ui',ROOT/'mods/chat/approval-policy.py');ui=importlib.util.module_from_spec(spec);spec.loader.exec_module(ui)
   args=ui.parser().parse_args(['evaluate','--request',str(self.path),'--respond'])
-  def closed(*_):self.path.unlink();return {'action':'native'}
+  def closed(*_,**kwargs):self.path.unlink();return {'action':'native'}
   with mock.patch.object(A,'evaluate',side_effect=closed):
    with self.assertRaisesRegex(ValueError,'changed or closed'):ui.main(args)
   self.assertFalse((self.path.parent.parent/'ans'/self.path.name).exists())
@@ -196,6 +196,17 @@ class ApprovalLifecycle(unittest.TestCase):
   self.assertEqual(A.history_rows()[-1]['source'],'user')
   with self.assertRaisesRegex(ValueError,'already been answered'):ui.main(args)
   self.assertEqual(len(A.history_rows()),1)
+ def test_native_handoff_losing_to_a_person_is_not_recorded_as_sent(self):
+  import importlib.util
+  spec=importlib.util.spec_from_file_location('approval_ui',ROOT/'mods/chat/approval-policy.py');ui=importlib.util.module_from_spec(spec);spec.loader.exec_module(ui)
+  self.mode('codex-review');self.meta['argv']+=['-c','approvals_reviewer="auto_review"']
+  args=ui.parser().parse_args(['evaluate','--request',str(self.path),'--respond'])
+  original=A.answer_once
+  def person_wins(path,value):
+   original(path,A.response('deny','Person decided')['response']);original(path,value)
+  with mock.patch.object(A,'answer_once',side_effect=person_wins):
+   with self.assertRaisesRegex(ValueError,'already been answered'):ui.main(args)
+  self.assertEqual(A.history_rows(),[])
 class FeatureNaming(unittest.TestCase):
  def test_only_the_feature_owner_can_name_its_own_record(self):
   helper=str(A.app_home()/'mods/workspace-launchers/bin/workspace-state')

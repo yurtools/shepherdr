@@ -1,0 +1,38 @@
+{
+  "runtime": "Herdr App v0.1.16",
+  "source": "https://github.com/herdrdev/herdr-app/tree/v0.1.16",
+  "archive_sha256": "fea3d920607f2199ed330eb3cdcb1fa3626dcea5080c92a97a296d983d6bc681",
+  "files": {
+    "Cargo.toml": "a29c9a79e38861005cd9745f4daf97555e7ce4744d9204a290cf9903156b1680",
+    "Cargo.lock": "90a81788ce064ee938155b2e8c3028f4f93a9e633eb0831e8d06ae71185394da",
+    "vendor/gpui-kit/Cargo.toml": "5d73ae1309bec63d78c0b51b1bf89fc25b431db763973f71cf21a38274d70178",
+    "vendor/gpui-kit/crates/base/Cargo.toml": "61bcae330899900cb50eb30be894b46e85d1bcbad8ec119c99fa533f710fd18d",
+    "vendor/gpui-kit/crates/base/src/text/format/markdown.rs": "e8a8e11717e33e284e57091567ff9c0a1160c15c09bf99f0d0133c3806894ae9",
+    "vendor/gpui-kit/crates/base/src/text/node.rs": "c3fba197c347c45e660d03151da2dd1a3f82ef33f06fc02c80d645d7466813b5",
+    "vendor/gpui-kit/crates/base/src/text/mod.rs": "4608d3e63520ca6e0d0612bb091967397c281f5b66a64b07e9a656585129b6cc",
+    "vendor/gpui-pre/src/text_system.rs": "9c51a88270aa62bd0a3333571e47f49da4ace8cfc6b6eb0355b33ee97c6e6f79",
+    "vendor/gpui-kit/crates/base/src/text/markdown_ext.rs": "44fa63ece976a0474f402a2a65d7d1f382f143c1a482dbb392b8f39f85e397b3",
+    "vendor/gpui-kit/crates/base/src/text/state.rs": "72ff94eb636a0ef0adddad32f3db2791f2c1f6292d0b8e5f1f003e0d1f151024",
+    "vendor/gpui-kit/crates/shell/src/materialize/text_view.rs": "3e11b494555176beb646133505a9f487582cc7c7580745be575ed3a283841730",
+    "vendor/gpui-kit/crates/shell/src/materialize/text_view/tests.rs": "03d3293e1ef52ebb4eac5de1f3894f40f17d0cc3736efa15c359e86d55655a0a",
+    "vendor/gpui-kit/crates/shell/src/capability.rs": "ab40969899c3420562a071e2a94d1f29380f886c2f99143260e86a3b418dd0f6",
+    "vendor/gpui-kit/crates/shell/src/policy.rs": "3009c6412800f4b507e208145dba49570144a46c31695a64b5d95755490414b4",
+    "vendor/gpui-pre/src/app.rs": "6dce65a9d45130a026efc8254db5ac96f1685abcab183e4b4b9bce538764ef2e",
+    "vendor/gpui-pre/src/window.rs": "3dd0902cb35c46e174643c92d41363f9fcb72c5edeb32eb7027a9bea48813039",
+    "assets/fonts/Geist.ttf": "5c8968eafb98a4c4f47033daf29e38e284a6f2a82eb017d171ab040fe7c4b615",
+    "vendor/gpui-pre/src/assets.rs": "20fe041bc31162d44ede36ac2dd62a83d949e7c1ad3e723f0b98474133c8cf9d",
+    "vendor/gpui-pre/src/elements/img.rs": "da1aa359cc0f00658fdbd5ba470847f0fae95659db297e9e0b45e6279acb743b"
+  },
+  "harness_versions": {
+    "gpui-pre": "0.3.8",
+    "gpui-base": "0.7.1",
+    "markdown": "1.0.0",
+    "unicode-id": "0.3.6",
+    "url": "2.5.8",
+    "image": "0.25.10",
+    "usvg": "0.46.0",
+    "cosmic-text": "0.19.0",
+    "swash": "0.2.10",
+    "zed-font-kit": "0.14.1-zed"
+  }
+}

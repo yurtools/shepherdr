@@ -1,0 +1,2 @@
+# Unified context lines and upstream license text retain their exact whitespace.
+runtime.patch -whitespace

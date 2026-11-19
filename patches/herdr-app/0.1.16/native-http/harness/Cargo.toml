@@ -1,0 +1,26 @@
+[package]
+name = "markdown-reference-image-regression"
+version = "0.0.0"
+edition = "2024"
+
+[dependencies]
+gpui = { package = "gpui-pre", path = "../runtime/vendor/gpui-pre", features = ["test-support", "render-to-image"] }
+gpui-base = { path = "../runtime/vendor/gpui-kit/crates/base" }
+gpui_wgpu = { package = "gpui-pre-wgpu", path = "../runtime/vendor/gpui-pre-wgpu", features = ["test-support", "font-kit", "render-to-image"] }
+image = "0.25"
+anyhow = "1"
+reqwest_client = { package = "gpui-pre-reqwest-client", version = "=0.3.8" }
+url = "=2.5.8"
+smol = "2"
+usvg = { version = "0.46", default-features = false }
+async-channel = "2.5"
+tracing = "0.1"
+smallvec = "1"
+
+[patch.crates-io]
+gpui-pre = { path = "../runtime/vendor/gpui-pre" }
+gpui-pre-wgpu = { path = "../runtime/vendor/gpui-pre-wgpu" }
+taffy = { path = "../runtime/vendor/taffy" }
+
+[profile.dev]
+debug = 0

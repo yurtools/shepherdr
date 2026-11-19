@@ -334,7 +334,8 @@ def settings(ctx):
   # and native-review modes already apply saved rules before their own fallback.
   # An explicit task choice, explicit session mode, or unmarked legacy override
   # remains authoritative; never infer the origin of an existing record.
-  if override.get('source')!='remembered-rule' or out.get('mode')=='manual' and ctx.get('task_mode') not in MODES:
+  if override.get('source')=='remembered-rule' and override.get('mode')!='rules':out['_read_error']=True
+  elif override.get('source')!='remembered-rule' or out.get('mode')=='manual' and ctx.get('task_mode') not in MODES:
    out['mode']=override['mode']
  if out.get('mode') not in MODES:out['mode']='manual'
  if not isinstance(out.get('policy'),str):out['policy']=DEFAULT_POLICY

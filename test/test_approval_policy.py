@@ -489,6 +489,13 @@ class RememberedReviewFallback(unittest.TestCase):
   self.mode('assistant');A.grant(self.path,decision='deny')
   with mock.patch.object(A.subprocess,'run',side_effect=AssertionError('saved deny must not delegate')):
    self.assertEqual(A.evaluate(self.path)['action'],'deny')
+ def test_malformed_remembered_activation_cannot_delegate_around_policy_error(self):
+  self.mode('assistant');ctx=A.request_context(self.path)[1]
+  for mode in (None,'manual','unexpected'):
+   A.write(A.store()/'overrides.json',{A.session_key(ctx):{'source':'remembered-rule','mode':mode,'expires':time.time()+3600}})
+   with mock.patch.object(A.subprocess,'run',return_value=mock.Mock(returncode=0,stdout='{}')) as send:A.evaluate(self.path)
+   self.assertEqual(send.call_count,0)
+   self.assertEqual(A.read(self.path.with_suffix('.status'))['reason'],'policy-error')
 class FeatureNaming(unittest.TestCase):
  def test_only_the_feature_owner_can_name_its_own_record(self):
   helper=str(A.app_home()/'mods/workspace-launchers/bin/workspace-state')

@@ -39,3 +39,20 @@ test('external context messages expand as bounded rows without losing UTF-16 tex
  const rows=Array.from({length:100},(_,i)=>({id:String(i)}));
  expect(measureOrder(rows,rows.map(r=>r.id),new Map(),new Map(),99,Date.now()).length).toBeLessThanOrEqual(8);
 });
+
+test('measurement selection matches distance/index priority without sorting cold history',()=>{
+ const rows=Array.from({length:10000},(_,i)=>({id:String(i)})),keys=rows.map(r=>r.id),heights=new Map(),at=new Map();
+ let visits=0;const has=heights.has.bind(heights);heights.has=k=>{visits++;return has(k);};
+ expect(measureOrder(rows,keys,heights,at,9999,6000)).toEqual([9999,9998,9997,9996,9995,9994,9993,9992]);expect(visits).toBe(8);
+ let seed=7123;
+ for(let run=0;run<100;run++){
+  heights.clear();at.clear();
+  for(let i=0;i<100;i++){seed=(Math.imul(seed,1664525)+1013904223)>>>0;if(seed%3)heights.set(keys[i],20);at.set(keys[i],seed%7000);}
+  const small=rows.slice(0,100),names=keys.slice(0,100);
+  for(const near of [-10,0,3.5,20,99,110,NaN,Infinity]){
+   const fresh=small.map((_,i)=>i).filter(i=>!heights.has(names[i])).sort((a,b)=>Math.abs(a-near)-Math.abs(b-near)).slice(0,30);
+   const settling=small.map((_,i)=>i).filter(i=>heights.has(names[i])&&6000-(at.get(names[i])??0)<4000);
+   expect(measureOrder(small,names,heights,at,near,6000)).toEqual([...new Set([...fresh,...settling])].slice(0,8));
+  }
+ }
+});

@@ -634,14 +634,16 @@ export default class Chat extends View {
   // on the web's cards: its terminal shows its own prompt meanwhile. A call or a recording ends with it.
   async close(cx) {
     if (this.host) return this.host.close(cx);
-    this.clearLinkedMarkdown(true);
+    const cleanup = this.clearLinkedMarkdown(true, cx);
     this.box.release();
     this.findBox.release();
     this.scroll.release();
     this.dict.cancel();
-    if (this.call) await this.hangup();
-    if (!this.addr || this.machine || this.companion) return;
-    await exec("sh", ["-c", 'rm -f "$1/open/$2"; for f in "$1/req/$2".*.json; do [ -f "$f" ] && grep -q \'"turn_id"\' "$f" && : > "$1/ans/${f##*/}"; done; true', "x", this.askDir, this.addr]);
+    // Start the hook handoff before yielding to child cleanup: close has a
+    // short host deadline, and Codex must still be able to ask in Terminal.
+    const handoff = this.addr && !this.machine && !this.companion
+      ? exec("sh", ["-c", 'rm -f "$1/open/$2"; for f in "$1/req/$2".*.json; do [ -f "$f" ] && grep -q \'"turn_id"\' "$f" && : > "$1/ans/${f##*/}"; done; true', "x", this.askDir, this.addr]) : null;
+    await Promise.all([cleanup, handoff, this.call ? this.hangup() : null]);
   }
 
   // ---- drafts -----------------------------------------------------------------------------
@@ -2168,7 +2170,16 @@ export default class Chat extends View {
   // folder, not only where its Assistant runs.
   async loadSpaceTasks() {
     const r = await exec("herdr-task", [...(this.machine ? ["--on", this.machine] : []), "list", "--all", "--read-only", "--json"]).catch(() => null);
-    try { const d = JSON.parse(r?.stdout ?? "null"); if (Array.isArray(d)) this.spaceTasks = d.flatMap((g) => (g.tasks ?? []).map((x) => ({ ...x, folder: g.folder }))).filter(x => !this.feature || x.feature === this.feature); } catch {}
+    try {
+      const d = JSON.parse(r?.stdout ?? "null");
+      if (Array.isArray(d)) {
+        const next = d.flatMap((g) => (g.tasks ?? []).map((x) => ({ ...x, folder: g.folder }))).filter(x => !this.feature || x.feature === this.feature);
+        const signature = JSON.stringify(next);
+        // This runs outside render. An unchanged eight-second response must not
+        // invalidate news, mentions and every retained Markdown row on a repaint.
+        if (signature !== this.spaceTasksPayload) { this.spaceTasksPayload = signature; this.spaceTasks = next; }
+      }
+    } catch {}
   }
 
   taskSig() {
@@ -3158,10 +3169,13 @@ export default class Chat extends View {
 
   // ---- the conversation's rows ----------------------------------------------------------------
 
+
   rows() {
     const out = [];
     // The rows from `from` on are one message's block (spaced()).
-    const block = (from, blk) => { for (let k = from; k < out.length; k++) out[k] = { ...out[k], blk }; };
+    // Every row here is owned by this build. Add geometry in place rather than
+    // copying all message rows once for blocks and again for spacing.
+    const block = (from, blk) => { for (let k = from; k < out.length; k++) out[k].blk = blk; };
     if (this.start === 0) out.push({ kind: "top", id: "top" });
     else if (this.start) out.push({ kind: "loading", id: "loading" });
     const items = this.conv?.items ?? [];
@@ -3187,13 +3201,21 @@ export default class Chat extends View {
     // A card is a run of strips, one list row each (strips.js), kept together as one block.
     const putCard = (c) => c.strips.forEach((s, j) => out.push({ kind: "cardstrip", id: `cs:${c.id}:${s.key}`, s, blk: c.id, first: j === 0, last: j === c.strips.length - 1,
       sig: strips.sig(s), owner: c.owner, ask: c.ask }));
-    const put = (e) => { if (e.card) putCard(e.card); else out.push(e.row); };
+    const put = (e) => { if (e.card) putCard(e.card); else out.push({ ...e.row }); };
     let ti = 0;
     // A day's line where a new day starts (Today, Yesterday, a weekday, a date), the first too.
     const days = new Set();
+    let dayFrom=0,dayUntil=0;
     const dated = (at) => {
       if (!(at > 1e12)) return;
-      const d = dayOf(at);
+      // Most history rows share a day. Avoid doing local-calendar conversion
+      // for every row, including on a cold draw. Calendar arithmetic preserves
+      // the short/long days at daylight-saving changes; out-of-order times miss.
+      if(at<dayFrom||at>=dayUntil){
+        dayFrom=dayOf(at);
+        const next=new Date(dayFrom);next.setDate(next.getDate()+1);dayUntil=next.getTime();
+      }
+      const d = dayFrom;
       if (!days.has(d) && d > Math.max(-1, ...days)) { days.add(d); out.push({ kind: "day", id: `day:${d}`, text: dayLabel(at) }); }
     };
     // The session's first message: the first user item (news read out of it comes before it, #589).
@@ -3202,7 +3224,7 @@ export default class Chat extends View {
       let x = items[i];
       while (ti < tasks.length && x.at && tasks[ti].at < x.at) { dated(tasks[ti].at); put(tasks[ti++]); }
       if (i === qAt) { putCard(ownQ); continue; }
-      if (x.kind === "news") { const r = news.inline.get(x.id); if (r) { dated(x.at); out.push(r); } continue; }
+      if (x.kind === "news") { const r = news.inline.get(x.id); if (r) { dated(x.at); out.push({ ...r }); } continue; }
       // An Autopilot wake: one quiet line, never its words (core/chat-log.js pilotLine).
       if (x.kind === "pilot") { dated(x.at); out.push({ kind: "pilot", id: x.id, text: pilotLine(x) }); continue; }
       if (x.kind !== "mark") dated(x.at);
@@ -3267,7 +3289,7 @@ export default class Chat extends View {
         // A long reply: its first lines (the part where they end cut off there), then Show more.
         const fold = ps.length ? this.foldOf(x, ps) : null;
         const clip = (n) => (fold && !fold.open ? fold.clips.get(n) : undefined);
-        if (ps.length === 1 && ps[0].type === "md") out.push(clip(0) ? { ...x, clip: clip(0) } : x);
+        if (ps.length === 1 && ps[0].type === "md") out.push({ ...x, ...(clip(0) ? { clip: clip(0) } : {}) });
         else ps.forEach((p, n) => {
           if (fold && !fold.open && n > fold.last) return;
           if (p.type === "md") out.push({ kind: "agent", id: `${x.id}:${n}`, text: p.text, clip: clip(n) });
@@ -3292,7 +3314,7 @@ export default class Chat extends View {
           out.push({ kind: "band", id: `ab:${x.id}`, bar });
         }
         block(first, x.id);
-      } else if (x.kind !== "mark") out.push(x);
+      } else if (x.kind !== "mark") out.push({ ...x });
     }
     while (ti < tasks.length) { dated(tasks[ti].at); put(tasks[ti++]); }
     // Words that answered a card, shown at once, until the log has them right after their
@@ -3386,9 +3408,9 @@ export default class Chat extends View {
       const bot0 = last || next?.kind === "band";
       if (r.kind === "band") {
         r.bar.box = { top: BAND_IN, h: ACT };
-        out.push({ ...r, h: ACT_ROW });
-      } else if (top0 || bot0) out.push({ ...r, top0, bot0 });
-      else out.push(r);
+        r.h = ACT_ROW;
+      } else if (top0 || bot0) { r.top0 = top0; r.bot0 = bot0; }
+      out.push(r);
       if (last && next) {
         const h = Math.max(0, GAP - (r.kind === "band" ? 0 : inset(r, "bottom")) - inset(next, "top"));
         out.push({ kind: "gap", id: `g:${r.id}`, h });
@@ -3443,7 +3465,14 @@ export default class Chat extends View {
     const found = q && String(x.text ?? x.code ?? "").toLowerCase().includes(q.toLowerCase()) ? `|f:${q}` : "";
     const open = (x.kind === "tools" || x.kind === "brief") && this.opened.has(x.id);
     const shown = open && x.steps ? x.steps.filter((s) => this.results.get(s.id) != null).length : 0;
-    return `${x.id}|r${revision}|${x.kind}${x.closed ? `.${x.closed}` : ""}|${open ? `o${x.steps?.length ?? 1}.${shown}` : ""}|${x.text?.length ?? x.code?.length ?? 0}|${x.from ? 1 : 0}${x.failed ? 1 : 0}${x.late ? 1 : 0}${x.waiting ? 1 : 0}${x.images ? 1 : 0}${x.files?.length ?? 0}|${x.paths?.length ?? 0}${x.paths?.every((p) => this.views[p]) ? "v" : ""}|${(x.pills ?? []).map((p) => p.emoji + (p.you ? 1 : 0) + (p.agent ? 1 : 0)).join("")}|${x.bar ? "b" : ""}${x.kind === "artifact" ? `|a${x.version ?? ""}${x.line ? "l" : ""}${x.pending ? "p" : ""}${x.peek ? `k${x.peek.paths.filter((p) => this.views[p]).length}.${x.peek.text.length}` : ""}` : ""}${x.kind === "tasknews" ? `|${x.accept ? "a" : ""}` : ""}${x.kind === "cardstrip" ? `|cs${x.sig}${x.first ? "F" : ""}${x.last ? "L" : ""}` : ""}|${x.clip ? `c${x.clip}` : ""}${x.open ? "o" : ""}${x.kind === "day" ? x.text : ""}|${x.top0 ? "T" : ""}${x.bot0 ? "B" : ""}${x.h ?? ""}${found}`;
+    const key = `${x.id}|r${revision}|${x.kind}${x.closed ? `.${x.closed}` : ""}|${open ? `o${x.steps?.length ?? 1}.${shown}` : ""}|${x.text?.length ?? x.code?.length ?? 0}|${x.from ? 1 : 0}${x.failed ? 1 : 0}${x.late ? 1 : 0}${x.waiting ? 1 : 0}${x.images ? 1 : 0}${x.files?.length ?? 0}|${x.paths?.length ?? 0}${x.paths?.every((p) => this.views[p]) ? "v" : ""}|${(x.pills ?? []).map((p) => p.emoji + (p.you ? 1 : 0) + (p.agent ? 1 : 0)).join("")}|${x.bar ? "b" : ""}${x.kind === "artifact" ? `|a${x.version ?? ""}${x.line ? "l" : ""}${x.pending ? "p" : ""}${x.peek ? `k${x.peek.paths.filter((p) => this.views[p]).length}.${x.peek.text.length}` : ""}` : ""}${x.kind === "tasknews" ? `|${x.accept ? "a" : ""}` : ""}${x.kind === "cardstrip" ? `|cs${x.sig}${x.first ? "F" : ""}${x.last ? "L" : ""}` : ""}|${x.clip ? `c${x.clip}` : ""}${x.open ? "o" : ""}${x.kind === "day" ? x.text : ""}|${x.top0 ? "T" : ""}${x.bot0 ? "B" : ""}${x.h ?? ""}${found}`;
+    const state = this.rowRevisions.get(x.id);
+    // The existing keys pass supplies a cheap change counter. Fresh rows/spaced
+    // arrays and Conversation rebuilds alone must not restart deferred progress.
+    const openNow = this.opened.has(x.id), unfoldNow = this.unfolded.has(x.blk ?? x.id);
+    if (!this.linkMarkdownWork?.index?.has(x.id) || state.key !== key || state.who !== !!x.who || state.open !== openNow || state.unfold !== unfoldNow) this.linkRowsRevision = (this.linkRowsRevision ?? 0) + 1;
+    state.key = key; state.who = !!x.who; state.open = openNow; state.unfold = unfoldNow; state.drawRevision = revision;
+    return key;
   }
 
   // A row's height before it is measured: bands and gaps are as tall as spaced() made them.
@@ -3535,68 +3564,123 @@ export default class Chat extends View {
 
   linkedMarkdownCurrent(work,entry=null,token=entry?.token) {
     const same=(a,b)=>a?.length===b.length&&b.every((v,i)=>v===a[i]);
+    const row=entry&&work.index?.get(entry.id);
     return !work.closed&&same(work.stamp,this.linkedMarkdownStamp())&&same(work.inputs,this.linkedMarkdownInputs())&&(!entry||
-      work.rows.get(entry.id)===entry&&entry.epoch===work.epoch&&entry.token===token&&
-      entry.revision===(this.rowRevisions?.get(entry.id)?.revision??0)&&
-      entry.open===this.opened.has(entry.id)&&entry.unfold===this.unfolded.has(entry.row.blk??entry.id));
+      row&&work.rows.get(entry.id)===entry&&entry.epoch===work.epoch&&entry.token===token&&entry.presentation===work.presentation&&
+      entry.revision===(this.rowRevisions?.get(entry.id)?.revision??0)&&entry.kind===row.kind&&entry.clip===row.clip&&entry.who===!!row.who&&
+      entry.open===this.opened.has(entry.id)&&entry.unfold===this.unfolded.has(row.blk??entry.id));
   }
 
   retireLinkedMarkdown(work,entry) {
-    for(const kept of entry.views.values())work.releases.add(kept.view);
-    entry.views=new Map();
+    // Detach in constant work, including rows with many children. Empty/quiet
+    // rows allocate nothing; individual handles are released by the drain.
+    if(!entry.views?.size)return;
+    work.retired.add(entry.views);entry.views=null;
   }
 
-  clearLinkedMarkdown(closed=false) {
+  drainLinkedMarkdown(work,limit) {
+    let visits=0;
+    while(visits<limit&&(work.retired.size||work.discarded.size)){
+      visits++;
+      if(work.retired.size){
+        const views=work.retired.values().next().value;
+        const next=views.entries().next();
+        if(next.done){work.retired.delete(views);continue;}
+        views.delete(next.value[0]);next.value[1].view.release();
+        if(!views.size)work.retired.delete(views);
+      }else{
+        const rows=work.discarded.values().next().value;
+        const next=rows.entries().next();
+        if(next.done){work.discarded.delete(rows);continue;}
+        rows.delete(next.value[0]);this.retireLinkedMarkdown(work,next.value[1]);
+        if(!rows.size)work.discarded.delete(rows);
+      }
+    }
+    return visits;
+  }
+
+  clearLinkedMarkdown(closed=false,cx=null) {
     const work=this.linkMarkdownWork;
     if(!work)return;
     work.epoch++;
-    for(const entry of work.rows.values())this.retireLinkedMarkdown(work,entry);
-    work.rows.clear();work.pending.clear();work.stamp=null;work.inputs=null;
+    if(work.rows.size)work.discarded.add(work.rows);
+    work.rows=new Map();work.pending=new Set();work.cursor=null;work.index=null;
+    work.stamp=null;work.inputs=null;work.request++;work.pass=work.request;
     if(closed){
-      work.closed=true;work.task?.cancel();work.task=null;work.cx=null;work.theme=null;work.scheduled=false;
-      for(const view of work.releases)view.release();
-      work.releases.clear();
-    }else if(work.cx)this.scheduleLinkedMarkdown(work.cx);
+      work.closed=true;work.task?.cancel();work.task=null;work.scheduled=false;
+      work.theme=null;
+      // close gets an AsyncContext and awaits this drain within the host's close
+      // lifetime. Never leave cleanup on a timer owned by an already closed view.
+      return this.disposeLinkedMarkdown(work,cx??work.cx);
+    }
+    if(work.cx)this.scheduleLinkedMarkdown(work.cx);
   }
 
-  prepareLinkedMarkdown(rows,t,cx) {
-    // The existing keys pass has already revised content. Render reconciles only
-    // scalar metadata; fresh rows()/spaced() arrays are not a cache identity.
-    const work=this.linkMarkdownWork??= {epoch:0,rows:new Map(),pending:new Set(),releases:new Set(),seen:0};
+  async disposeLinkedMarkdown(work,cx) {
+    while(work.retired.size||work.discarded.size){
+      this.drainLinkedMarkdown(work,32);
+      if(work.retired.size||work.discarded.size)await cx.sleep(0);
+    }
+    work.cx=null;
+  }
+
+  prepareLinkedMarkdown(rows,t,cx,index) {
+    // draw supplies its index in the existing keys pass. No row reconciliation,
+    // retained-record sweep or child retirement belongs to the render call.
+    const work=this.linkMarkdownWork??= {epoch:0,rows:new Map(),pending:new Set(),retired:new Set(),discarded:new Set(),request:0,pass:0,presentation:0};
     if(work.closed)return;
     const stamp=this.linkedMarkdownStamp(),changed=!work.stamp||stamp.some((v,i)=>v!==work.stamp[i]);
-    work.stamp=stamp;work.inputs=this.linkedMarkdownInputs();work.theme=t;
-    const seen=++work.seen;
-    for(const row of rows){
-      const {revision=0,contentRevision=0}=this.rowRevisions?.get(row.id)??{};
-      const open=this.opened.has(row.id),unfold=this.unfolded.has(row.blk??row.id),who=!!row.who;
-      let entry=work.rows.get(row.id);
-      if(!entry){entry={id:row.id,epoch:work.epoch,token:0,views:new Map(),linked:null};work.rows.set(row.id,entry);}
-      entry.seen=seen;
-      const textChanged=entry.contentRevision!==contentRevision;
-      const dirty=changed||textChanged||entry.revision!==revision||entry.kind!==row.kind||entry.clip!==row.clip||entry.open!==open||entry.unfold!==unfold||entry.who!==who;
-      entry.row=row;
-      if(!dirty)continue;
-      Object.assign(entry,{revision,contentRevision,kind:row.kind,clip:row.clip,open,unfold,who,ready:false,token:entry.token+1});
-      if(textChanged){entry.scan=null;entry.linked=null;}
-      if(['user','pending','agent','brief','ask'].includes(row.kind)&&(row.kind!=='brief'||open))work.pending.add(entry);
-      else {work.pending.delete(entry);this.retireLinkedMarkdown(work,entry);}
-    }
-    for(const [id,entry] of work.rows)if(entry.seen!==seen){
-      this.retireLinkedMarkdown(work,entry);work.pending.delete(entry);work.rows.delete(id);
-    }
+    const revision=this.linkRowsRevision??0;
+    if(changed||revision!==work.revision||index.size!==work.index?.size)work.request++;
+    if(changed)work.presentation++;
+    work.revision=revision;work.stamp=stamp;work.inputs=this.linkedMarkdownInputs();work.theme=t;work.index=index;
     this.scheduleLinkedMarkdown(cx);
+  }
+
+  reconcileLinkedMarkdown(work,limit) {
+    let visits=0;
+    if(!work.cursor&&work.pass!==work.request)work.cursor={rows:work.index.values(),request:work.request};
+    const cursor=work.cursor;
+    if(!cursor)return visits;
+    // Finish the current cursor even if streaming supplied another snapshot.
+    // Resolve each ID against the latest index; paint-only redraws queue nothing.
+    while(visits<limit){
+      visits++;
+      if(!cursor.sweep){
+        const next=cursor.rows.next();
+        if(next.done){cursor.sweep=work.rows.entries();cursor.left=work.rows.size;continue;}
+        const row=work.index.get(next.value.id);
+        if(!row)continue;
+        const state=this.rowRevisions?.get(row.id);
+        if(!state||state.drawRevision!==state.revision)continue;
+        const {revision,contentRevision,open,unfold,who}=state;
+        let entry=work.rows.get(row.id);
+        if(!entry){entry={id:row.id,epoch:work.epoch,token:0,views:null,linked:null};work.rows.set(row.id,entry);}
+        const textChanged=entry.contentRevision!==contentRevision;
+        const dirty=entry.presentation!==work.presentation||textChanged||entry.revision!==revision||entry.kind!==row.kind||entry.clip!==row.clip||entry.open!==open||entry.unfold!==unfold||entry.who!==who;
+        entry.row=row;
+        if(!dirty)continue;
+        Object.assign(entry,{revision,contentRevision,kind:row.kind,clip:row.clip,open,unfold,who,presentation:work.presentation,ready:false,token:entry.token+1});
+        if(textChanged){entry.scan=null;entry.linked=null;}
+        if(['user','pending','agent','brief','ask'].includes(row.kind)&&(row.kind!=='brief'||open))work.pending.add(entry);
+        else {work.pending.delete(entry);this.retireLinkedMarkdown(work,entry);}
+      }else{
+        const next=cursor.sweep.next();
+        if(next.done||cursor.left--<=0){work.pass=cursor.request;work.cursor=null;break;}
+        const [id,entry]=next.value;
+        if(!work.index.has(id)){this.retireLinkedMarkdown(work,entry);work.pending.delete(entry);work.rows.delete(id);}
+      }
+    }
+    return visits;
   }
 
   scheduleLinkedMarkdown(cx) {
     const work=this.linkMarkdownWork;
-    if(work.closed||work.scheduled||!work.pending.size&&!work.releases.size)return;
+    if(work.closed||work.scheduled||!work.pending.size&&!work.retired.size&&!work.discarded.size&&!work.cursor&&work.pass===work.request)return;
     work.scheduled=true;
     work.task=cx.timer.after(0,cx=>{
       work.scheduled=false;work.task=null;
       if(work.closed)return;
-      // Only retain an AsyncContext, never draw's call-scoped Context. Reset can
-      // then drain detached children even when the next draw is a notice.
       work.cx=cx;
       this.stepLinkedMarkdown(cx);
     });
@@ -3604,24 +3688,33 @@ export default class Chat extends View {
 
   stepLinkedMarkdown(cx) {
     const work=this.linkMarkdownWork;
-    let visits=0,chars=0,collectedRows=0,changed=false,paused=false;
-    while(work.releases.size&&visits<32){
-      const view=work.releases.values().next().value;work.releases.delete(view);view.release();visits++;
+    // Each callback shares one metadata/cleanup budget and one detector budget.
+    // Reserve time for each queue so streaming and mass removal cannot starve it.
+    let visits=this.drainLinkedMarkdown(work,8),chars=0,collectedRows=0,changed=false,paused=false;
+    if(!this.linkedMarkdownCurrent(work)){
+      if(!work.closed)cx.notify();
+      if(work.retired.size||work.discarded.size)this.scheduleLinkedMarkdown(cx);
+      return;
     }
-    if(work.pending.size&&!this.linkedMarkdownCurrent(work)){cx.notify();if(work.releases.size)this.scheduleLinkedMarkdown(cx);return;}
+    visits+=this.reconcileLinkedMarkdown(work,8);
     while(work.pending.size&&visits<32&&chars<4096&&collectedRows<1){
       const entry=work.pending.values().next().value;work.pending.delete(entry);visits++;
       const token=entry.token;
       if(!this.linkedMarkdownCurrent(work,entry,token)){
-        if(work.rows.get(entry.id)===entry)work.pending.add(entry);
-        if(!work.closed)cx.notify();
-        paused=true;break;
+        // A changed/removed row is handled by the reconciliation cursor. Do not
+        // let an obsolete head entry block stable rows behind it.
+        continue;
       }
       if(entry.linked===null){
         entry.scan??=chatLinkScan(entry.row.text);
         chars+=scanChatLink(entry.scan,4096-chars);entry.linked=entry.scan.result;
       }
       if(entry.linked===null){work.pending.add(entry);continue;}
+      if(!entry.linked){
+        changed ||= !!entry.views?.size;
+        this.retireLinkedMarkdown(work,entry);entry.ready=true;entry.scan=null;
+        continue;
+      }
       const collected=new Map();
       if(entry.linked){
         collectedRows++;
@@ -3633,32 +3726,33 @@ export default class Chat extends View {
         if(!work.closed)cx.notify();
         paused=true;break;
       }
-      const views=new Map(),previous=entry.views,created=[];
+      const views=new Map(),previous=entry.views,created=new Map();
       for(const [id,p] of collected){
-        const old=previous.get(id);
+        const old=previous?.get(id);
         const view=old&&old.epoch===work.epoch&&old.text===p.text&&old.key===p.key?old.view:cx.new(LinkedMarkdown,p);
-        if(view!==old?.view)created.push(view);
+        if(view!==old?.view)created.set(id,{view});
         views.set(id,{...p,view,epoch:work.epoch,token});
       }
-      // Even child creation may run host code. Nothing from an obsolete token
-      // may become visible, including a reset or close during collection.
       if(!this.linkedMarkdownCurrent(work,entry,token)){
-        for(const view of created)if(work.closed)view.release();else work.releases.add(view);
+        if(work.closed)for(const p of created.values())p.view.release();else if(created.size)work.retired.add(created);
         if(work.rows.get(entry.id)===entry)work.pending.add(entry);
         if(!work.closed)cx.notify();
         paused=true;break;
       }
-      for(const [id,p] of entry.views)if(p.view!==views.get(id)?.view)work.releases.add(p.view);
-      changed ||= entry.views.size>0||views.size>0;
-      entry.views=views;entry.ready=true;entry.scan=null;
+      // rowBare emits at most one Markdown child per row. Remove reused handles
+      // from the old map, then retire the rest without walking it here.
+      for(const [id,p] of views)if(p.view===previous?.get(id)?.view)previous.delete(id);
+      changed ||= !!entry.views?.size||views.size>0;
+      this.retireLinkedMarkdown(work,entry);
+      entry.views=views.size?views:null;entry.ready=true;entry.scan=null;
     }
     if(changed&&!work.closed)cx.notify();
-    if(!paused||work.releases.size)this.scheduleLinkedMarkdown(cx);
+    if(!paused||work.retired.size||work.discarded.size)this.scheduleLinkedMarkdown(cx);
   }
 
   linkedMarkdownView(row,id,text) {
-    const work=this.linkMarkdownWork,entry=work?.rows.get(row.id),kept=entry?.views.get(id);
-    return entry?.ready&&entry.kind===row.kind&&entry.clip===row.clip&&entry.who===!!row.who&&kept?.epoch===work.epoch&&kept.token===entry.token&&kept.id===id&&
+    const work=this.linkMarkdownWork,entry=work?.rows.get(row.id),kept=entry?.views?.get(id);
+    return entry?.ready&&kept?.epoch===work.epoch&&kept.token===entry.token&&kept.id===id&&
       kept.text===text&&kept.key===(this.pickKey()??this.areaKey())&&this.linkedMarkdownCurrent(work,entry)?kept.view:null;
   }
 
@@ -5019,7 +5113,8 @@ export default class Chat extends View {
     if (this.heightsColumn !== this.column() || Math.abs(this.heightsFor - this.width) > 1 || (this.heightsZoom ?? 1) !== zoomOf()) {
       this.heights.clear(); this.measuredAt.clear(); this.heightsFor = this.width; this.heightsColumn = this.column(); this.heightsZoom = zoomOf(); this.measureGen++;
     }
-    const keys = rows.map((x) => this.key(x));
+    const rowIndex = new Map();
+    const keys = rows.map((x) => { rowIndex.set(x.id, x); return this.key(x); });
     // Every size a real number of pixels: one NaN, zero or runaway height leaves the list blank.
     const sizes = rows.map((x, i) => {
       const h = this.heights.get(keys[i]) ?? this.guess(x);
@@ -5028,7 +5123,7 @@ export default class Chat extends View {
     this.follow_bottom(rows);
     // Following the newest, the list sits at its end: the scroll position is exactly that.
     if (this.pinned && this.listH) this.scrollTop = Math.max(0, sizes.reduce((a, b) => a + b, 0) - (this.listH - 8));
-    this.prepareLinkedMarkdown(rows,t,cx);
+    this.prepareLinkedMarkdown(rows,t,cx,rowIndex);
     const body = rows.length === 0
       ? this.notice(t, "No messages", "Write to the agent below.")
       : v_flex().relative().flex_1().min_h(0).pt(8)
@@ -5123,15 +5218,15 @@ export default class Chat extends View {
     // measured in the last few seconds: markdown can lay out a moment after its first frame (a
     // long message first measures as one line), so a height is never taken once and kept.
     const generation = this.measureGen;
-    const revisions = rows.map(row => this.rowRevisions?.get(row.id)?.revision ?? 0);
     const now = Date.now();
     const order = measureOrder(rows, keys, this.heights, this.measuredAt, near, now);
+    const revisions = new Map(order.map(i => [i, this.rowRevisions?.get(rows[i].id)?.revision ?? 0]));
     return div().absolute().top(0).left(0).w(this.width).h(0).overflow_hidden().opacity(0)
       .child(v_flex().w_full().flex_none().children(order.map((i) => div().id(`m${this.measureGen}-${keys[i]}`).flex_none().w_full()
         .on_size_change((size, cx) => {
           // Size callbacks can arrive after a pane resize or a fold toggle. They
           // belong to the layout that created them, never the current cache.
-          if (generation !== this.measureGen || revisions[i] !== (this.rowRevisions?.get(rows[i].id)?.revision ?? 0)) return;
+          if (generation !== this.measureGen || revisions.get(i) !== (this.rowRevisions?.get(rows[i].id)?.revision ?? 0)) return;
           const h = measuredHeight(this.heights.get(keys[i]), unzoom(size.height));
           if (h === undefined || this.heights.get(keys[i]) === h) return;
           const textWidth = Math.max(240, Math.floor(Math.min(this.width, this.column()) * 0.8)) - 24;

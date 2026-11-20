@@ -29,6 +29,7 @@ const longDetail = (detail) => detail.split("\n").length > 9 || detail.length > 
 export class AskCards {
   // focus: the handle the question cards' keys come through (sink()).
   constructor(host, focus) {
+    this.revision = 0;
     this.host = host;
     this.focus = focus;
     this.states = new Map();
@@ -48,7 +49,7 @@ export class AskCards {
     const long = Boolean(w.detail) && longDetail(w.detail);
     const open = this.open.has(id);
     const links = [...(opts.links ?? []),
-      ...(long ? [linkCtl(`ask-all-${id}`, open ? "Show less" : "Show all", () => { if (open) this.open.delete(id); else this.open.add(id); })] : []),
+      ...(long ? [linkCtl(`ask-all-${id}`, open ? "Show less" : "Show all", () => { this.revision++; if (open) this.open.delete(id); else this.open.add(id); })] : []),
       ...(opts.terminal !== false ? [this.terminalLink(ask)] : []), this.dismissLink(ask)];
     const status = w.kind === "permission" ? ask.approval ?? permissionStatus(ask.req ?? {tool_name:'unknown'}, undefined) : null;
     const out = [headStrip({ who: opts.who, links, ...(status ? { neutral: true } : {}) }), { key: "title", kind: "title", text: w.title }];
@@ -116,6 +117,7 @@ export class AskCards {
   // Forgets an ask's state (its "Other" boxes too): when it's answered or gone.
   drop(ask) {
     const q = this.states.get(ask.id);
+    if(q||this.open.has(ask.id))this.revision++;
     for (const b of q?.boxes ?? []) b?.release();
     this.states.delete(ask.id);
     this.open.delete(ask.id);
@@ -161,9 +163,9 @@ export class AskCards {
   }
 
   // Where the keys come in: out of sight, outside the list (rows take no handlers).
-  sink(name) {
+  sink(name, current = () => true) {
     return div().id(`ask-keys-${name}`).absolute().size(0).track_focus(this.focus)
-      .on_key_down((e, cx) => { if (this.keyed) this.key(this.keyed, e, cx); });
+      .on_key_down((e, cx) => { if (current() && this.keyed) this.key(this.keyed, e, cx); });
   }
 
   key(ask, e, cx) {
@@ -181,10 +183,12 @@ export class AskCards {
 
   go(ask, k) {
     const q = this.state(ask), n = ask.words.questions.length;
-    q.step = Math.max(0, Math.min(n > 1 ? n : n - 1, k));
+    const step = Math.max(0, Math.min(n > 1 ? n : n - 1, k));
+    if(q.step!==step){q.step=step;this.revision++;}
   }
 
   pick(ask, i, k) {
+    this.revision++;
     const w = ask.words, q = this.state(ask), n = w.questions.length, qq = w.questions[i];
     if (qq.multi) { if (q.picks[i].has(k)) q.picks[i].delete(k); else q.picks[i].add(k); }
     else {
@@ -197,10 +201,11 @@ export class AskCards {
 
   // "Other…": its box, made here (never in render), then the keyboard in it.
   openOther(ask, i, cx) {
+    this.revision++;
     const q = this.state(ask);
     q.other[i] = q.other[i] ?? "";
     if (!ask.words.questions[i].multi) q.picks[i] = new Set();
-    if (!q.boxes[i]) { q.boxes[i] = InputState.new({ placeholder: "Your answer" }); q.boxes[i].on("change", (_e, cx) => cx.notify()); }
+    if (!q.boxes[i]) { q.boxes[i] = InputState.new({ placeholder: "Your answer" }); q.boxes[i].on("change", (_e, cx) => {this.revision++;cx.notify();}); }
     const box = q.boxes[i];
     cx.timer.after(0, () => box.focus());
   }

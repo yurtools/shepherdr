@@ -20,6 +20,7 @@ export function historyHost(items: any[], sharedRead: (key: string) => any = () 
   const dependencies: any = { ...view, ...geometry, ...preparation,
     dayLabel: (at: number) => `Day ${Math.floor(at / 86400000)}`, dayOf: (at: number) => Math.floor(at / 86400000) * 86400000, pilotLine,
     askAt: () => 1772946000000, openCard: () => null, assistant: () => false,
+    linkCtl: (id: string, label: string, fn: any) => ({id,label,fn}),
     inRender: (fn: any) => fn(), home: () => '/test-home', cardsOf: () => [], shared: sharedRead, zoomOf: () => 1, strips: { sig: () => '' } };
   const C = new Function(...Object.keys(dependencies), `
     const ACT=22,BAND_IN=4,ACT_ROW=26,GAP=16,QUIET_IN={top:5,bottom:6},FOLD=20,FOLD_TALL=28,LINE_H=21,PEEK_W=420;

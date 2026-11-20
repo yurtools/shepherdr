@@ -1,5 +1,6 @@
 import { expect, test } from 'bun:test';
-import { PrefixIndex, PreparedHistory, RecentIndex } from './chat-preparation.js';
+import { PrefixIndex, PreparedHistory, RecentIndex, sortPlan } from './chat-preparation.js';
+import { resolveArtifacts, resolveArtifactPlan } from './chat-view.js';
 import { measureOrder } from './chat-layout.js';
 
 test('prefix sums normalize fractions and nonfinite/out-of-range endpoints', () => {
@@ -30,4 +31,24 @@ test('settling selection matches the old rule without scanning any expired rows'
   const now=Date.now();expect(plan.measureOrder(1999,now,at)).toEqual(measureOrder(plan.rows,plan.keys,heights,at,1999,now));
   expect(reads).toBeGreaterThan(0); expect(reads).toBeLessThan(100);
   plan.measure('1999', '1999', 100000, Date.now()); expect(plan.sizes[1999]).toBe(40000);
+});
+
+const finish = plan => { for (;;) { const step = plan.next(); if (step.done) return step.value; } };
+
+test('artifact joins exclude an undated or nonfinite version even when it is the only candidate', () => {
+  const at = 1772946000000, items = [{ kind: 'artifact', id: 'call', at }];
+  for (const invalid of [undefined, NaN, Infinity, -Infinity, 'bad', null]) {
+    const version = { publisher: 'fixture', v: 1, at: invalid }, art = { id: 'artifact', version: 1, versions: [version] };
+    expect(resolveArtifacts(items, [art], 'fixture').size).toBe(0);
+    expect(finish(resolveArtifactPlan(items, [art], 'fixture')).size).toBe(0);
+    art.versions.push({ publisher: 'fixture', v: 2, at: at + 1000 });
+    expect(finish(resolveArtifactPlan(items, [art], 'fixture')).get('call').v).toBe(2);
+  }
+});
+
+test('cooperative sorting preserves native stable ties, including a NaN comparator result', () => {
+  const values = [{ id: 'a', at: 2 }, { id: 'b', at: 1 }, { id: 'c', at: 2 }];
+  for (const compare of [(a, b) => a.at - b.at, () => NaN, () => 0]) {
+    expect(finish(sortPlan(values, compare))).toEqual([...values].sort(compare));
+  }
 });

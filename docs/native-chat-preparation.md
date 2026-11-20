@@ -49,6 +49,13 @@ scalar signatures for this conversation's relevant screen cards and machine
 names, rather than shared-object identity. Worker cards include `requestHash`
 and their approval status/reason, including updates made in place.
 
+Question and secret card owners expose a scalar revision for actual local UI
+mutations (clicks, keyboard steps/picks, Other input, detail expansion, scope and
+save/error states). Those revisions queue a successor snapshot without hiding or
+replacing the current native input. Unchanged render reads no question answers or
+masked values. Own, worker and Codex keyboard sinks also validate their snapshot
+before delivering a cached key event.
+
 Reset cancels queued history callbacks and detaches the transaction in constant
 work. Close does the same before the existing hook handoff and linked Markdown
 cleanup; history snapshots own no native child handles. Old reads and callbacks

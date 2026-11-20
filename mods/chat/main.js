@@ -1335,9 +1335,11 @@ export default class Chat extends View {
   }
 
   async historyRecords(before, added, cx) {
-    const out=[];
+    const out=[],epoch=this.readEpoch;
     let n=0;
-    for(const list of [before,added])for(const record of list){out.push(record);if(++n%64===0)await cx.sleep(0);}
+    for(const list of [before,added])for(const record of list){
+      out.push(record);if(++n%64===0){await cx.sleep(0);if(epoch!==this.readEpoch||this.historyClosed)return null;}
+    }
     return out;
   }
 
@@ -1389,6 +1391,7 @@ export default class Chat extends View {
     if (Number(head[2]) < this.end) { this.reset(); return; }
     if(!recs.length){this.end=Number(head[3]);return;}
     let all=await this.historyRecords(previous,recs,cx),start=this.start;
+    if(!all||!current())return;
     if(all.length>KEEP&&!this.loadingEarlier){all=all.slice(-Math.floor(KEEP*0.75));start=all[0].off;}
     const next=await this.rebuild(all,cx);
     if(!next||!current())return;
@@ -1419,6 +1422,7 @@ export default class Chat extends View {
         const { head, records: recs } = records(r.stdout);
         if (path !== this.path || this.start !== before || head[0] !== "P") return;
         const all=await this.historyRecords(recs,previous,cx);
+        if(!all||epoch!==this.readEpoch||this.historyClosed)return;
         const next=await this.rebuild(all,cx);
         if(!next||path!==this.path||before!==this.start||epoch!==this.readEpoch||previous!==this.records||end!==this.end||this.historyClosed)return;
         this.commitConversation(next,{start:Number(head[1]),records:all});
@@ -3230,6 +3234,7 @@ export default class Chat extends View {
   historyStamp() {
     return [this.conv,this.end,this.start,this.pending,this.pending?.length,this.replied,this.note,
       this.status(),this.arts,this.askEnds,this.loadingEarlier,this.historySourceRevision??0,
+      this.cards?.revision,this.workerCards?.revision,this.codexCards?.revision,this.secretCards?.revision,
       dayOf(Date.now())];
   }
 
@@ -5360,7 +5365,9 @@ export default class Chat extends View {
         .child(strips.measure(t, prepared.strips, this.cardW, (cx) => cx.notify(), unzoom)
           .child(div().id("mw-accept").flex_none().on_size_change((size, cx) => { const w = unzoom(size.width); if (this.cardW.get("accept") !== w) { this.cardW.set("accept", w); cx.notify(); } })
             .child(this.acceptButton(false))))
-        .child(this.cards.sink("own")).child(this.workerCards.sink("worker"))
+        .child(this.cards.sink("own",()=>this.historyCurrent(prepared)))
+        .child(this.workerCards.sink("worker",()=>this.historyCurrent(prepared)))
+        .child(this.codexCards.sink("codex",()=>this.historyCurrent(prepared)))
         .when(!this.pinned, (el) => {
           // Scrolled up: a card waiting below what's shown is pointed to; else the newest.
           const below = prepared.cards.filter(i=>i >= (this.range?.end??rows.length));

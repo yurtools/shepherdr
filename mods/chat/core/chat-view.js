@@ -334,7 +334,7 @@ export function* resolveArtifactPlan(items, arts, me) {
     const at=x.at??0;
     for(const {a,v} of vs){
       yield;
-      if(used.has(`${a.id}:${v.v}`)||v.at<at-5000||v.at>at+300000)continue;
+      if(used.has(`${a.id}:${v.v}`)||!(v.at>=at-5000&&v.at<=at+300000))continue;
       used.add(`${a.id}:${v.v}`);
       out.set(x.id,{id:a.id,title:a.title,version:a.version,v:v.v});last.set(a.id,x.id);break;
     }

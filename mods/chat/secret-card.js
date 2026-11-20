@@ -18,6 +18,7 @@ const key = (address, name) => `${address}|${name}`;
 export class SecretCards {
   constructor() {
     // Per ask: { box, level (scope key), err, busy }; and asks kept a moment ago: { name, why, where, at }.
+    this.revision = 0;
     this.states = new Map();
     this.kept = new Map();
     // Told when an ask is kept or declined here: (ask, how), for its quiet line (main.js).
@@ -28,7 +29,7 @@ export class SecretCards {
   items(address) {
     const now = Date.now(), out = secrets.asksOf(address, terminals()).map((a) => ({ address, ...a }));
     for (const [k, v] of this.kept) {
-      if (now - v.at > KEPT_FOR) { this.kept.delete(k); continue; }
+      if (now - v.at > KEPT_FOR) { this.kept.delete(k); this.revision++; continue; }
       if (v.address === address && !out.some((a) => a.name === v.name)) out.push({ address, name: v.name, why: v.why, kept: v.where });
     }
     return out;
@@ -38,16 +39,18 @@ export class SecretCards {
   // those of asks gone let go.
   prepare(list, cx) {
     const want = new Set(list.filter((a) => !a.kept).map((a) => key(a.address, a.name)));
-    for (const [k, st] of this.states) if (!want.has(k) && !st.busy) { st.box?.release(); this.states.delete(k); }
+    for (const [k, st] of this.states) if (!want.has(k) && !st.busy) { st.box?.release(); this.states.delete(k); this.revision++; }
     const missing = [...want].filter((k) => !this.states.has(k));
     for (const k of missing) this.states.set(k, { box: null, level: null, err: "", busy: false });
+    if(missing.length)this.revision++;
     if (missing.length) cx.timer.after(0, (cx) => {
       for (const k of missing) {
         const st = this.states.get(k);
         if (!st || st.box) continue;
+        this.revision++;
         st.box = InputState.new({ placeholder: "Paste the value" });
         st.box.set_masked(true);
-        st.box.on("change", (_e, cx) => { st.err = ""; cx.notify(); });
+        st.box.on("change", (_e, cx) => { st.err = ""; this.revision++; cx.notify(); });
         st.box.on("submit", (_e, cx) => { const [address, name] = k.split("|"); this.save({ address, name }, cx); });
       }
       cx.notify();
@@ -62,9 +65,10 @@ export class SecretCards {
     const st = this.states.get(key(ask.address, ask.name));
     const value = st?.box?.value() ?? "";
     if (!st || st.busy) return;
-    if (!value) { st.err = "Paste the value first."; cx.notify(); return; }
+    if (!value) { st.err = "Paste the value first."; this.revision++; cx.notify(); return; }
     const lv = this.level(ask, st);
     st.busy = true;
+    this.revision++;
     cx.notify();
     cx.spawn(async (cx) => {
       try {
@@ -74,6 +78,7 @@ export class SecretCards {
         this.onEnd?.(ask, `Kept for ${lv.label}`);
       } catch (e) { st.err = String(e?.message ?? e); }
       st.busy = false;
+      this.revision++;
       cx.notify();
     });
   }
@@ -89,8 +94,8 @@ export class SecretCards {
 
   decline(ask, cx) {
     const st = this.states.get(key(ask.address, ask.name));
-    if (st) st.busy = true;
-    cx.spawn(async (cx) => { await secrets.decline(ask.address, ask.name); if (st) st.busy = false; this.onEnd?.(ask, "Declined"); cx.notify(); });
+    if (st) {st.busy = true;this.revision++;}
+    cx.spawn(async (cx) => { await secrets.decline(ask.address, ask.name); if (st) {st.busy = false;this.revision++;} this.onEnd?.(ask, "Declined"); cx.notify(); });
   }
 
   level(ask, st) {
@@ -112,7 +117,7 @@ export class SecretCards {
     if (ask.why) out.push({ key: "why", kind: "text", tone: "muted", text: ask.why });
     out.push({ key: "box", kind: "input", state: st?.box ?? null, placeholder: "Paste the value", focus: () => st?.box?.focus() });
     if (lv.length > 1) out.push({ key: "for", kind: "controls", align: "start", lead: "For", ctls: lv.map((l) => ({ id: `slevel-${id}-${l.scope}`, label: l.label, look: "pill",
-      on: secrets.scopeKey(l) === secrets.scopeKey(cur), fn: () => { if (st) st.level = secrets.scopeKey(l); } })) });
+      on: secrets.scopeKey(l) === secrets.scopeKey(cur), fn: () => { if (st) {st.level = secrets.scopeKey(l);this.revision++;} } })) });
     out.push({ key: "note", kind: "text", tone: st?.err ? "red" : "dim", text: st?.err || "Agents use it by name, never seeing it." });
     const live = has && !st?.busy;
     out.push({ key: "actions", kind: "controls", align: "end", ctls: [

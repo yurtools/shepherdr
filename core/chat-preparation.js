@@ -166,7 +166,8 @@ export function* sortPlan(values, compare) {
       let a = base, b = mid;
       for (let i = base; i < end; i++) {
         yield;
-        to[i] = b >= end || a < mid && compare(from[a], from[b]) <= 0 ? from[a++] : from[b++];
+        // Native sort treats a NaN comparator result as equality, stably.
+        to[i] = b >= end || a < mid && !(compare(from[a], from[b]) > 0) ? from[a++] : from[b++];
       }
     }
     [from, to] = [to, []];

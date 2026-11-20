@@ -25,7 +25,7 @@ export class Preparation {
     this.pending = { context, source, create };
   }
 
-  step(limit = 8, clock = () => performance.now()) {
+  step(limit = 8, clock = () => Date.now()) {
     if (this.closed) return { visits: 0, changed: false };
     const start = clock();
     let visits = 0, changed = false;
@@ -46,6 +46,7 @@ export class Preparation {
           this.snapshot = next.value;
           this.running = null;
           changed = true;
+          break;
         }
       }
       return { visits, changed };
@@ -66,6 +67,92 @@ export class Preparation {
 }
 
 export const equal = (a, b) => !!a && !!b && a.length === b.length && a.every((v, i) => v === b[i]);
+
+// Growable prefix sums: measurements update one height without a history-wide
+// sizes/reduce pass in render. The second tree locates unmeasured neighbours.
+export class PrefixIndex {
+  constructor() { this.values = []; this.tree = [0]; }
+  sum(end = this.values.length) {
+    let out = 0;
+    for (let i = end; i > 0; i -= i & -i) out += this.tree[i];
+    return out;
+  }
+  push(value) {
+    const i = this.values.length + 1;
+    this.tree[i] = value + this.sum(i - 1) - this.sum(i - (i & -i));
+    this.values.push(value);
+  }
+  set(index, value) {
+    const delta = value - this.values[index];
+    this.values[index] = value;
+    for (let i = index + 1; i < this.tree.length; i += i & -i) this.tree[i] += delta;
+  }
+  // Index containing the zero-based cumulative position (or length at end).
+  at(position) {
+    let index = 0, step = 2 ** Math.floor(Math.log2(this.values.length || 1));
+    for (; step >= 1; step /= 2) {
+      const next = index + step;
+      if (next < this.tree.length && this.tree[next] <= position) { index = next; position -= this.tree[next]; }
+    }
+    return index;
+  }
+}
+
+export class PreparedHistory {
+  constructor() {
+    this.rows = []; this.keys = []; this.index = new Map(); this.positions = new Map();
+    this.geometry = new PrefixIndex(); this.missing = new PrefixIndex(); this.settling = new Map();
+    this.paths = []; this.artifacts = []; this.strips = []; this.cards = []; this.found = []; this.lit = new Set();
+  }
+  get sizes() { return this.geometry.values; }
+  get total() { return this.geometry.sum(); }
+  measure(id, key, height, at) {
+    const i = this.positions.get(id);
+    if (i === undefined || this.keys[i] !== key) return;
+    this.geometry.set(i, Number.isFinite(height)&&height>0?Math.min(height,40000):60); this.missing.set(i, 0);
+    if (Date.now() - at < 4000) this.addSettling(i);
+  }
+  removeSettling(node) {
+    if (node.before) node.before.after = node.after; else this.firstSettling = node.after;
+    if (node.after) node.after.before = node.before; else this.lastSettling = node.before;
+    this.settling.delete(node.i);
+  }
+  addSettling(i, recent = true) {
+    const previous = this.settling.get(i);
+    if (previous) this.removeSettling(previous);
+    const node = { i, before: null, after: null };
+    if (recent) {
+      node.after = this.firstSettling;
+      if (node.after) node.after.before = node;
+      this.firstSettling = node;
+      this.lastSettling ??= node;
+    } else {
+      node.before = this.lastSettling;
+      if (node.before) node.before.after = node;
+      this.lastSettling = node;
+      this.firstSettling ??= node;
+    }
+    this.settling.set(i, node);
+  }
+  measureOrder(near, now, measuredAt) {
+    const out = [], count = this.missing.sum();
+    let a = this.missing.sum(Math.max(0, Math.min(this.rows.length, near + 1))) - 1, b = a + 1;
+    while (out.length < 8 && (a >= 0 || b < count)) {
+      const left = a >= 0 ? this.missing.at(a) : -Infinity, right = b < count ? this.missing.at(b) : Infinity;
+      if (near - left <= right - near) { out.push(left); a--; } else { out.push(right); b++; }
+    }
+    // Expiry is bounded too. Retire a few old candidates per frame, even while
+    // fresh candidates fill the layout budget. No settled full-history scan.
+    let visits = 0, node = this.firstSettling;
+    while (node && visits++ < 32) {
+      const next = node.after, i = node.i;
+      if (now - (measuredAt.get(this.keys[i]) ?? 0) >= 4000) this.removeSettling(node);
+      else if (out.length < 8) out.push(i);
+      node = next;
+    }
+    return out;
+  }
+}
 
 // Stable merge sort. Sorting a large history must also yield, including copying
 // runs; native Array.sort would hide an entire pass inside one callback.

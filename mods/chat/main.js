@@ -1,4 +1,4 @@
-import { Preparation, PreparedHistory, sortPlan, equal } from "./core/chat-preparation.js";
+import { Preparation, PreparedHistory, RecentIndex, sortPlan, equal } from "./core/chat-preparation.js";
 import { inReviewScope } from "./core/review.js";
 import {projectFolder} from './project-folder.js';
 import {appendInstructions,spaceInstructions} from './core/instructions.js';
@@ -1321,10 +1321,17 @@ export default class Chat extends View {
     // If decoding/settling throws, pull retries the same page/tail next time.
     const own=new Set();
     for(const id of this.own??[]){own.add(id);if(++n%64===0)await cx.sleep(0);}
-    const candidate=Object.assign(Object.create(Object.getPrototypeOf(this)),this,{conv,own});
     if(epoch!==this.readEpoch||this.historyClosed)return null;
+    return {conv,own};
+  }
+
+  commitConversation(next,state) {
+    // Take the outbox at the commit boundary, after every asynchronous yield.
+    // Settlement and publication are synchronous: a new send or written answer
+    // can never be overwritten by an older reconstruction's pending array.
+    const candidate=Object.assign(Object.create(Object.getPrototypeOf(this)),this,next);
     candidate.settlePending();
-    return {conv,pending:candidate.pending,replied:candidate.replied,own:candidate.own};
+    Object.assign(this,state,next,{pending:candidate.pending,replied:candidate.replied,own:candidate.own});
   }
 
   async historyRecords(before, added, cx) {
@@ -1367,7 +1374,7 @@ export default class Chat extends View {
       if (head[0] !== "P") return;
       const next=await this.rebuild(recs,cx);
       if(!next||!current())return;
-      Object.assign(this,next,{start:Number(head[1]),end:Number(head[2]),records:recs});
+      this.commitConversation(next,{start:Number(head[1]),end:Number(head[2]),records:recs});
       this.stick = true;
       this.phase = "ready";
       cx.notify();
@@ -1385,7 +1392,7 @@ export default class Chat extends View {
     if(all.length>KEEP&&!this.loadingEarlier){all=all.slice(-Math.floor(KEEP*0.75));start=all[0].off;}
     const next=await this.rebuild(all,cx);
     if(!next||!current())return;
-    Object.assign(this,next,{records:all,start,end:Number(head[3])});
+    this.commitConversation(next,{records:all,start,end:Number(head[3])});
     // Your reactions just sent stay shown as sent until the log says the same.
     for (const [id, mine] of this.myReacts) {
       const logged = this.conv.reactions.get(id) ?? [];
@@ -1414,7 +1421,7 @@ export default class Chat extends View {
         const all=await this.historyRecords(recs,previous,cx);
         const next=await this.rebuild(all,cx);
         if(!next||path!==this.path||before!==this.start||epoch!==this.readEpoch||previous!==this.records||end!==this.end||this.historyClosed)return;
-        Object.assign(this,next,{start:Number(head[1]),records:all});
+        this.commitConversation(next,{start:Number(head[1]),records:all});
         this.anchor = first ? { id: first, until: Date.now() + 3000 } : null;
         this.reanchor = true;
       } catch (e) {
@@ -2054,6 +2061,7 @@ export default class Chat extends View {
   }
 
   findStep(d, rows, cx) {
+    if(this.history?.snapshot&&(!this.historyCurrent(this.history.snapshot)||this.history.snapshot.rows!==rows))return;
     const matches = this.findMatches(rows);
     const total = matches.reduce((n, m) => n + m.n, 0);
     if (!total) return;
@@ -3225,6 +3233,14 @@ export default class Chat extends View {
       dayOf(Date.now())];
   }
 
+  historyCurrent(plan) {
+    return !this.historyClosed&&this.history?.snapshot===plan&&equal(plan.context,this.historyContext());
+  }
+
+  historyEvent(plan,fn) {
+    return (...args)=>{if(this.historyCurrent(plan))return fn(...args);};
+  }
+
   clearHistory(closed=false) {
     this.historyTask?.cancel();this.historyTask=null;
     this.history?.close();this.history=null;this.preparingHistory=null;
@@ -3273,9 +3289,9 @@ export default class Chat extends View {
     for(const p of this.pending??[]){yield;host.pending.push({...p});}
     for(const p of this.replied??[]){yield;host.replied.push({...p});}
     for(const [id,state] of this.rowRevisions??[]){yield;host.rowRevisions.set(id,{...state});}
-    const plan=new PreparedHistory();this.preparingHistory=plan;
+    const plan=new PreparedHistory();plan.context=this.history.context;this.preparingHistory=plan;
     const rows=yield* host.rowPlan();
-    plan.rows=rows;
+    plan.rows=rows;plan.recent=new RecentIndex(rows.length);
     for(let i=0;i<rows.length;i++){
       yield;
       const row=rows[i],key=host.key(row);
@@ -3283,7 +3299,7 @@ export default class Chat extends View {
       const h=this.heights.get(key)??host.guess(row);
       plan.geometry.push(Number.isFinite(h)&&h>0?Math.min(h,40000):60);
       plan.missing.push(this.heights.has(key)?0:1);
-      if(this.heights.has(key)&&Date.now()-(this.measuredAt.get(key)??0)<4000)plan.addSettling(i,false);
+      if(this.heights.has(key)&&Date.now()-(this.measuredAt.get(key)??0)<4000)plan.recent.set(i,this.measuredAt.get(key));
       if(row.kind==="imgs")for(const path of row.paths){yield;plan.paths.push(path);}
       if(row.kind==="artifact"){
         plan.artifacts.push(row);plan.pendingArts ||= row.pending;
@@ -5243,8 +5259,10 @@ export default class Chat extends View {
       this.heights.clear(); this.measuredAt.clear(); this.heightsFor = this.width; this.heightsColumn = this.column(); this.heightsZoom = zoomOf(); this.measureGen++;
     }
     const prepared=this.prepareHistory(t,cx);
-    if(!prepared)return root.child(this.notice(t, WORDS.opening, null)).child(this.composer(t,st));
+    if(!prepared)return root.when(this.finding,el=>el.child(this.findBar(t,[])))
+      .child(this.notice(t, WORDS.opening, this.error??null)).child(this.composer(t,st));
     const {rows,keys,sizes,index:rowIndex}=prepared;
+    const event=fn=>this.historyEvent(prepared,fn);
     // First-seen times this render found (seenAt()), shared once it's done; the newest 60 kept.
     if (this.seenNew && !this.seenFlush) {
       this.seenFlush = true;
@@ -5289,21 +5307,21 @@ export default class Chat extends View {
       ? this.notice(t, "No messages", "Write to the agent below.")
       : v_flex().relative().flex_1().min_h(0).pt(8)
         .id("chat-body")
-        .on_size_change((size, cx) => {
+        .on_size_change(event((size, cx) => {
           const was = this.listH, h = unzoom(size.height);
           this.listH = h;
           if (was && Math.abs(was - h) > 0.5 && this.pinned) { this.stick = true; cx.notify(); }
-        })
+        }))
         // How far down the list a press was, for the action bands (rows take no handlers).
-        .on_mouse_down("left", (e) => { this.bodyPress = unzoom(e.local_position?.y); })
+        .on_mouse_down("left", event((e) => { this.bodyPress = unzoom(e.local_position?.y); }))
         // Hover repaint follows message boundaries; moving within a long reply does not remeasure it.
-        .on_mouse_move((e, cx) => {
+        .on_mouse_move(event((e, cx) => {
           const row=rows[prepared.geometry.at((this.scrollTop??0)+unzoom(e.local_position?.y??0))];
           const b=row?.bar?.of??row?.blk??row?.of??row?.id??null;
           if (b !== this.hoverBand) { this.hoverBand = b; cx.notify(); }
-        })
+        }))
         .on_hover((hovered, cx) => { if (!hovered) { this.hoverBand = null; cx.notify(); } })
-        .on_scroll_wheel((e, cx) => {
+        .on_scroll_wheel(event((e, cx) => {
           const y = e.delta?.y ?? 0;
           // Where the list is scrolled to, as near as known (the list doesn't say): wheel moves it.
           const movement = viewportScroll(this.scrollTop, y, prepared.total, Math.max(0, (this.listH ?? 0) - 8));
@@ -5312,8 +5330,9 @@ export default class Chat extends View {
           if (y > 0 && this.pinned) { this.pinned = false; cx.notify(); }
           if (y < 0 && !this.pinned && movement.bottom) { this.pinned = true; cx.notify(); }
           if (y > 0 && (this.range?.start ?? 9) <= 1) this.loadEarlier(cx);
-        })
+        }))
         .child(v_virtual_list("chat-rows", rows.length, sizes, (i) => rows[i].id, (range) => {
+          if(!this.historyCurrent(prepared))return [];
           this.range = range;
           if (rows.length && !(range.end > range.start)) this.blank = true;
           // The first row on screen bounds the scroll position: keep the estimate inside it.
@@ -5333,8 +5352,8 @@ export default class Chat extends View {
           });
         })
           .track_scroll(this.scroll).size_full()
-          .on_item_secondary_click((key,e,cx)=>{const row=rows.find(r=>r.id===key);this.clipboardMenu("reply",e,cx,this.clipboardText(row));})
-          .on_item_click((key, cx) => this.clickRow(key, rows, cx, sizes)))
+          .on_item_secondary_click(event((key,e,cx)=>{const row=rowIndex.get(key);this.clipboardMenu("reply",e,cx,this.clipboardText(row));}))
+          .on_item_click(event((key, cx) => this.clickRow(key, rows, cx, sizes))))
         .child(Scrollbar.vertical("chat-rows").absolute().inset_0())
         .child(this.measurer(rows, keys, t))
         // Cards' controls measured (strips.js hit()), and where question cards' keys come in.
@@ -5350,11 +5369,11 @@ export default class Chat extends View {
             .child(h_flex().id("chat-latest").h(26).px(10).gap(5).items_center().rounded(13).cursor_pointer()
               .bg(t.popover).border_1().border_color(t.border).shadow_md().text_size(12).text_color(t.muted)
               .hover((s) => s.text_color(t.foreground))
-              .on_click((_e, cx) => {
+              .on_click(event((_e, cx) => {
                 if (below.length) this.scroll.scroll_to_item(below[0], "center");
                 else { this.pinned = true; this.stick = true; }
                 cx.notify();
-              })
+              }))
               .when(below.length > 0, (el) => el.child(div().size(6).flex_none().rounded(3).bg(red())))
               .child(svg("mods/workspace-chrome/chevron-down.svg").size(12).flex_none()).child(label)));
         });
@@ -5380,6 +5399,7 @@ export default class Chat extends View {
     // measured in the last few seconds: markdown can lay out a moment after its first frame (a
     // long message first measures as one line), so a height is never taken once and kept.
     const generation = this.measureGen;
+    const prepared=this.history?.snapshot?.rows===rows?this.history.snapshot:null;
     const now = Date.now();
     const order = this.history?.snapshot?.rows===rows
       ? this.history.snapshot.measureOrder(near,now,this.measuredAt)
@@ -5390,6 +5410,7 @@ export default class Chat extends View {
         .on_size_change((size, cx) => {
           // Size callbacks can arrive after a pane resize or a fold toggle. They
           // belong to the layout that created them, never the current cache.
+          if(prepared&&!this.historyCurrent(prepared))return;
           if (generation !== this.measureGen || revisions.get(i) !== (this.rowRevisions?.get(rows[i].id)?.revision ?? 0)) return;
           const h = measuredHeight(this.heights.get(keys[i]), unzoom(size.height));
           if (h === undefined || this.heights.get(keys[i]) === h) return;

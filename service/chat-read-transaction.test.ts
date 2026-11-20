@@ -10,7 +10,7 @@ const method = (name: string) => {
 function host() {
   const C = new Function('Conversation', 'records', 'ownWords', `
     const PAGE=200,KEEP=2000,norm=s=>String(s??'').replace(/\\s+/g,' ').trim(),same=(a,b)=>norm(a)===norm(b);
-    return class {${['pull', 'rebuild', 'historyRecords', 'settlePending'].filter(n => source.includes(' ' + n + '(')).map(method).join('\n')}}`)(Conversation, records, ownWords);
+    return class {${['pull', 'rebuild', 'commitConversation', 'historyRecords', 'settlePending'].filter(n => source.includes(' ' + n + '(')).map(method).join('\n')}}`)(Conversation, records, ownWords);
   const v: any = new C(), stats = { sleeps: 0, notifies: 0 };
   const cx = { sleep: async () => { stats.sleeps++; }, notify() { stats.notifies++; } };
   Object.assign(v, { path: 'fixture', kind: 'codex', readEpoch: 0, start: null, end: 0, records: [], pending: [], replied: [], myReacts: new Map(), phase: 'finding' });
@@ -51,4 +51,33 @@ test('real cold/fresh rebuild yields and an obsolete read cannot publish after r
   const h = host(); h.v.log = async () => ({ stdout: 'P 0 999\n' + Array.from({ length: 240 }, (_, i) => record(i)).join('') });
   await h.v.pull(h.cx); const first = structuredClone(h.v.conv.items);
   const fresh = await h.v.rebuild(h.v.records, h.cx); expect(fresh.conv.items).toEqual(first); expect(h.stats.sleeps).toBeGreaterThanOrEqual(60);
+});
+
+test('new sends, delivery flags and written answers survive every asynchronous reconstruction yield', async () => {
+  const h = host();
+  h.v.log = async () => ({ stdout: 'P 0 999\n' + Array.from({ length: 240 }, (_, i) => record(i)).join('') });
+  h.v.pending = [{ id: 'already-sent', text: 'Text 2', sent: 'Text 2', at: 0, delivered: true }];
+  let added = false;
+  h.cx.sleep = async () => {
+    if (!added) {
+      added = true; h.v.pending.push({ id: 'new-send', text: 'New words', sent: 'New words', at: 1 });
+      h.v.replied = [{ id: 'new-answer', text: 'A written answer', at: 1 }];
+    }
+    h.v.pending.find((p: any) => p.id === 'new-send').delivered = true;
+  };
+  await h.v.pull(h.cx);
+  expect(h.v.pending).toEqual([{ id: 'new-send', text: 'New words', sent: 'New words', at: 1, delivered: true }]);
+  expect(h.v.replied).toEqual([{ id: 'new-answer', text: 'A written answer', at: 1 }]);
+  // Also change references after reconstruction returns but before pull's commit.
+  const rebuild = h.v.rebuild.bind(h.v);
+  h.v.rebuild = async (...args: any[]) => {
+    const candidate = await rebuild(...args);
+    h.v.pending = [...h.v.pending, { id: 'last-send', text: 'Last words', sent: 'Last words', at: 2 }];
+    h.v.replied = [...h.v.replied, { id: 'last-answer', text: 'Last answer', at: 2 }];
+    return candidate;
+  };
+  h.v.log = async () => ({ stdout: 'T 1099 999 1099\n' + record(241) });
+  await h.v.pull(h.cx);
+  expect(h.v.pending.map((p: any) => p.id)).toEqual(['new-send', 'last-send']);
+  expect(h.v.replied.map((p: any) => p.id)).toEqual(['new-answer', 'last-answer']);
 });

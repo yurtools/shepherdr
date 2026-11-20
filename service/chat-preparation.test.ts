@@ -14,13 +14,13 @@ function method(name: string) {
 }
 const names = ['rows', 'rowPlan', 'spaced', 'spacedPlan', 'foldOf', 'key', 'guess', 'guessBare', 'findMatches',
   'newsLines', 'newsPlan', 'resolveArts', 'resolveArtsPlan', 'timelineCards', 'timelinePlan',
-  'historyContext', 'historyStamp', 'historyPlan', 'prepareHistory', 'scheduleHistory', 'clearHistory'];
-export function historyHost(items: any[]) {
+  'historyCurrent', 'historyEvent', 'historyContext', 'historyStamp', 'historyPlan', 'prepareHistory', 'scheduleHistory', 'clearHistory'];
+export function historyHost(items: any[], sharedRead: (key: string) => any = () => null) {
   const jobs: any[] = [], stats = { items: 0, keys: 0, guesses: 0, lookups: 0, notifies: 0 };
   const dependencies: any = { ...view, ...geometry, ...preparation,
     dayLabel: (at: number) => `Day ${Math.floor(at / 86400000)}`, dayOf: (at: number) => Math.floor(at / 86400000) * 86400000, pilotLine,
     askAt: () => 1772946000000, openCard: () => null, assistant: () => false,
-    inRender: (fn: any) => fn(), home: () => '/home/test', cardsOf: () => [], shared: () => null, zoomOf: () => 1, strips: { sig: () => '' } };
+    inRender: (fn: any) => fn(), home: () => '/test-home', cardsOf: () => [], shared: sharedRead, zoomOf: () => 1, strips: { sig: () => '' } };
   const C = new Function(...Object.keys(dependencies), `
     const ACT=22,BAND_IN=4,ACT_ROW=26,GAP=16,QUIET_IN={top:5,bottom:6},FOLD=20,FOLD_TALL=28,LINE_H=21,PEEK_W=420;
     const norm=s=>String(s??'').replace(/\\s+/g,' ').trim(),taskRef=x=>x.ref;
@@ -169,4 +169,43 @@ test('complete row, key, height and index parity survives fresh item rebuilds an
   rebuilt.measure(row.id, 'obsolete-key', 900, Date.now()); expect(rebuilt.total).toBe(total);
   rebuilt.measure(row.id, key, 900, Date.now()); expect(rebuilt.total).toBe(total - old + 900); expect(rebuilt.sizes[10]).toBe(900);
   expect(rebuilt.geometry.at(rebuilt.geometry.sum(10))).toBe(10);
+});
+
+test('host-shaped fresh shared values keep identical work and invalidate real screen/name changes', () => {
+  const values: any = { 'chat.screens': { fixture: [{ id: 'screen', state: 'closed', how: 'Answered' }] }, 'spaces-chat': { machines: { local: { name: 'This machine' } } } };
+  const h = historyHost(large(), key => structuredClone(values[key]));
+  h.request();
+  while (h.jobs.length) { h.request(); h.one(); }
+  const plan = h.v.history.snapshot; expect(plan).not.toBeNull();
+  for (let n = 0; n < 20; n++) h.request();
+  expect(h.v.history.snapshot).toBe(plan); expect(h.jobs).toHaveLength(0);
+  values['chat.screens'].unrelated = [{ id: 'another screen' }]; h.request(); expect(h.v.history.snapshot).toBe(plan);
+  values['chat.screens'].fixture[0].how = 'Declined'; h.request(); expect(h.v.rows()).toEqual([]); h.drain();
+  values['spaces-chat'].machines.local.name = 'Renamed'; h.request(); expect(h.v.rows()).toEqual([]); h.drain();
+});
+
+test('same worker request and payload with changed review policy invalidates cached strips', () => {
+  const h = historyHost(large());
+  const ask = { id: 'request', requestHash: 'payload', approval: { attention: true, reason: 'Waiting for review', review: 'pending' } };
+  h.v.wasks = [ask]; h.request(); h.drain();
+  const plan = h.v.history.snapshot;
+  ask.approval = { attention: false, reason: 'Review in progress', review: 'running' }; h.request();
+  expect(h.v.history.snapshot).toBeNull(); h.drain(); expect(h.v.history.snapshot).not.toBe(plan);
+  ask.approval.reason = 'A new review result'; h.request(); expect(h.v.rows()).toEqual([]); h.drain();
+  const stable = h.v.history.snapshot; h.v.wasks = [{ ...ask, approval: { ...ask.approval } }]; h.request();
+  expect(h.v.history.snapshot).toBe(stable); expect(h.jobs).toHaveLength(0);
+});
+
+test('old native event callbacks cannot act before redraw, after supersession, reset or close', () => {
+  const h = historyHost(large()); h.request(); h.drain();
+  const plan = h.v.history.snapshot; let calls = 0;
+  const click = h.v.historyEvent(plan, () => calls++); click(); expect(calls).toBe(1);
+  h.v.path = 'another context'; click(); expect(calls).toBe(1);
+  h.request(); h.drain(); click(); expect(calls).toBe(1);
+  h.v.clearHistory(); click(); expect(calls).toBe(1);
+  h.request(); h.drain(); const final = h.v.historyEvent(h.v.history.snapshot, () => calls++);
+  h.v.clearHistory(true); final(); expect(calls).toBe(1);
+  // Test the actual integration uses the guard, rather than only its helper.
+  expect(source).toContain('.on_item_click(event('); expect(source).toContain('.on_item_secondary_click(event(');
+  expect(source).toContain('if(prepared&&!this.historyCurrent(prepared))return;');
 });

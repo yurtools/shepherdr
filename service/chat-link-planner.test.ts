@@ -290,3 +290,10 @@ test('close starts the local hook handoff before waiting for SDK cleanup yields'
  h.cx.sleep=async()=>{};resume();await closing;
  expect(h.views.every(p=>p.released===1)).toBe(true);
 });
+
+test('same-size replacement by a previously removed ID still reconciles membership',()=>{
+ const h=host(),a=md('a'),b=md('b'),c=md('c');h.prepare([a,c]);h.drain();
+ h.prepare([a,b]);h.drain();expect(h.lookup(b)).not.toBeNull();
+ h.prepare([b,c]);expect(h.lookup(a)).toBeNull();h.drain();
+ expect(h.lookup(c)).not.toBeNull();expect(h.v.linkMarkdownWork.rows.has('a')).toBe(false);
+});

@@ -122,7 +122,7 @@ test("a missing explicitly resumed history session never falls back to a new con
 });
 
 test("same-length content changes invalidate native Markdown measurements while hover does not",()=>{
- const c=chat();c.findQuery=()=>'';const row:any={id:'reply',kind:'agent',text:'word text'};
+ const c=chat();c.findQuery=()=>'';c.opened=new Set();c.unfolded=new Set();const row:any={id:'reply',kind:'agent',text:'word text'};
  const first=c.key(row);expect(c.key({...row})).toBe(first);
  expect(c.key({...row,text:'word\ntext'})).not.toBe(first);
 });

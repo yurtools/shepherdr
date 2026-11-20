@@ -3169,22 +3169,6 @@ export default class Chat extends View {
 
   // ---- the conversation's rows ----------------------------------------------------------------
 
-  rowContent(x) {
-    // feed mutates items; rebuild replaces them while preserving IDs. Reuse pure
-    // content work across both, checking every input, with the existing history
-    // limit bounding this cache (eviction only repeats work; it removes no text).
-    this.rowContentCache ??= new Map();
-    const cwd=this.t?.foreground?.cwd??this.t?.cwd??null,root=this.machine?null:home();
-    const id=x.id??x;
-    let kept=this.rowContentCache.get(id);
-    if(!kept||kept.text!==x.text||kept.kind!==x.kind||kept.cwd!==cwd||kept.root!==root){
-      const md=x.kind==='agent'?mediaIn(x.text,{cwd,home:root}):null;
-      const ps=md?(md.text||!md.media.length?parts(md.text||x.text):[]):[{type:'md',text:x.text??''}];
-      kept={text:x.text,kind:x.kind,cwd,root,md,ps};this.rowContentCache.set(id,kept);
-      if(this.rowContentCache.size>KEEP)this.rowContentCache.delete(this.rowContentCache.keys().next().value);
-    }
-    return kept;
-  }
 
   rows() {
     const out = [];
@@ -3279,9 +3263,9 @@ export default class Chat extends View {
         const from = out.length;
         if (x.replyTo) out.push({ kind: "replyref", id: `rr:${x.id}`, to: x.replyTo, of: x.id, side: "user" });
         // Rewind goes to a prompt; a /command isn't one.
-        const content=this.rowContent(x),fold=this.foldOf(x,content.ps);
+        const fold=this.foldOf(x,[{type:'md',text:x.text??''}]);
         if(fold&&!fold.open)out.push({...x,clip:fold.clips.get(0)});
-        else (content.chunks??=messageChunks(x.text)).forEach((text,n)=>out.push({...x,id:n?`${x.id}:u${n}`:x.id,text}));
+        else messageChunks(x.text).forEach((text,n)=>out.push({...x,id:n?`${x.id}:u${n}`:x.id,text}));
         if(fold)out.push({kind:'fold',id:`fold:${x.id}`,of:x.id,open:fold.open});
         const chips = this.mentioned(x.text);
         if (chips.length) out.push({ kind: "chips", id: `tc:${x.id}`, tasks: chips.map((t) => ({ id: t.id, ref: taskRef(t), title: t.title })) });
@@ -3299,7 +3283,8 @@ export default class Chat extends View {
       if (x.kind === "agent") {
         // The pictures and videos it named in its words (core/chat-view.js mediaIn, as the web app's chat): the
         // pictures under its words as the person's are, each video a line that opens it (the window can't play one).
-        const {md,ps} = this.rowContent(x);
+        const md = mediaIn(x.text, { cwd: this.t?.foreground?.cwd ?? this.t?.cwd ?? null, home: this.machine ? null : home() });
+        const ps = md.text || !md.media.length ? parts(md.text || x.text) : [];
         const first = out.length;
         // A long reply: its first lines (the part where they end cut off there), then Show more.
         const fold = ps.length ? this.foldOf(x, ps) : null;
@@ -3369,13 +3354,7 @@ export default class Chat extends View {
     const q = this.findQuery().toLowerCase();
     if (q && String(x.text).toLowerCase().includes(q)) return null;
     const w = Math.max(240, Math.floor(Math.min(this.width, this.column()) * 0.8)) - 24;
-    this.foldEstimates ??= new WeakMap();
-    let estimate=this.foldEstimates.get(ps);
-    if(!estimate||estimate.ps!==ps||estimate.w!==w){
-      estimate={ps,w,est:ps.map((p) => (p.type === "md" ? wrapLines(p.text, w) * LINE_H : 34 + 16 + p.code.split("\n").length * 19))};
-      this.foldEstimates.set(ps,estimate);
-    }
-    const est=estimate.est;
+    const est = ps.map((p) => (p.type === "md" ? wrapLines(p.text, w) * LINE_H : 34 + 16 + p.code.split("\n").length * 19));
     if (est.reduce((a, b) => a + b, 0) <= FOLD_TALL * LINE_H) return null;
     if (this.unfolded.has(x.id)) return { open: true, clips: new Map(), last: ps.length - 1 };
     const clips = new Map();
@@ -3491,7 +3470,7 @@ export default class Chat extends View {
     // The existing keys pass supplies a cheap change counter. Fresh rows/spaced
     // arrays and Conversation rebuilds alone must not restart deferred progress.
     const openNow = this.opened.has(x.id), unfoldNow = this.unfolded.has(x.blk ?? x.id);
-    if (state.key !== key || state.who !== !!x.who || state.open !== openNow || state.unfold !== unfoldNow) this.linkRowsRevision = (this.linkRowsRevision ?? 0) + 1;
+    if (!this.linkMarkdownWork?.index?.has(x.id) || state.key !== key || state.who !== !!x.who || state.open !== openNow || state.unfold !== unfoldNow) this.linkRowsRevision = (this.linkRowsRevision ?? 0) + 1;
     state.key = key; state.who = !!x.who; state.open = openNow; state.unfold = unfoldNow; state.drawRevision = revision;
     return key;
   }

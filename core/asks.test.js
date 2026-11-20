@@ -80,3 +80,14 @@ test('native JS and Python bind nested Unicode and numeric request values identi
   const out = Bun.spawnSync(['python3','-c', 'import sys,json;sys.path.insert(0,"mods/tasks/bin");from herdr_task.approvals import status_key;print(status_key(json.loads(sys.stdin.read())))'],{stdin:Buffer.from(JSON.stringify(req))});
   expect(out.exitCode).toBe(0); expect(requestHash(req)).toBe(out.stdout.toString().trim());
 });
+
+test('only a bounded request-bound Assistant ask rationale reaches permission details', () => {
+ const req={tool_name:'Bash',tool_input:{command:'git status'}},v={version:1,request_hash:requestHash(req),state:'person',reason:'assistant-asked',review_reason:'The destination is outside the project. Please choose.'};
+ expect(permissionStatus(req,v)).toMatchObject({attention:true,detail:'Assistant asks you: '+v.review_reason});
+ for(const review_reason of ['',null,{},'x'.repeat(401),'private\ntraceback'])expect(permissionStatus(req,{...v,review_reason}).detail).toBe('Assistant asked you to decide.');
+ expect(permissionStatus(req,{...v,reason:'no-rule'}).detail).toBe('No saved rule matched this request.');
+ expect(permissionStatus(req,{...v,state:'assistant'}).detail).toBeUndefined();
+ expect(permissionStatus({...req,tool_input:{command:'git push'}},v).state).toBe('unknown');
+ const safe=permissionStatus(req,{...v,review_reason:'Unknown: password="private words" Bearer private-value api_key=private-key'}).detail;
+ for(const secret of ['private words','private-value','private-key'])expect(safe).not.toContain(secret);
+});

@@ -10,7 +10,7 @@ class ApprovalPolicy(unittest.TestCase):
   self.tmp=tempfile.TemporaryDirectory();self.addCleanup(self.tmp.cleanup);self.base=Path(self.tmp.name)
   self.env=mock.patch.dict(os.environ,{'HERDR_APP_HOME':str(self.base/'app'),'HERDR_TASK_SETTINGS':str(self.base/'settings.json'),'HC_TERMINAL_ID':'worker'});self.env.start();self.addCleanup(self.env.stop)
   self.meta={'state':'live','argv':['env','CODEX_HOME='+str(self.base/'account'),'codex'],'cwd':str(self.base/'repo'),'labels':{'herdr.task.space':'space','herdr.task':'TASK-1','herdr.coordinator':'assistant'}}
-  self.hc=mock.patch.object(A,'hc_get',return_value=self.meta);self.hc.start();self.addCleanup(self.hc.stop)
+  self.hc=mock.patch.object(A,'hc_get',side_effect=lambda terminal: {'state':'live','labels':{'herdr.role':'coordinator','herdr.coordinator.space':'space'},'argv':['claude']} if terminal=='assistant' else self.meta);self.hc.start();self.addCleanup(self.hc.stop)
   self.req={'session_id':'session','cwd':str(self.base/'repo'),'tool_name':'Bash','tool_input':{'command':'git status --short'}}
   self.path=A.app_home()/'data/chat-asks/req/worker.1.json';A.write(self.path,self.req)
  def mode(self,mode):A.write(self.base/'settings.json',{'everywhere':{'approvals':{'mode':mode}}})
@@ -115,7 +115,9 @@ class ApprovalLifecycle(unittest.TestCase):
  def state(self):return A.read(self.path.with_suffix('.status'))
  def review(self,mode='assistant',kind='feature',delivery=0):
   self.mode(mode)
-  self.meta['labels'].update({'herdr.feature':'feature-one','herdr.owner':'assistant'}) if kind=='feature' else None
+  if kind=='feature':self.meta['labels'].update({'herdr.feature':'feature-one','herdr.owner':'assistant'})
+  else:
+   for key in ('herdr.feature','herdr.owner'):self.meta['labels'].pop(key,None)
   worker=self.meta.copy()
   reviewer={'state':'live','labels':{'herdr.role':kind if kind=='feature' else 'coordinator','herdr.feature':'feature-one','herdr.coordinator.space':'space'}}
   A.hc_get.side_effect=lambda terminal:reviewer if terminal=='assistant' else worker
@@ -139,6 +141,7 @@ class ApprovalLifecycle(unittest.TestCase):
     ticket,_=self.review(kind=kind);self.assertEqual(self.state()['state'],'assistant');self.assertEqual(self.state()['reviewer'],kind)
     public=json.dumps(self.state());self.assertNotIn(ticket['token'],public);self.assertNotIn('tool_input',public);self.assertNotIn(self.req['tool_input']['command'],public)
  def test_explicit_review_in_manual_mode_updates_and_survives_later_hook_evaluation(self):
+  self.meta['labels'].update({'herdr.feature':'feature-one','herdr.owner':'assistant'})
   A.evaluate(self.path);self.assertEqual(self.state()['state'],'person')
   ticket,_=self.review('manual');self.assertEqual(self.state()['state'],'assistant')
   with mock.patch.object(A.subprocess,'run',side_effect=AssertionError('must not redeliver')):A.evaluate(self.path)
@@ -207,6 +210,292 @@ class ApprovalLifecycle(unittest.TestCase):
   with mock.patch.object(A,'answer_once',side_effect=person_wins):
    with self.assertRaisesRegex(ValueError,'already been answered'):ui.main(args)
   self.assertEqual(A.history_rows(),[])
+class AssistantReviewRegression(unittest.TestCase):
+ setUp=ApprovalPolicy.setUp
+ mode=ApprovalPolicy.mode
+ def ui(self,*args):
+  import importlib.util
+  spec=importlib.util.spec_from_file_location('approval_ui',ROOT/'mods/chat/approval-policy.py');ui=importlib.util.module_from_spec(spec);spec.loader.exec_module(ui)
+  return ui.main(ui.parser().parse_args(list(args)))
+ def delegate(self,mode='rules',during=None):
+  self.mode(mode);req,ctx=A.request_context(self.path)
+  original=A.hc_get.side_effect
+  def lookup(terminal):
+   if during:during()
+   return {'state':'live','labels':{'herdr.role':'coordinator','herdr.coordinator.space':'space'},'argv':['claude']}
+  A.hc_get.side_effect=lookup
+  try:
+   with mock.patch.object(A.subprocess,'run',return_value=mock.Mock(returncode=0,stdout='{}')) as send:
+    out=self.ui('review','--request',str(self.path),'--terminal','worker')
+   return out,A.read(A.store()/'pending'/self.path.name),send
+  finally:A.hc_get.side_effect=original
+ def test_poll_during_explicit_review_lookup_does_not_restore_no_rule(self):
+  observed=[]
+  def poll():
+   # No recursive reviewer lookup: the ticket must describe processing already.
+   with mock.patch.object(A,'hc_get',return_value={'state':'live','labels':{'herdr.role':'coordinator','herdr.coordinator.space':'space'}}):A.evaluate(self.path)
+   observed.append(A.read(self.path.with_suffix('.status'))['state'])
+  self.delegate(during=poll)
+  self.assertTrue(observed);self.assertNotIn('person',observed)
+ def test_uncertain_review_publishes_its_specific_reason_on_the_card(self):
+  _,ticket,_=self.delegate()
+  A.decide(ticket['id'],ticket['token'],'ask','The destination is outside the project. Please choose.',terminal='assistant')
+  A.evaluate(self.path)
+  status=A.read(self.path.with_suffix('.status'))
+  self.assertEqual(status['reason'],'assistant-asked');self.assertIn('outside the project',status.get('review_reason',''))
+  self.assertFalse((self.path.parent.parent/'ans'/self.path.name).exists())
+ def test_allow_writes_an_assistant_outcome_for_only_the_original_hook(self):
+  _,ticket,send=self.delegate('manual')
+  A.decide(ticket['id'],ticket['token'],'allow','Read-only inspection needed for this task.',terminal='assistant')
+  end=self.path.parent.parent/'end'/self.path.stem
+  self.assertTrue(end.exists(),'Assistant decisions must publish an outcome for the card')
+  self.assertIn('Allowed by Assistant',end.read_text());self.assertIn('Read-only inspection',end.read_text())
+  self.assertEqual(len(list((self.path.parent.parent/'ans').glob('*'))),1)
+  self.assertEqual(A.history_rows()[-1]['source'],'assistant')
+  self.assertEqual(send.call_count,1);self.assertEqual(send.call_args.args[0][:3],['hc','send','assistant'])
+ def test_review_prompt_demands_independent_judgment_and_complete_submission(self):
+  self.req['tool_input']['command']='git status | wc -l';A.write(self.path,self.req)
+  _,ticket,send=self.delegate()
+  prompt=send.call_args.args[0][-1]
+  self.assertIn('No saved allow rule is required',prompt)
+  self.assertIn('every pipeline stage',prompt);self.assertIn('before going quiet',prompt)
+  self.assertIn(json.dumps(self.req,ensure_ascii=False),prompt)
+  self.assertEqual(ticket['context']['task'],'TASK-1')
+ def test_explicit_review_does_not_delegate_around_an_unreadable_policy(self):
+  self.mode('manual');(self.base/'settings.json').write_text('{broken')
+  with mock.patch.object(A.subprocess,'run',side_effect=AssertionError('must not delegate')):
+   self.ui('review','--request',str(self.path),'--terminal','worker')
+  self.assertEqual(A.read(self.path.with_suffix('.status'))['reason'],'policy-error')
+ def test_scripts_pipelines_and_named_tools_review_without_prefix_or_rule_grants(self):
+  cases=[('Bash',{'command':'git status | wc -l'}),('Bash',{'command':'python3 -c "print(1)" > report.txt'}),('mcp__fixture__inspect',{'command':'this is tool data','path':'project'})]
+  for i,(tool,value) in enumerate(cases):
+   for mode in ('manual','rules','assistant'):
+    for decision in ('allow','deny','ask'):
+     with self.subTest(tool=tool,mode=mode,decision=decision):
+      self.path=A.app_home()/f'data/chat-asks/req/worker.{i}.{mode}.{decision}.json'
+      self.req={**self.req,'tool_name':tool,'tool_input':value};A.write(self.path,self.req)
+      A.write(A.store()/'rules.json',[])
+      with A.locked():before=A.read(A.store()/'rules.json')
+      _,ticket,send=self.delegate(mode)
+      A.decide(ticket['id'],ticket['token'],decision,'Safe local inspection.' if decision=='allow' else 'The destination needs your choice.',terminal='assistant')
+      with A.locked():self.assertEqual(A.read(A.store()/'rules.json'),before)
+      self.assertEqual(A.settings(ticket['context'])['mode'],mode)
+      answer=self.path.parent.parent/'ans'/self.path.name
+      if decision=='ask':
+       self.assertFalse(answer.exists());A.evaluate(self.path);self.assertEqual(A.read(self.path.with_suffix('.status'))['reason'],'assistant-asked')
+      else:
+       self.assertEqual(A.read(answer),A.response(decision,'The destination needs your choice.' if decision=='deny' else '')['response'])
+       with self.assertRaisesRegex(ValueError,'already been answered'):A.decide(ticket['id'],ticket['token'],'allow','Again',terminal='assistant')
+      self.assertEqual(A.history_rows()[-1]['source'],'assistant');self.assertEqual(send.call_count,1)
+ def test_double_click_during_lookup_reuses_processing_ticket_and_sends_once(self):
+  seen=[]
+  def click():
+   if not seen:
+    seen.append(None);seen[0]=self.ui('review','--request',str(self.path),'--terminal','worker')
+  _,ticket,send=self.delegate(during=click)
+  self.assertEqual(send.call_count,1);self.assertTrue(seen);self.assertEqual(ticket['status'],'pending')
+ def test_saved_denies_and_later_policy_failures_cannot_be_overridden(self):
+  self.mode('manual');A.grant(self.path,decision='deny');A.write(A.store()/'overrides.json',{})
+  with mock.patch.object(A.subprocess,'run',side_effect=AssertionError('deny must not delegate')):
+   result=self.ui('review','--request',str(self.path),'--terminal','worker')
+  self.assertNotIn('Assistant asks you',result['reason'])
+  self.assertEqual(A.read(self.path.with_suffix('.status'))['reason'],'rule-denied')
+  A.write(A.store()/'rules.json',[])
+  for failure in ('deny','corrupt','changed'):
+   with self.subTest(failure=failure):
+    (A.store()/'pending'/self.path.name).unlink(missing_ok=True)
+    A.write(A.store()/'rules.json',[]);_,ticket,_=self.delegate('manual')
+    if failure=='deny':A.grant(self.path,decision='deny')
+    elif failure=='corrupt':(A.store()/'rules.json').write_text('{broken')
+    else:A.write(self.base/'settings.json',{'everywhere':{'approvals':{'mode':'manual','policy':'Ask about every write.'}}})
+    self.assertEqual(A.decide(ticket['id'],ticket['token'],'allow','Safe',terminal='assistant')['action'],'wait')
+    self.assertFalse((self.path.parent.parent/'ans'/self.path.name).exists())
+    self.assertEqual(A.read(self.path.with_suffix('.status'))['reason'],{'deny':'rule-denied','corrupt':'policy-error','changed':'policy-changed'}[failure])
+ def test_large_review_input_is_complete_and_only_its_designated_reviewer_can_read_it(self):
+  import shlex
+  self.req['tool_input']={'command':'echo '+('large-input '*1500),'suffix':'must be seen'};A.write(self.path,self.req)
+  _,ticket,send=self.delegate('assistant')
+  self.assertIn('review-input',send.call_args.args[0][-1]);self.assertNotIn('Exact request:',send.call_args.args[0][-1])
+  command=[str(A.app_home()/'mods/chat/approval-policy.py'),'review-input','--id',ticket['id'],'--token',ticket['token']]
+  nested=A.app_home()/'data/chat-asks/req/assistant.2.json';request={'tool_name':'Bash','tool_input':{'command':shlex.join(command)}};A.write(nested,request)
+  reviewer={'state':'live','argv':['claude'],'labels':{'herdr.role':'coordinator','herdr.coordinator.space':'space'}}
+  with mock.patch.object(A,'hc_get',return_value=reviewer):
+   self.assertEqual(A.evaluate(nested,'assistant')['source'],'review-control')
+  with mock.patch.dict(os.environ,{'HC_TERMINAL_ID':'assistant'}):
+   self.assertEqual(self.ui(*command[1:])['request'],self.req)
+  for mutation in ('wrong-terminal','wrong-token','expired','changed','closed','answered'):
+   with self.subTest(mutation=mutation):
+    A.write(self.path,self.req);A.write(A.store()/'pending'/self.path.name,ticket)
+    answer=self.path.parent.parent/'ans'/self.path.name;answer.unlink(missing_ok=True)
+    candidate=command.copy();terminal='assistant'
+    if mutation=='wrong-terminal':terminal='other'
+    elif mutation=='wrong-token':candidate[-1]='wrong'
+    elif mutation=='expired':A.write(A.store()/'pending'/self.path.name,{**ticket,'expires':time.time()-1})
+    elif mutation=='changed':A.write(self.path,{**self.req,'tool_input':{'command':'different'}})
+    elif mutation=='closed':self.path.unlink()
+    else:A.answer_once(answer,A.response('deny')['response'])
+    self.assertFalse(A.own_review_command({'tool_name':'Bash','tool_input':{'command':shlex.join(candidate)}},{'terminal':terminal}))
+    with self.assertRaises(ValueError):A.review_input(ticket['id'],candidate[-1],terminal)
+ def test_public_rationale_is_bounded_redacted_and_request_bound(self):
+  self.req['tool_input']['api_key']='fixture-private';A.write(self.path,self.req)
+  _,ticket,_=self.delegate()
+  reason='Unknown target. token='+ticket['token']+' password="two words" Bearer private-bearer fixture-private '+json.dumps(self.req['tool_input'])+' '+('x'*900)
+  A.decide(ticket['id'],ticket['token'],'ask',reason,terminal='assistant');A.evaluate(self.path)
+  public=A.read(self.path.with_suffix('.status'));text=json.dumps(public)
+  self.assertLessEqual(len(public['review_reason']),400)
+  for secret in (ticket['token'],'two words','private-bearer','fixture-private','git status --short','tool_input'):self.assertNotIn(secret,text)
+  self.assertEqual(public['request_hash'],A.status_key(self.req));self.assertEqual(A.history_rows()[-1]['reason'],public['review_reason'])
+ def test_fast_ask_survives_a_delivery_error_and_a_human_can_still_take_over(self):
+  self.mode('rules');A.request_context(self.path)
+  def send(*args,**kwargs):
+   ticket=A.read(A.store()/'pending'/self.path.name)
+   A.decide(ticket['id'],ticket['token'],'ask','Please choose the destination.',terminal='assistant')
+   return mock.Mock(returncode=1,stdout='')
+  with mock.patch.object(A.subprocess,'run',side_effect=send):self.ui('review','--request',str(self.path),'--terminal','worker')
+  A.evaluate(self.path);self.assertEqual(A.read(self.path.with_suffix('.status'))['reason'],'assistant-asked')
+  self.ui('answer','--request',str(self.path),'--hash',A.status_key(self.req),'--answer',json.dumps(A.response('deny')['response']))
+  self.assertEqual(A.history_rows()[-1]['source'],'user')
+ def test_feature_route_uses_running_owner_regardless_of_its_cli_or_model(self):
+  for cli in ('codex','claude'):
+   with self.subTest(cli=cli):
+    self.path.with_suffix('.context').unlink(missing_ok=True);(A.store()/'pending'/self.path.name).unlink(missing_ok=True)
+    self.meta['labels'].update({'herdr.feature':'owned-feature','herdr.owner':'stale-space-assistant'})
+    owner={'state':'live','argv':[cli,'--model','fixture-model'],'labels':{'herdr.role':'feature','herdr.feature':'owned-feature'}}
+    A.hc_get.side_effect=lambda terminal:owner if terminal=='feature-owner' else self.meta if terminal=='worker' else {'state':'gone'}
+    self.mode('assistant')
+    def hc(argv,**kwargs):return mock.Mock(returncode=0,stdout=json.dumps({'terminals':[{'address':'feature-owner'}]}) if argv[1]=='ls' else '')
+    with mock.patch.object(A.subprocess,'run',side_effect=hc) as calls:A.evaluate(self.path)
+    ticket=A.read(A.store()/'pending'/self.path.name)
+    self.assertEqual(ticket['reviewer'],'feature-owner');self.assertEqual(ticket['reviewer_type'],'feature')
+    self.assertEqual(calls.call_args.args[0][:3],['hc','send','feature-owner'])
+ def test_claude_request_context_uses_its_account_even_when_caller_is_codex(self):
+  with mock.patch.dict(os.environ,{'CODEX_HOME':'/other-codex-account'}):
+   ctx=A.context(self.req,'worker',{'argv':['env','CLAUDE_CONFIG_DIR=/fixture-claude-account','claude'],'labels':{}})
+  self.assertEqual(ctx['agent'],'claude');self.assertEqual(ctx['account'],'/fixture-claude-account')
+ def test_competing_assistant_decisions_have_one_winner_and_one_audit_record(self):
+  from concurrent.futures import ThreadPoolExecutor
+  _,ticket,_=self.delegate()
+  def submit(decision):
+   try:return A.decide(ticket['id'],ticket['token'],decision,'Local task inspection.',terminal='assistant')
+   except ValueError:return None
+  with ThreadPoolExecutor(max_workers=2) as pool:results=list(pool.map(submit,['allow','ask']))
+  self.assertEqual(sum(r is not None for r in results),1)
+  self.assertEqual(len(A.history_rows()),1)
+  final=A.read(A.store()/'pending'/self.path.name)['status']
+  self.assertEqual((self.path.parent.parent/'ans'/self.path.name).exists(),final=='allow')
+ def test_missing_self_or_wrong_feature_reviewer_never_sends_a_review(self):
+  for missing in ('gone','self','other-feature'):
+   with self.subTest(missing=missing):
+    self.mode('assistant');self.path.with_suffix('.context').unlink(missing_ok=True);(A.store()/'pending'/self.path.name).unlink(missing_ok=True)
+    self.meta['labels'].update({'herdr.feature':'owned','herdr.owner':'worker' if missing=='self' else 'assistant'})
+    wrong={'state':'gone' if missing=='gone' else 'live','labels':{'herdr.role':'feature','herdr.feature':'other'}}
+    A.hc_get.side_effect=lambda terminal:self.meta if terminal=='worker' else wrong
+    with mock.patch.object(A.subprocess,'run',return_value=mock.Mock(returncode=0,stdout='{"terminals":[]}')) as calls:A.evaluate(self.path)
+    self.assertTrue(all(c.args[0][1]=='ls' for c in calls.call_args_list))
+    self.assertEqual(A.read(self.path.with_suffix('.status'))['reason'],'review-unavailable')
+ def test_request_closing_or_human_answer_during_lookup_cannot_be_delegated(self):
+  for closure in ('closed','changed','human'):
+   with self.subTest(closure=closure):
+    A.write(self.path,self.req);self.path.with_suffix('.context').unlink(missing_ok=True);(A.store()/'pending'/self.path.name).unlink(missing_ok=True)
+    answer=self.path.parent.parent/'ans'/self.path.name;answer.unlink(missing_ok=True)
+    def close():
+     if closure=='closed':self.path.unlink(missing_ok=True)
+     elif closure=='changed':A.write(self.path,{**self.req,'tool_input':{'command':'different'}})
+     elif not answer.exists():A.answer_once(answer,A.response('deny')['response'])
+    with self.assertRaisesRegex(ValueError,'changed, closed or already'):self.delegate(during=close)
+    if closure=='human':self.assertEqual(A.read(answer)['hookSpecificOutput']['decision']['behavior'],'deny')
+ def test_real_permission_hook_consumes_the_assistant_answer_once_without_executing(self):
+  import subprocess
+  self.mode('assistant');fake=self.base/'fake-bin';fake.mkdir()
+  # The real hook/helper flow, with inert hc metadata/delivery only. No live
+  # agents, permissions or accounts are inspected, and the proposed command is
+  # never executed by the reviewer or this hook.
+  hc=fake/'hc';hc.write_text('#!'+sys.executable+'\n'+'''import json,os,subprocess,sys
+from pathlib import Path
+root=Path(os.environ['FIXTURE_ROOT']);args=sys.argv[1:]
+if args[0]=='get':
+ print(json.dumps(json.loads((root/('worker.json' if args[1]=='worker' else 'assistant.json')).read_text())))
+elif args[0]=='send':
+ ticket=json.loads(next((root/'app/data/approvals/pending').glob('worker.*.json')).read_text())
+ with (root/'deliveries').open('a') as f:f.write('review\\n')
+ result=subprocess.run([sys.executable,os.environ['FIXTURE_HELPER'],'decide','--id',ticket['id'],'--token',ticket['token'],'--decision','allow','--reason','Read-only project inspection needed for this task.'],env={**os.environ,'HC_TERMINAL_ID':'assistant'},capture_output=True)
+ sys.exit(result.returncode)
+else:sys.exit(1)
+''');hc.chmod(0o755)
+  A.write(self.base/'worker.json',self.meta)
+  A.write(self.base/'assistant.json',{'state':'live','argv':['claude'],'labels':{'herdr.role':'coordinator','herdr.coordinator.space':'space'}})
+  req={**self.req,'tool_input':{'command':'git status | wc -l'}}
+  self.path.unlink()
+  env={**os.environ,'PATH':str(fake)+os.pathsep+os.environ['PATH'],'FIXTURE_ROOT':str(self.base),'FIXTURE_HELPER':str(ROOT/'mods/chat/approval-policy.py')}
+  result=subprocess.run(['bash',str(ROOT/'mods/chat/ask-hook.sh')],input=json.dumps(req),text=True,capture_output=True,env=env,timeout=15)
+  self.assertEqual(result.returncode,0,result.stderr)
+  self.assertEqual(json.loads(result.stdout),A.response('allow')['response'])
+  self.assertEqual((self.base/'deliveries').read_text(),'review\n')
+  self.assertFalse(list((A.app_home()/'data/chat-asks/req').glob('worker.*.json')))
+  history=A.history_rows();self.assertEqual(len(history),1);self.assertEqual(history[0]['source'],'assistant')
+  ends=list((A.app_home()/'data/chat-asks/end').glob('worker.*'))
+  self.assertEqual(len(ends),1);self.assertIn('Allowed by Assistant',ends[0].read_text())
+class RememberedReviewFallback(unittest.TestCase):
+ setUp=ApprovalPolicy.setUp
+ mode=ApprovalPolicy.mode
+ def test_remembering_one_action_preserves_inherited_assistant_review_for_an_unmatched_script(self):
+  self.mode('assistant');A.grant(self.path)
+  script={**self.req,'tool_input':{'command':"python3 - <<'PY'\nprint('inert fixture')\nPY"}};A.write(self.path,script)
+  with mock.patch.object(A.subprocess,'run',return_value=mock.Mock(returncode=0,stdout='{}')) as send:A.evaluate(self.path)
+  self.assertEqual(A.read(self.path.with_suffix('.status'))['state'],'assistant')
+  self.assertEqual(send.call_count,1)
+ def test_role_and_space_assistant_defaults_survive_a_bounded_rule_activation(self):
+  A.write(self.base/'settings.json',{'everywhere':{'approvals':{'mode':'manual'}},'spaces':{'space':{'approvals':{role:'assistant' for role in ('coordinator','feature','worker','reviewer')}}}})
+  A.grant(self.path);ctx=A.request_context(self.path)[1]
+  for role in ('coordinator','feature','worker','reviewer'):
+   self.assertEqual(A.settings({**ctx,'role':role})['mode'],'assistant')
+  self.assertEqual(A.evaluate(self.path)['action'],'allow')
+  with A.locked():activation=A.read(A.store()/'overrides.json')[A.session_key(ctx)]
+  self.assertEqual(activation['source'],'remembered-rule');self.assertLessEqual(activation['expires'],time.time()+86400)
+ def test_explicit_and_unmarked_session_modes_are_not_reinterpreted_or_overwritten_by_grants(self):
+  self.mode('assistant');ctx=A.request_context(self.path)[1];key=A.session_key(ctx)
+  for source in (None,'user'):
+   for mode in A.MODES:
+    with self.subTest(source=source,mode=mode):
+     row={'mode':mode,'expires':time.time()+3600,'preserved':'opaque display-independent metadata'}
+     if source:row['source']=source
+     A.write(A.store()/'overrides.json',{key:row})
+     with A.locked():before=A.read(A.store()/'overrides.json')
+     A.grant(self.path)
+     self.assertEqual(A.settings(ctx)['mode'],mode)
+     with A.locked():self.assertEqual(A.read(A.store()/'overrides.json'),before)
+ def test_explicit_task_modes_win_and_inherited_manual_grants_still_work(self):
+  self.mode('assistant');A.grant(self.path);ctx=A.request_context(self.path)[1]
+  for mode in ('manual','rules','assistant','codex-review'):
+   self.assertEqual(A.settings({**ctx,'task_mode':mode})['mode'],mode)
+  self.mode('manual');self.assertEqual(A.settings(ctx)['mode'],'rules');self.assertEqual(A.evaluate(self.path)['action'],'allow')
+  A.write(self.path,{**self.req,'tool_input':{'command':'git diff --stat'}})
+  self.assertEqual(A.evaluate(self.path)['action'],'wait');self.assertEqual(A.read(self.path.with_suffix('.status'))['reason'],'no-rule')
+ def test_explicit_override_helper_marks_user_choice_and_inherit_clears_only_that_session(self):
+  self.mode('assistant');ctx=A.request_context(self.path)[1];key=A.session_key(ctx)
+  ui=AssistantReviewRegression.ui
+  ui(self,'override','--request',str(self.path),'--mode','rules')
+  A.grant(self.path)
+  self.assertEqual(A.settings(ctx)['mode'],'rules')
+  with A.locked():self.assertEqual(A.read(A.store()/'overrides.json')[key]['source'],'user')
+  rows=A.read(A.store()/'overrides.json');rows['another-session']={'mode':'manual','expires':time.time()+3600};A.write(A.store()/'overrides.json',rows)
+  ui(self,'override','--request',str(self.path),'--mode','inherit')
+  self.assertEqual(A.settings(ctx)['mode'],'assistant')
+  self.assertEqual(A.read(A.store()/'overrides.json'),{'another-session':rows['another-session']})
+ def test_native_review_remains_separate_and_matching_denies_still_win(self):
+  self.mode('codex-review');self.meta['argv']+=['-c','approvals_reviewer="auto_review"'];A.grant(self.path)
+  A.write(self.path,{**self.req,'tool_input':{'command':'git diff --stat'}})
+  self.assertEqual(A.evaluate(self.path)['action'],'native')
+  self.mode('assistant');A.grant(self.path,decision='deny')
+  with mock.patch.object(A.subprocess,'run',side_effect=AssertionError('saved deny must not delegate')):
+   self.assertEqual(A.evaluate(self.path)['action'],'deny')
+ def test_malformed_remembered_activation_cannot_delegate_around_policy_error(self):
+  self.mode('assistant');ctx=A.request_context(self.path)[1]
+  for mode in (None,'manual','unexpected'):
+   A.write(A.store()/'overrides.json',{A.session_key(ctx):{'source':'remembered-rule','mode':mode,'expires':time.time()+3600}})
+   with mock.patch.object(A.subprocess,'run',return_value=mock.Mock(returncode=0,stdout='{}')) as send:A.evaluate(self.path)
+   self.assertEqual(send.call_count,0)
+   self.assertEqual(A.read(self.path.with_suffix('.status'))['reason'],'policy-error')
 class FeatureNaming(unittest.TestCase):
  def test_only_the_feature_owner_can_name_its_own_record(self):
   helper=str(A.app_home()/'mods/workspace-launchers/bin/workspace-state')

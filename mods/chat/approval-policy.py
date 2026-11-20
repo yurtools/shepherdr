@@ -11,7 +11,7 @@ except ImportError:
  sys.path.insert(0,os.path.realpath(entry));from herdr_task import approvals as A
 
 def parser():
- p=argparse.ArgumentParser();p.add_argument('command',choices=['evaluate','answer','status-error','inspect','grant','history-inspect','history-grant','list','history','revoke','clear-history','review','decide','launch','override','record'])
+ p=argparse.ArgumentParser();p.add_argument('command',choices=['evaluate','answer','status-error','inspect','grant','history-inspect','history-grant','list','history','revoke','clear-history','review','review-input','decide','launch','override','record'])
  p.add_argument('--request');p.add_argument('--terminal');p.add_argument('--space',default='');p.add_argument('--role',default='agent');p.add_argument('--cwd',default='')
  p.add_argument('--scope',choices=['task','space','account','global'],default='task');p.add_argument('--match',choices=['exact','prefix','tool'],default='exact');p.add_argument('--prefix');p.add_argument('--hours',type=float,default=1);p.add_argument('--stage',type=int)
  p.add_argument('--id');p.add_argument('--token');p.add_argument('--decision',choices=['allow','deny','ask'],default='allow');p.add_argument('--reason',default='')
@@ -86,6 +86,9 @@ def main(a):
   if not A.is_permission(req):raise ValueError('Plans and questions need a human answer.')
   return A.review_ticket(a.request,req,ctx,True)
  if a.command=='decide':return A.decide(a.id,a.token,a.decision,a.reason)
+ if a.command=='review-input':
+  _,ticket,req=A.review_input(a.id,a.token)
+  return {'request':req,'context':ticket['context'],'policy':A.settings(ticket['context']).get('policy')}
  if a.command in ('list','history'):
   if a.command=='history':return {'rows':A.history_rows(a.space)}
   rows=A.rules()
@@ -102,7 +105,7 @@ def main(a):
   with A.locked():
    rows=A.for_update('overrides.json',{});key=A.session_key(ctx)
    if a.mode=='inherit':rows.pop(key,None)
-   elif a.mode in A.MODES:rows[key]={'mode':a.mode,'expires':__import__('time').time()+24*3600}
+   elif a.mode in A.MODES:rows[key]={'mode':a.mode,'source':'user','expires':__import__('time').time()+24*3600}
    else:raise ValueError('Choose an approval mode.')
    A.write(A.store()/'overrides.json',rows)
   return {'mode':a.mode}

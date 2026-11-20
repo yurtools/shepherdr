@@ -92,11 +92,32 @@ deny still outranks a Global allow. Global does not cross machines, change an
 approval mode, or bypass sandbox or managed policy. Existing rules keep their
 stored scope; installation never promotes them automatically.
 
-Remembering a rule activates Approved rules only for the original task/session
-for at most 24 hours, or the rule's shorter lifetime. A **Forever** rule persists
-with JSON `expires: 0`; its task/session activation still expires. Global, space
-and role modes remain unchanged. After activation expires, **Ask me** pauses all
-saved rules, including Global rules. New sessions use their configured mode.
+Remembering a rule activates Approved rules in inherited **Ask me** mode only for
+the original task/session for at most 24 hours, or the rule's shorter lifetime.
+Configured Assistant review and Codex Auto-review keep their unmatched-request
+fallback: they already check saved rules first. Explicit task/session mode choices
+are preserved. A **Forever** rule persists with JSON `expires: 0`; its task/session
+activation still expires. Global, space and role modes remain unchanged. After
+activation expires, **Ask me** pauses all saved rules, including Global rules.
+New sessions use their configured mode.
+
+New remembered-rule activations are distinguished from explicit session mode
+choices. Older unmarked temporary overrides retain their stored mode until they
+expire or you explicitly clear them; their origin cannot safely be guessed.
+An older Rules override can therefore still leave an unmatched request for you,
+even when the space default is Assistant review. **Ask Assistant** reviews that
+request once. To explicitly restore inheritance for a currently pending request's
+task/session, use the existing helper with that request's ID and original terminal:
+
+```bash
+python3 "${HERDR_APP_HOME:-$HOME/.config/herdr-app}/mods/chat/approval-policy.py" override \
+  --request "${HERDR_APP_HOME:-$HOME/.config/herdr-app}/data/chat-asks/req/<request-id>.json" \
+  --terminal "<requesting-terminal>" --mode inherit
+```
+
+This removes only that session's temporary override. It does not edit saved rules,
+answer the request, change global/space/role settings, or reconfigure a running
+Codex launch. An explicit task mode still takes precedence over inheritance.
 
 Ordinary evaluation and rule-manager reads physically prune expired saved rules
 with an atomic write after re-reading under the writers' lock. Expired temporary
@@ -156,9 +177,12 @@ Install a compatible build on the requesting machine for its local policy hooks.
 ## Assistant review
 
 Choose **Assistant review** as a default/role override, or press **Ask Assistant**
-on a permission card. The running space Assistant receives the exact request,
-account/folder/task context and the review policy. It may allow, deny or ask you,
-and must provide a rationale. It cannot review its own request. If it is not
+on a permission card, including in Ask me or Approved rules mode. The running
+owning Feature Assistant, or space Assistant outside a feature, receives the
+exact request, account/folder/task/feature context and the review policy. Its
+existing CLI and model make the judgment; review does not start a new agent.
+It may allow, deny or ask you, and must provide a rationale. No saved allow rule
+or prefix match is required. It cannot review its own request. If it is not
 running, the request remains available for manual approval; review never starts
 another Assistant automatically.
 
@@ -174,7 +198,18 @@ designated Assistant. Changed, closed, expired or already-answered requests cann
 reuse its decision. The helper records its rationale and answers only that waiting
 permission hook; it does not execute the requested command or broaden the agent's
 sandbox. If review is unavailable, uncertain or cannot finish, use the original
-permission card to decide.
+permission card to decide. An uncertain review shows its specific, bounded and
+redacted explanation on that card, with Allow/Deny and the yellow attention mark.
+Polling retains the review state while the reviewer is being located and while
+its decision is pending. Assistant allow/deny outcomes identify the Assistant
+and its rationale; an allow means permission was sent, not that execution succeeded.
+
+Requests too large to inline are read in full through a private ticket-bound
+helper available only to the designated reviewer while the original request
+is pending. Review never silently truncates the action it asks the Assistant to
+judge. Saved denies and unreadable policy block delegation or approval; a policy
+change during review returns the choice to you. Review never creates a saved
+rule or changes an approval mode.
 
 ## Exact actions and feature ownership
 

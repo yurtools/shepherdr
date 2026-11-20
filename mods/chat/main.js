@@ -1,3 +1,4 @@
+import { Preparation, PreparedHistory, RecentIndex, sortPlan, equal } from "./core/chat-preparation.js";
 import { inReviewScope } from "./core/review.js";
 import {projectFolder} from './project-folder.js';
 import {appendInstructions,spaceInstructions} from './core/instructions.js';
@@ -43,7 +44,7 @@ import { ChatReader } from "./core/chat-reader.js";
 import { preview } from "./core/recipe.js";
 import { words, permissionStatus, requestHash, howAnswered, codexOnScreen, codexSteps } from "./core/asks.js";
 // The rows' words and rules the web app's chat draws by too (core/chat-view.js).
-import { WORDS, clock, bgGroups, subagentsOf, subagentWord, senderName, briefLabel, firstUser, firstKeys, literal, fromName, sentTo, selfName, initialOf, newsWords, resolveArtifacts, unsigned, ownWords, fitThumbs, bandActs, bandOrder, imagesLine, questionsBelow, notSent, published, artifactLine, videoLine, mediaIn, elapsed, reportMsg, doingWords, LOST, lostMessage, shellWord, sessionStarted, sessionFailed } from "./core/chat-view.js";
+import { WORDS, clock, bgGroups, subagentsOf, subagentWord, senderName, briefLabel, firstUser, firstKeys, literal, fromName, sentTo, selfName, initialOf, newsWords, resolveArtifacts, resolveArtifactPlan, unsigned, ownWords, fitThumbs, bandActs, bandOrder, imagesLine, questionsBelow, notSent, published, artifactLine, videoLine, mediaIn, elapsed, reportMsg, doingWords, LOST, lostMessage, shellWord, sessionStarted, sessionFailed } from "./core/chat-view.js";
 // Sending the person's words, as the web app does (core/send.js).
 import { refusal, taskTag, messageBody, replyInstead, steerNow, reactionLine, mentionedIn, sendTyped, SETTLE } from "./core/send.js";
 // hc whose send goes as the person, with no caller: never "Another agent" on another machine (SHEP-3, core/person.js).
@@ -613,7 +614,9 @@ export default class Chat extends View {
 
   // Forget what was read: another log file, or this one replaced.
   reset() {
+    this.clearHistory();
     this.clearLinkedMarkdown();
+    this.readEpoch=(this.readEpoch??0)+1;
     this.records = [];
     this.rowRevisions = new Map();
     this.start = null;
@@ -634,6 +637,7 @@ export default class Chat extends View {
   // on the web's cards: its terminal shows its own prompt meanwhile. A call or a recording ends with it.
   async close(cx) {
     if (this.host) return this.host.close(cx);
+    this.clearHistory(true);
     const cleanup = this.clearLinkedMarkdown(true, cx);
     this.box.release();
     this.findBox.release();
@@ -997,12 +1001,13 @@ export default class Chat extends View {
   // The cards waiting in this chat, each with its moment: this agent's own (an ask, a secret,
   // its start screen) and, in an Assistant's chat, its tasks' workers'. Each:
   // { id, at, strips, owner (its AskCards, for keys), ask, question (a questions card) }.
-  timelineCards() {
+  *timelinePlan() {
     const out = [];
-    for (const a of this.asks) out.push({ id: `card:${a.id}`, at: askAt(a.id), strips: this.cards.strips(a, { who: this.cli() }), owner: this.cards, ask: a, question: a.words.kind === "questions" });
+    for (const a of this.asks) { yield;out.push({ id: `card:${a.id}`, at: askAt(a.id), strips: this.cards.strips(a, { who: this.cli() }), owner: this.cards, ask: a, question: a.words.kind === "questions" }); }
     const cq = this.codexCard();
     if (cq) out.push({ id: `card:${cq.id}`, at: cq.at, strips: this.codexCards.strips(cq, { who: "Codex" }), owner: this.codexCards, ask: cq, question: true });
     for (const a of this.sasks ?? []) {
+      yield;
       if (!a.kept) out.push({ id: `card:s:${a.name}`, at: this.seenAt(`s:${a.address}|${a.name}`), strips: this.secretCards.strips(a, { who: this.cli() }) });
     }
     const own = this.addr && openCard(this.addr);
@@ -1012,6 +1017,7 @@ export default class Chat extends View {
     // A worker's: headed by its task, with its chat a quiet link at the right.
     const open = (id, ref, title, terminal) => [linkCtl(`wask-open-${id}`, "Open chat", () => openTaskThread(terminal, ref, title))];
     for (const a of this.wasks ?? []) {
+      yield;
       if (a.secret) {
         if (!a.secret.kept) out.push({ id: `card:${a.id}`, at: this.afterNews(a.ref, this.seenAt(`s:${a.secret.address}|${a.secret.name}`)),
           strips: this.secretCards.strips(a.secret, { who: a.ref, links: open(a.id, a.ref, a.title, a.terminal) }) });
@@ -1019,6 +1025,7 @@ export default class Chat extends View {
         strips: this.workerCards.strips(a, { who: a.ref, links: open(a.id, a.ref, a.title, a.terminal), terminal: false, chatHint: "Or write to it in its own chat." }) });
     }
     for (const [addr, x] of this.workerTasks()) {
+      yield;
       // Its secret asks' moments, noted even while a question of its hides them (seenAt()).
       for (const s of this.secretCards.items(addr)) if (!s.kept) this.seenAt(`s:${s.address}|${s.name}`);
       const card = openCard(addr);
@@ -1110,11 +1117,13 @@ export default class Chat extends View {
 
   pressScreen(card, i, cx) {
     if (this.screenBusy.has(card.id)) return;
+    this.historyRevision=(this.historyRevision??0)+1;
     this.screenBusy.add(card.id);
     this.screenErr.delete(card.id);
     cx.notify();
     cx.spawn(async (cx) => {
       const err = await this.screens.press(card, i).catch((e) => String(e?.message ?? e));
+      this.historyRevision=(this.historyRevision??0)+1;
       this.screenBusy.delete(card.id);
       if (err) this.screenErr.set(card.id, err);
       cx.notify();
@@ -1301,12 +1310,37 @@ export default class Chat extends View {
     cx.notify();
   }
 
-  rebuild() {
-    this.conv = new Conversation(this.kind);
-    this.conv.feed(this.records);
-    // A log read from its start (a new agent's first message makes it) may already hold
-    // messages sent from here.
-    this.settlePending();
+  async rebuild(recs, cx) {
+    const conv = new Conversation(this.kind),epoch=this.readEpoch;
+    let n=0;
+    for(const record of recs){
+      conv.feed([record]);
+      if(++n%8===0){await cx.sleep(0);if(epoch!==this.readEpoch||this.historyClosed)return null;}
+    }
+    // Settle against the candidate before publishing either its data or offsets.
+    // If decoding/settling throws, pull retries the same page/tail next time.
+    const own=new Set();
+    for(const id of this.own??[]){own.add(id);if(++n%64===0)await cx.sleep(0);}
+    if(epoch!==this.readEpoch||this.historyClosed)return null;
+    return {conv,own};
+  }
+
+  commitConversation(next,state) {
+    // Take the outbox at the commit boundary, after every asynchronous yield.
+    // Settlement and publication are synchronous: a new send or written answer
+    // can never be overwritten by an older reconstruction's pending array.
+    const candidate=Object.assign(Object.create(Object.getPrototypeOf(this)),this,next);
+    candidate.settlePending();
+    Object.assign(this,state,next,{pending:candidate.pending,replied:candidate.replied,own:candidate.own});
+  }
+
+  async historyRecords(before, added, cx) {
+    const out=[],epoch=this.readEpoch;
+    let n=0;
+    for(const list of [before,added])for(const record of list){
+      out.push(record);if(++n%64===0){await cx.sleep(0);if(epoch!==this.readEpoch||this.historyClosed)return null;}
+    }
+    return out;
   }
 
   // A message sent from here is in once the log has it (its typed words, at least: an image
@@ -1332,45 +1366,42 @@ export default class Chat extends View {
   // The newest page first; after that, what the log gained since.
   async pull(cx) {
     if (!this.path) return;
-    const path = this.path;
+    const path = this.path, epoch=this.readEpoch, previous=this.records, end=this.end;
+    const current=()=>path===this.path&&epoch===this.readEpoch&&previous===this.records&&end===this.end&&!this.historyClosed;
     if (this.start === null) {
       const r = await this.log(["page", path, "999999999999999", String(PAGE)]);
-      if (path !== this.path) return;
+      if (!current()) return;
       if (r.stdout.startsWith("missing")) { this.path = null; return; }
       const { head, records: recs } = records(r.stdout);
       if (head[0] !== "P") return;
-      this.start = Number(head[1]);
-      this.end = Number(head[2]);
-      this.records = recs;
-      this.rebuild();
+      const next=await this.rebuild(recs,cx);
+      if(!next||!current())return;
+      this.commitConversation(next,{start:Number(head[1]),end:Number(head[2]),records:recs});
       this.stick = true;
       this.phase = "ready";
       cx.notify();
       return;
     }
     const r = await this.log(["tail", path, String(this.end)]);
-    if (path !== this.path) return;
+    if (!current()) return;
     if (r.stdout.startsWith("missing")) { this.path = null; return; }
     const { head, records: recs } = records(r.stdout);
     if (head[0] !== "T") return;
     // Shorter than what was read: the file was replaced. Start over from its end.
     if (Number(head[2]) < this.end) { this.reset(); return; }
-    this.end = Number(head[3]);
-    if (!recs.length) return;
-    this.records.push(...recs);
-    if (this.records.length > KEEP && !this.loadingEarlier) {
-      // Down to three quarters, so the rebuild is now and then, not on every message.
-      this.records = this.records.slice(-Math.floor(KEEP * 0.75));
-      this.start = this.records[0].off;
-      this.rebuild();
-    } else this.conv.feed(recs);
+    if(!recs.length){this.end=Number(head[3]);return;}
+    let all=await this.historyRecords(previous,recs,cx),start=this.start;
+    if(!all||!current())return;
+    if(all.length>KEEP&&!this.loadingEarlier){all=all.slice(-Math.floor(KEEP*0.75));start=all[0].off;}
+    const next=await this.rebuild(all,cx);
+    if(!next||!current())return;
+    this.commitConversation(next,{records:all,start,end:Number(head[3])});
     // Your reactions just sent stay shown as sent until the log says the same.
     for (const [id, mine] of this.myReacts) {
       const logged = this.conv.reactions.get(id) ?? [];
       for (const [emoji, on] of mine) if (logged.some((r) => r.by === "you" && r.emoji === emoji) === on) mine.delete(emoji);
       if (!mine.size) this.myReacts.delete(id);
     }
-    this.settlePending();
     this.stick = true;
     if (this.call) this.callRecent();
     cx.notify();
@@ -1381,7 +1412,7 @@ export default class Chat extends View {
   loadEarlier(cx) {
     if (this.loadingEarlier || !this.start || !this.path) return;
     this.loadingEarlier = true;
-    const path = this.path, before = this.start;
+    const path = this.path, before = this.start, epoch=this.readEpoch, previous=this.records, end=this.end;
     const rows = this.rows();
     const first = rows[Math.min(rows.length - 1, Math.max(1, this.range?.start ?? 1))]?.id;
     cx.notify();
@@ -1390,16 +1421,17 @@ export default class Chat extends View {
         const r = await this.log(["page", path, String(before), String(PAGE)]);
         const { head, records: recs } = records(r.stdout);
         if (path !== this.path || this.start !== before || head[0] !== "P") return;
-        this.start = Number(head[1]);
-        this.records = [...recs, ...this.records];
-        this.rebuild();
+        const all=await this.historyRecords(recs,previous,cx);
+        if(!all||epoch!==this.readEpoch||this.historyClosed)return;
+        const next=await this.rebuild(all,cx);
+        if(!next||path!==this.path||before!==this.start||epoch!==this.readEpoch||previous!==this.records||end!==this.end||this.historyClosed)return;
+        this.commitConversation(next,{start:Number(head[1]),records:all});
         this.anchor = first ? { id: first, until: Date.now() + 3000 } : null;
         this.reanchor = true;
       } catch (e) {
         this.error = String(e?.message ?? e);
       } finally {
-        this.loadingEarlier = false;
-        cx.notify();
+        if(epoch===this.readEpoch&&!this.historyClosed){this.loadingEarlier = false;cx.notify();}
       }
     });
   }
@@ -1408,6 +1440,7 @@ export default class Chat extends View {
   loadResults(row, cx) {
     const want = row.steps.filter((s) => s.out !== undefined && !this.results.has(s.id));
     if (!want.length || !this.path) return;
+    this.historyRevision=(this.historyRevision??0)+1;
     for (const s of want) this.results.set(s.id, null);
     for (const k of this.results.keys()) { if (this.results.size <= KEEP) break; this.results.delete(k); }
     const offs = [...new Set(want.map((s) => s.out))].slice(0, 40);
@@ -1422,6 +1455,7 @@ export default class Chat extends View {
           for (const s of want) if (s.out === off) this.results.set(s.id, resultText(line, s.id) ?? "");
         }
       } catch {}
+      this.historyRevision=(this.historyRevision??0)+1;
       cx.notify();
     });
   }
@@ -1597,9 +1631,11 @@ export default class Chat extends View {
         r = { code: 1, stderr: String(e?.message ?? e) };
       }
       // Kept as a bubble that sends again when pressed (clickRow), so nothing is lost.
+      this.historySourceRevision=(this.historySourceRevision??0)+1;
       if (r.code !== 0) { p.failed = refusal(r).message; cx.notify(); return; }
       // In the agent's terminal now: it's sent. The log has it only once taken, so it shows as
       // sent from here.
+      this.historySourceRevision=(this.historySourceRevision??0)+1;
       p.delivered = true;
       cx.notify();
       // Mid-turn, Claude Code holds a typed message until its turn ends ("ctrl+enter to send
@@ -1616,6 +1652,7 @@ export default class Chat extends View {
       // Not in the log after a while, with the agent no longer busy: say so, and keep it until it shows up.
       for (let i = 0; i < 60 && this.pending.includes(p) && !p.failed; i++) {
         await cx.sleep(i ? 5000 : 20000);
+      this.historySourceRevision=(this.historySourceRevision??0)+1;
         if (this.status() !== "working") { p.late = true; cx.notify(); break; }
       }
     });
@@ -1868,6 +1905,7 @@ export default class Chat extends View {
           if (st?.agent && !there) throw new Error("The assigned agent is not installed on this machine.");
           selected = await agent.profilePick(st, machine);
         } catch (error) {
+      this.historySourceRevision=(this.historySourceRevision??0)+1;
           this.phase = "fresh"; p.failed = String(error.message ?? error);
           toast({ title: "Assistant did not start", body: p.failed, level: "error" }); cx.notify(); return;
         }
@@ -1900,6 +1938,7 @@ export default class Chat extends View {
       if (late) out = { address: late, first_message: { sent: false } };
       if (out.address && out.first_message?.sent === false && words) this.firstSend = [words, task].filter(Boolean).join("\n\n");
       if (r.code !== 0 && !late || !out.address) {
+      this.historySourceRevision=(this.historySourceRevision??0)+1;
         p.failed = (r.stderr || r.stdout || "It didn't start.").trim();
         toast({ title: `The ${this.role === "coordinator" ? "Assistant" : this.role} didn't start`, body: msg ? `${p.failed} Your message is back in the box.` : p.failed, level: "error" });
         // the fresh chat shows no pending rows: the message goes back in the box rather than vanish (GitHub #839)
@@ -2004,6 +2043,7 @@ export default class Chat extends View {
 
   // Every match in the loaded conversation: [{ index (row), id, n (matches in it) }].
   findMatches(rows) {
+    if(this.history?.snapshot?.rows===rows)return this.history.snapshot.found;
     const q = this.findQuery().toLowerCase();
     if (!q) return [];
     const out = [];
@@ -2019,14 +2059,21 @@ export default class Chat extends View {
 
   // The match `findIdx` (counted over all matches): its row.
   findRow(matches) {
+    const plan=this.history?.snapshot;
+    if(plan?.found===matches){
+      let lo=0,hi=plan.findEnds.length;
+      while(lo<hi){const mid=Math.floor((lo+hi)/2);if(this.findIdx<plan.findEnds[mid])hi=mid;else lo=mid+1;}
+      return matches[Math.min(lo,matches.length-1)]??null;
+    }
     let k = this.findIdx;
     for (const m of matches) { if (k < m.n) return m; k -= m.n; }
     return matches[matches.length - 1] ?? null;
   }
 
   findStep(d, rows, cx) {
+    if(this.history?.snapshot&&(!this.historyCurrent(this.history.snapshot)||this.history.snapshot.rows!==rows))return;
     const matches = this.findMatches(rows);
-    const total = matches.reduce((n, m) => n + m.n, 0);
+    const total = this.history?.snapshot?.found===matches?this.history.snapshot.findTotal:matches.reduce((n,m)=>n+m.n,0);
     if (!total) return;
     this.findIdx = (this.findIdx + d + total) % total;
     this.findJump = true;
@@ -2044,7 +2091,7 @@ export default class Chat extends View {
   // The find bar: the box, how many, up and down, earlier messages, close.
   findBar(t, rows) {
     const matches = this.findMatches(rows);
-    const total = matches.reduce((n, m) => n + m.n, 0);
+    const total = this.history?.snapshot?.found===matches?this.history.snapshot.findTotal:matches.reduce((n,m)=>n+m.n,0);
     const q = this.findQuery();
     const count = !q ? "" : total ? `${Math.min(this.findIdx, total - 1) + 1} of ${total}` : WORDS.noMatches;
     const icon = (id, path, fn) => div().id(id).size(22).flex_none().flex().items_center().justify_center().rounded(6).cursor_pointer()
@@ -2190,7 +2237,7 @@ export default class Chat extends View {
   // Assistant (its <herdr-news> lines, log.js) says needs you, ready, done, failed and gone quiet;
   // a start is the task's `started`; a ready or done the news never said here (before this
   // session's log, or not sent) is the task's own ready_at / done_at.
-  newsLines(items) {
+  *newsPlan(items) {
     const space = this.assistant();
     const inline = new Map(), extra = [];
     if (!space) return { inline, extra };
@@ -2200,22 +2247,25 @@ export default class Chat extends View {
       (this.wasks ?? []).map((a) => a.ref).join(","), [...this.accepting].join(",")];
     if (this.newsMemo?.sig.every((v, i) => v === sig[i])) return this.newsMemo.out;
     const tasks = new Map();
-    for (const x of this.spaceTasks ?? []) if ((x.space ?? x.queue?.space) === space && x.ref && !tasks.has(x.ref)) tasks.set(x.ref, x);
-    const all = [], said = new Set();
-    for (const it of items) if (it.kind === "news") { said.add(`${it.ref}:${it.event}`); all.push(it); }
+    for (const x of this.spaceTasks ?? []) { yield; if ((x.space ?? x.queue?.space) === space && x.ref && !tasks.has(x.ref)) tasks.set(x.ref, x); }
+    let all = []; const said = new Set();
+    for (const it of items) { yield; if (it.kind === "news") { said.add(`${it.ref}:${it.event}`); all.push(it); } }
     // Placed before what this chat has loaded: shown once it's scrolled back to (the top).
-    const first = items.find((x) => x.at)?.at ?? 0;
+    let first=0;
+    for(const x of items){yield;if(x.at){first=x.at;break;}}
     for (const [ref, x] of tasks) for (const [event, at] of [["started", x.started], ["ready", x.ready_at], ["done", x.done_at]]) {
+      yield;
       if (!Number.isFinite(at) || said.has(`${ref}:${event}`) || (at < first && this.start !== 0)) continue;
       all.push({ id: `tn:${ref}:${event}:${at}`, at, ref, event, text: "", made: true });
     }
-    all.sort((a, b) => a.at - b.at);
+    all=yield* sortPlan(all,(a,b)=>a.at-b.at);
     const last = new Map(), lastReady = new Map();
-    for (const e of all) { last.set(e.ref, e); if (e.event === "ready") lastReady.set(e.ref, e); }
+    for (const e of all) { yield; last.set(e.ref, e); if (e.event === "ready") lastReady.set(e.ref, e); }
     this.needsAt = new Map();
-    for (const e of all) if ((e.event === "needs-you" || e.event === "failed") && Number.isFinite(e.at)) this.needsAt.set(e.ref, [...(this.needsAt.get(e.ref) ?? []), e.at]);
+    for (const e of all) { yield; if ((e.event === "needs-you" || e.event === "failed") && Number.isFinite(e.at)) this.needsAt.set(e.ref, [...(this.needsAt.get(e.ref) ?? []), e.at]); }
     const order = [], ordered = new Set();
     for (const e of all) {
+      yield;
       const x = tasks.get(e.ref);
       if (!ordered.has(e.ref)) { ordered.add(e.ref); order.push(e.ref); }
       const asks = (this.wasks ?? []).some((a) => a.ref === e.ref);
@@ -2270,6 +2320,7 @@ export default class Chat extends View {
     if (!target) return;
     this.pinned = false;
     // A jump into a folded reply opens it.
+    this.historyRevision=(this.historyRevision??0)+1;
     if (target.blk) this.unfolded.add(target.blk);
     this.scroll.scroll_to_item(rows.indexOf(target), "center");
     this.flash = { id: target.id, on: true };
@@ -2466,6 +2517,7 @@ export default class Chat extends View {
     const on = !this.pills(id).some((p) => p.emoji === emoji && p.you);
     const mine = new Map(this.myReacts.get(id) ?? []);
     mine.set(emoji, on);
+    this.historyRevision=(this.historyRevision??0)+1;
     this.myReacts.set(id, mine);
     if (on) this.useEmoji(emoji);
     const line = reactionLine(emoji, text, on);
@@ -3150,7 +3202,7 @@ export default class Chat extends View {
   follow_bottom(rows) {
     if (this.reanchor) {
       this.reanchor = false;
-      const i = this.anchor && Date.now() < this.anchor.until ? rows.findIndex((r) => r.id === this.anchor.id) : -1;
+      const i = this.anchor && Date.now() < this.anchor.until ? (this.history?.snapshot?.positions.get(this.anchor.id)??-1) : -1;
       if (i >= 0) this.scroll.scroll_to_item(i, "top");
     }
     if (!this.stick) return;
@@ -3170,41 +3222,159 @@ export default class Chat extends View {
   // ---- the conversation's rows ----------------------------------------------------------------
 
 
-  rows() {
+  rows() { return this.history?.snapshot?.rows ?? []; }
+
+  historyContext() {
+    const screens=shared("chat.screens")??{},by=this.workerTasks();
+    const screenSig=JSON.stringify([this.addr,...by.keys()].map(addr=>screens[addr]??null));
+    const machineSig=JSON.stringify(Object.entries(shared("spaces-chat")?.machines??{}).map(([id,m])=>[id,m.name]));
+    return [this.addr,this.path,this.kind,this.role,this.feature,this.pickKey()??this.areaKey(),
+      this.width,this.column(),zoomOf(),this.findQuery(),this.tasks,this.spaceTasks,this.reach,
+      this.historyRevision??0,this.firstTask,this.taskRef,this.machine,this.t?.template,this.t?.cwd,this.t?.foreground?.cwd,
+      this.t?.labels?.["herdr.task"],this.t?.labels?.["herdr.role"],this.t?.labels?.["herdr.space"],this.t?.labels?.["herdr.coordinator.space"],
+      screenSig,machineSig,this.asks,
+      (this.wasks??[]).map(a=>`${a.id}:${a.secret?.kept??""}:${a.requestHash??""}:${JSON.stringify(a.approval)}`).join("|"),
+      (this.sasks??[]).map(a=>`${a.name}:${a.kept}`).join("|")];
+  }
+
+  historyStamp() {
+    return [this.conv,this.end,this.start,this.pending,this.pending?.length,this.replied,this.note,
+      this.status(),this.arts,this.askEnds,this.loadingEarlier,this.historySourceRevision??0,
+      this.cards?.revision,this.workerCards?.revision,this.codexCards?.revision,this.secretCards?.revision,
+      dayOf(Date.now())];
+  }
+
+  historyCurrent(plan) {
+    return !this.historyClosed&&this.history?.snapshot===plan&&equal(plan.context,this.historyContext());
+  }
+
+  historyEvent(plan,fn) {
+    return (...args)=>{if(this.historyCurrent(plan))return fn(...args);};
+  }
+
+  clearHistory(closed=false) {
+    this.historyTask?.cancel();this.historyTask=null;
+    this.history?.close();this.history=null;this.preparingHistory=null;
+    if(closed)this.historyClosed=true;
+  }
+
+  prepareHistory(t,cx) {
+    if(this.historyClosed)return null;
+    const work=this.history??=new Preparation();
+    work.request(this.historyContext(),this.historyStamp(),()=>this.historyPlan());
+    this.scheduleHistory(cx);
+    return work.snapshot;
+  }
+
+  scheduleHistory(cx) {
+    const work=this.history;
+    if(!work?.busy||this.historyTask)return;
+    this.historyTask=cx.timer.after(0,cx=>inRender(()=>{
+      this.historyTask=null;
+      if(this.history!==work||work.closed)return;
+      // UI inputs can change between draw and a timer. Invalidate before doing
+      // even the first unit of work or exposing any row's controls.
+      work.request(this.historyContext(),this.historyStamp(),()=>this.historyPlan());
+      const result=work.step(32);
+      if(!equal(work.context,this.historyContext())){work.request(this.historyContext(),this.historyStamp(),()=>this.historyPlan());cx.notify();}
+      if(result.error){this.preparingHistory=null;this.error=String(result.error.message??result.error);cx.notify();return;}
+      if(result.changed&&work.snapshot){
+        this.rowRevisions=work.snapshot.revisions;
+        this.linkRowsRevision=work.snapshot.linkRevision;
+        this.taskOrder=work.snapshot.taskOrder;this.needsAt=work.snapshot.needsAt;
+        if(work.snapshot.seenNew)this.seenNew={...this.seenNew,...work.snapshot.seenNew};
+        this.preparingHistory=null;this.stick=true;cx.notify();
+      }
+      this.scheduleHistory(cx);
+    }));
+  }
+
+  *historyPlan() {
+    // A published Conversation is immutable. pull constructs its successor before
+    // advancing offsets; streaming queues another pass and never restarts this one.
+    const host=Object.assign(Object.create(Object.getPrototypeOf(this)),this);
+    const st=this.status(),q=this.findQuery(),column=this.column();
+    host.status=()=>st;host.findQuery=()=>q;host.column=()=>column;
+    host.pressScreen=this.pressScreen?.bind(this);host.toTerminal=this.toTerminal?.bind(this);
+    host.pending=[];host.replied=[];host.rowRevisions=new Map();host.newsMemo=null;
+    for(const p of this.pending??[]){yield;host.pending.push({...p});}
+    for(const p of this.replied??[]){yield;host.replied.push({...p});}
+    for(const [id,state] of this.rowRevisions??[]){yield;host.rowRevisions.set(id,{...state});}
+    const plan=new PreparedHistory();plan.context=this.history.context;this.preparingHistory=plan;
+    const rows=yield* host.rowPlan();
+    plan.rows=rows;plan.recent=new RecentIndex(rows.length);
+    for(let i=0;i<rows.length;i++){
+      yield;
+      const row=rows[i],key=host.key(row);
+      plan.keys.push(key);plan.index.set(row.id,row);plan.positions.set(row.id,i);
+      const h=this.heights.get(key)??host.guess(row);
+      plan.geometry.push(Number.isFinite(h)&&h>0?Math.min(h,40000):60);
+      plan.missing.push(this.heights.has(key)?0:1);
+      if(this.heights.has(key)&&Date.now()-(this.measuredAt.get(key)??0)<4000)plan.recent.set(i,this.measuredAt.get(key));
+      if(row.kind==="imgs")for(const path of row.paths){yield;plan.paths.push(path);}
+      if(row.kind==="artifact"){
+        plan.artifacts.push(row);plan.pendingArts ||= row.pending;
+        if(row.peek)for(const path of row.peek.paths){yield;plan.paths.push(path);}
+      }
+      if(row.kind==="cardstrip"){plan.strips.push(row.s);if(row.first)plan.cards.push(i);}
+      if(q){const matches=host.findMatches([row]);if(matches.length){plan.found.push({...matches[0],index:i});plan.findTotal+=matches[0].n;plan.findEnds.push(plan.findTotal);plan.lit.add(row.id);}}
+    }
+    plan.hasArtifacts=false;
+    for(const item of host.conv?.items??[]){yield;if(item.kind==="artifact")plan.hasArtifacts=true;}
+    plan.revisions=host.rowRevisions;plan.linkRevision=host.linkRowsRevision;
+    plan.taskOrder=host.taskOrder;plan.needsAt=host.needsAt;plan.seenNew=host.seenNew;
+    return plan;
+  }
+
+  *rowPlan() {
     const out = [];
     // The rows from `from` on are one message's block (spaced()).
     // Every row here is owned by this build. Add geometry in place rather than
     // copying all message rows once for blocks and again for spacing.
-    const block = (from, blk) => { for (let k = from; k < out.length; k++) out[k].blk = blk; };
+    const block = function*(from,blk){for(let k=from;k<out.length;k++){yield;out[k].blk=blk;}};
     if (this.start === 0) out.push({ kind: "top", id: "top" });
     else if (this.start) out.push({ kind: "loading", id: "loading" });
     const items = this.conv?.items ?? [];
     const working = this.status() === "working";
-    const arts = this.resolveArts(items);
+    yield;
+    const arts = yield* this.resolveArtsPlan(items);
     // The space's tasks' news lines (newsLines()): Herdr's in place, the rest each before the
     // first thing said after its moment.
-    const news = this.newsLines(items);
+    yield;
+    const news = yield* this.newsPlan(items);
     this.loadAskEnds();
     // Start screens answered or gone (screens.js): this agent's, and an Assistant's workers'.
-    const screenEnds = [[this.addr, null], ...this.workerTasks()].flatMap(([addr, x]) => (addr ? cardsOf(addr) : [])
-      .filter((c) => c.state !== "open").map((c) => ({ at: x?.ref ? this.afterNews(x.ref, c.opened) : c.opened,
-        row: { kind: "askend", id: `se:${c.id}`, text: `${x?.ref ? `${x.ref} · ` : ""}${c.cli}'s start screen · ${c.how}` } })));
+    const screenEnds=[];
+    for(const [addr,x] of [[this.addr,null],...this.workerTasks()]){
+      yield;
+      for(const c of addr?cardsOf(addr):[]){
+        yield;
+        if(c.state!=="open")screenEnds.push({at:x?.ref?this.afterNews(x.ref,c.opened):c.opened,
+          row:{kind:"askend",id:`se:${c.id}`,text:`${x?.ref?`${x.ref} · `:""}${c.cli}'s start screen · ${c.how}`}});
+      }
+    }
     // Cards waiting on the person, in the timeline at their moment (DECISIONS, Chat): this
     // agent's own question in place of its "Asked you" line, the rest by time.
-    const cards = this.timelineCards();
+    yield;
+    const cards = yield* this.timelinePlan();
     const ownQ = cards.find((c) => c.question && c.owner === this.cards);
     let qAt = -1;
-    if (ownQ) for (let i = items.length - 1; i >= 0; i--) if (items[i].kind === "ask" && !items[i].closed) { qAt = i; break; }
-    const tasks = [...news.extra, ...this.askEnds.map((e) => ({ at: e.at, row: { kind: "askend", id: `ae:${e.id}`, text: `${e.title} · ${e.how}` } })), ...screenEnds,
-      ...cards.filter((c) => !(c === ownQ && qAt >= 0)).map((c) => ({ at: c.at, card: c }))]
-      .sort((a, b) => a.at - b.at);
-    // A card is a run of strips, one list row each (strips.js), kept together as one block.
-    const putCard = (c) => c.strips.forEach((s, j) => out.push({ kind: "cardstrip", id: `cs:${c.id}:${s.key}`, s, blk: c.id, first: j === 0, last: j === c.strips.length - 1,
-      sig: strips.sig(s), owner: c.owner, ask: c.ask }));
-    const put = (e) => { if (e.card) putCard(e.card); else out.push({ ...e.row }); };
+    if (ownQ) for (let i = items.length - 1; i >= 0; i--) { yield; if (items[i].kind === "ask" && !items[i].closed) { qAt = i; break; } }
+    const unsorted=[];
+    for(const e of news.extra){yield;unsorted.push(e);}
+    for(const e of this.askEnds){yield;unsorted.push({at:e.at,row:{kind:"askend",id:`ae:${e.id}`,text:`${e.title} · ${e.how}`}});}
+    for(const e of screenEnds){yield;unsorted.push(e);}
+    for(const c of cards){yield;if(!(c===ownQ&&qAt>=0))unsorted.push({at:c.at,card:c});}
+    const tasks=yield* sortPlan(unsorted,(a,b)=>a.at-b.at);
+    const putCard=function*(c){for(const [j,s] of c.strips.entries()){
+      yield;
+      out.push({kind:"cardstrip",id:`cs:${c.id}:${s.key}`,s,blk:c.id,first:j===0,last:j===c.strips.length-1,
+        sig:strips.sig(s),owner:c.owner,ask:c.ask});
+    }};
+    const put=function*(e){yield;if(e.card)yield* putCard(e.card);else out.push({...e.row});};
     let ti = 0;
     // A day's line where a new day starts (Today, Yesterday, a weekday, a date), the first too.
-    const days = new Set();
+    const days = new Set();let lastDay=-1;
     let dayFrom=0,dayUntil=0;
     const dated = (at) => {
       if (!(at > 1e12)) return;
@@ -3216,14 +3386,16 @@ export default class Chat extends View {
         const next=new Date(dayFrom);next.setDate(next.getDate()+1);dayUntil=next.getTime();
       }
       const d = dayFrom;
-      if (!days.has(d) && d > Math.max(-1, ...days)) { days.add(d); out.push({ kind: "day", id: `day:${d}`, text: dayLabel(at) }); }
+      if (!days.has(d) && d > lastDay) { lastDay=d;days.add(d); out.push({ kind: "day", id: `day:${d}`, text: dayLabel(at) }); }
     };
     // The session's first message: the first user item (news read out of it comes before it, #589).
-    const first = firstUser(items);
+    let first = -1;
+    for (let i = 0; i < items.length; i++) { yield; if (items[i].kind === "user") { first = i; break; } }
     for (let i = 0; i < items.length; i++) {
+      yield;
       let x = items[i];
-      while (ti < tasks.length && x.at && tasks[ti].at < x.at) { dated(tasks[ti].at); put(tasks[ti++]); }
-      if (i === qAt) { putCard(ownQ); continue; }
+      while (ti < tasks.length && x.at && tasks[ti].at < x.at) { dated(tasks[ti].at); yield* put(tasks[ti++]); }
+      if (i === qAt) { yield* putCard(ownQ); continue; }
       if (x.kind === "news") { const r = news.inline.get(x.id); if (r) { dated(x.at); out.push({ ...r }); } continue; }
       // An Autopilot wake: one quiet line, never its words (core/chat-log.js pilotLine).
       if (x.kind === "pilot") { dated(x.at); out.push({ kind: "pilot", id: x.id, text: pilotLine(x) }); continue; }
@@ -3265,7 +3437,7 @@ export default class Chat extends View {
         // Rewind goes to a prompt; a /command isn't one.
         const fold=this.foldOf(x,[{type:'md',text:x.text??''}]);
         if(fold&&!fold.open)out.push({...x,clip:fold.clips.get(0)});
-        else messageChunks(x.text).forEach((text,n)=>out.push({...x,id:n?`${x.id}:u${n}`:x.id,text}));
+        else for(const [n,text] of messageChunks(x.text).entries()){yield;out.push({...x,id:n?`${x.id}:u${n}`:x.id,text});}
         if(fold)out.push({kind:'fold',id:`fold:${x.id}`,of:x.id,open:fold.open});
         const chips = this.mentioned(x.text);
         if (chips.length) out.push({ kind: "chips", id: `tc:${x.id}`, tasks: chips.map((t) => ({ id: t.id, ref: taskRef(t), title: t.title })) });
@@ -3277,7 +3449,7 @@ export default class Chat extends View {
           out[out.length - 1] = { ...out[out.length - 1], bar };
           out.push({ kind: "band", id: `ab:${x.id}`, bar });
         }
-        block(from, x.id);
+        yield* block(from, x.id);
         continue;
       }
       if (x.kind === "agent") {
@@ -3290,14 +3462,15 @@ export default class Chat extends View {
         const fold = ps.length ? this.foldOf(x, ps) : null;
         const clip = (n) => (fold && !fold.open ? fold.clips.get(n) : undefined);
         if (ps.length === 1 && ps[0].type === "md") out.push({ ...x, ...(clip(0) ? { clip: clip(0) } : {}) });
-        else ps.forEach((p, n) => {
-          if (fold && !fold.open && n > fold.last) return;
+        else for(const [n,p] of ps.entries()){
+          yield;
+          if (fold && !fold.open && n > fold.last) continue;
           if (p.type === "md") out.push({ kind: "agent", id: `${x.id}:${n}`, text: p.text, clip: clip(n) });
           else {
             out.push({ kind: "codehead", id: `${x.id}:h${n}`, lang: p.lang, code: p.code });
             out.push({ kind: "code", id: `${x.id}:c${n}`, lang: p.lang, code: p.code, clip: clip(n) });
           }
-        });
+        }
         if (fold) out.push({ kind: "fold", id: `fold:${x.id}`, of: x.id, open: fold.open });
         const pics = md.media.filter((m) => m.kind === "image").map((m) => m.path);
         // (another machine's pictures aren't here to draw: a line saying how many, as a person's the chat can't show)
@@ -3313,10 +3486,10 @@ export default class Chat extends View {
           out[out.length - 1] = { ...out[out.length - 1], bar };
           out.push({ kind: "band", id: `ab:${x.id}`, bar });
         }
-        block(first, x.id);
+        yield* block(first, x.id);
       } else if (x.kind !== "mark") out.push({ ...x });
     }
-    while (ti < tasks.length) { dated(tasks[ti].at); put(tasks[ti++]); }
+    while (ti < tasks.length) { dated(tasks[ti].at); yield* put(tasks[ti++]); }
     // Words that answered a card, shown at once, until the log has them right after their
     // question (log.js answers()): they are the newest thing said, so they go last.
     // What was typed while it works (here, in the web app or its terminal) waits in its CLI's
@@ -3325,26 +3498,28 @@ export default class Chat extends View {
     const queue = st === "working" || st === "blocked" ? this.conv?.queued?.() ?? [] : [];
     const inQueue = new Set(queue.map((q) => norm(q.text)));
     if (this.replied.length || this.pending.length || queue.length) dated(Date.now());
-    for (const r of this.replied) out.push({ kind: "user", id: `rp:${r.id}`, text: r.text });
+    for (const r of this.replied) {yield;out.push({ kind: "user", id: `rp:${r.id}`, text: r.text });}
     for (const p of this.pending) {
+      yield;
       const from = out.length;
       if (p.replyTo) out.push({ kind: "replyref", id: `rr:${p.id}`, to: p.replyTo, of: p.id, side: "user" });
       const queued = !p.waiting && p.delivered && inQueue.has(norm(p.text));
       out.push({ kind: "pending", id: p.id, text: p.text, files: p.files, failed: p.failed, late: p.late, waiting: p.waiting, delivered: p.delivered });
       if (p.paths?.length) out.push({ kind: "imgs", id: `i:${p.id}`, paths: p.paths, faded: !p.delivered });
       if (queued) out.push(this.queuedLine(p.id));
-      block(from, p.id);
+      yield* block(from, p.id);
     }
     for (const q of queue) {
+      yield;
       if (this.pending.some((p) => norm(p.text) === norm(q.text))) continue;
       const from = out.length;
       out.push({ kind: "pending", id: `q:${q.id}`, text: q.text, files: q.images ? [imagesLine(q.images)] : [], delivered: true });
       out.push(this.queuedLine(`q:${q.id}`));
-      block(from, `q:${q.id}`);
+      yield* block(from, `q:${q.id}`);
     }
     if (this.note) out.push({ kind: "note", id: this.note.id, text: this.note.text });
     if (out.length) out.push({ kind: "end", id: "end" });
-    return this.spaced(out);
+    return yield* this.spacedPlan(out);
   }
 
   // How a long reply folds, or null when it's short (or holds what Find looks for): { open,
@@ -3375,6 +3550,7 @@ export default class Chat extends View {
     // Reopening must not reuse an unfinished measurement from before a resize/collapse.
     // Revise only this message: the native Markdown views and hidden measuring boxes
     // get fresh identities without resetting the rest of a long conversation.
+    this.historyRevision=(this.historyRevision??0)+1;
     const ids = new Set(rows.filter(r => r.blk === row.of || r.of === row.of || r.bar?.of === row.of || r.id === row.of).map(r => r.id));
     for (const id of ids) {
       const previous = this.rowRevisions?.get(id);
@@ -3393,7 +3569,7 @@ export default class Chat extends View {
   // row, so every block is GAP from the next: a message with its band, a run of quiet lines
   // (tools, "Message from …", artifact lines) sitting tight together, a card. A band is always
   // ACT_ROW: BAND_IN of air, then the actions' row at its foot, shown or not.
-  spaced(rows) {
+  *spacedPlan(rows) {
     const quiet = (r) => r.kind === "tools" || r.kind === "brief" || r.kind === "askend" || r.kind === "pilot" || r.kind === "tasknews" || (r.kind === "artifact" && (r.line || r.pending));
     const of = (r) => r.blk ?? (quiet(r) ? "quiet" : r.id);
     // How far a row's words sit inside its edge once its outer room is gone (a reply line's
@@ -3401,6 +3577,7 @@ export default class Chat extends View {
     const inset = (r, edge) => (quiet(r) ? QUIET_IN[edge] : r.kind === "replyref" ? 5 : 0);
     const out = [];
     for (let i = 0; i < rows.length; i++) {
+      yield;
       let r = rows[i];
       const prev = rows[i - 1], next = rows[i + 1];
       const top0 = !prev || of(prev) !== of(r), last = !next || of(next) !== of(r);
@@ -3989,6 +4166,7 @@ export default class Chat extends View {
     const bar = this.hitBar(row);
     if (bar) { this.act(row.bar, bar, cx); cx.notify(); return; }
     if (row.kind === "tools") {
+      this.historyRevision=(this.historyRevision??0)+1;
       if (this.opened.has(key)) this.opened.delete(key);
       else { this.opened.add(key); this.loadResults(row, cx); }
     } else if (row.kind === "codehead") this.copy(row.code, row.id, cx);
@@ -4012,7 +4190,7 @@ export default class Chat extends View {
       if (c?.kind === "input") (c.state ?? null)?.focus();
       else c?.fn?.(cx);
     }
-    else if (row.kind === "brief") { if (this.opened.has(key)) this.opened.delete(key); else this.opened.add(key); }
+    else if (row.kind === "brief") { this.historyRevision=(this.historyRevision??0)+1; if (this.opened.has(key)) this.opened.delete(key); else this.opened.add(key); }
     else if (row.kind === "fold") {
       // Only on its words (as rowBare() draws them: the column's edge, the bubble's padding in).
       const off = (this.press?.x ?? -1) - this.edges().left - 12;
@@ -4417,7 +4595,10 @@ export default class Chat extends View {
     for (const p of want) this.viewAsked.add(p);
     // Asked from render: start it right after.
     cx.timer.after(0, (cx) => cx.spawn(async (cx) => {
-      Object.assign(this.views, await attach.viewable(want));
+      const views=await attach.viewable(want);
+      if(this.historyClosed)return;
+      Object.assign(this.views,views);
+      this.historySourceRevision=(this.historySourceRevision??0)+1;
       cx.notify();
     }));
   }
@@ -4500,6 +4681,7 @@ export default class Chat extends View {
         try {
           const p = preview(JSON.parse(await readTextFile(`${dir}/recipe.json`)));
           const text = p.lines.join(" · ").replace(/\[([^\]]*)\]\([^)]*\)/g, "$1").replace(/[*_`#>]+/g, "").trim();
+      this.historySourceRevision=(this.historySourceRevision??0)+1;
           this.peeks.set(`${r.art}:${r.version}`, { paths: p.images.map((src) => `${dir}/${src}`), text: text.length > 200 ? `${text.slice(0, 199)}…` : text });
         } catch {}
       }
@@ -4813,9 +4995,8 @@ export default class Chat extends View {
   // Which artifact each publish in the conversation made: the first version this agent
   // published from a few seconds before the call to five minutes after, not already taken.
   // Map item id -> { id, title, version (its latest), v (this publish's), latest }.
-  resolveArts(items) {
-    // core/chat-view.js: the web app's chat finds them the same way.
-    return resolveArtifacts(items, this.arts, String(this.addr ?? "").split("/").pop());
+  *resolveArtsPlan(items) {
+    return yield* resolveArtifactPlan(items,this.arts,String(this.addr??"").split("/").pop());
   }
 
   // Every artifact on the agent's machine (~/.herdr/artifacts, one registry per folder): read
@@ -5085,7 +5266,14 @@ export default class Chat extends View {
       if (Date.now() - this.focusSecret > 5000) this.focusSecret = null;
       else if (ask && this.secretCards.ready(ask)) { this.focusSecret = null; cx.timer.after(0, () => this.secretCards.focus(ask)); }
     }
-    const rows = this.rows();
+    if (this.heightsColumn !== this.column() || Math.abs(this.heightsFor - this.width) > 1 || (this.heightsZoom ?? 1) !== zoomOf()) {
+      this.heights.clear(); this.measuredAt.clear(); this.heightsFor = this.width; this.heightsColumn = this.column(); this.heightsZoom = zoomOf(); this.measureGen++;
+    }
+    const prepared=this.prepareHistory(t,cx);
+    if(!prepared)return root.when(this.finding,el=>el.child(this.findBar(t,[])))
+      .child(this.notice(t, WORDS.opening, this.error??null)).child(this.composer(t,st));
+    const {rows,keys,sizes,index:rowIndex}=prepared;
+    const event=fn=>this.historyEvent(prepared,fn);
     // First-seen times this render found (seenAt()), shared once it's done; the newest 60 kept.
     if (this.seenNew && !this.seenFlush) {
       this.seenFlush = true;
@@ -5096,66 +5284,70 @@ export default class Chat extends View {
       });
     }
     // A publish the registry doesn't list yet: read it again in a few seconds.
-    if (rows.some((r) => r.kind === "artifact" && r.pending) || (this.conv?.items ?? []).some((x) => x.kind === "artifact") && !this.arts) {
+    if (prepared.pendingArts || prepared.hasArtifacts && !this.arts) {
       this.loadArts(cx);
-      if (!this.artsTick) { this.artsTick = true; cx.timer.after(3500, (cx) => { this.artsTick = false; cx.notify(); }); }
+      if (!this.artsTick) { this.artsTick = true; cx.timer.after(3500, (cx) => { this.artsTick = false; this.historySourceRevision=(this.historySourceRevision??0)+1; cx.notify(); }); }
     }
     // Find: the current match's row comes into view once per step.
-    const found = this.finding ? this.findMatches(rows) : [];
+    const found = this.finding ? prepared.found : [];
     const current = found.length ? this.findRow(found) : null;
     if (this.findJump && current) { this.findJump = false; this.pinned = false; this.scroll.scroll_to_item(current.index, "center"); }
-    const lit = new Set(found.map((m) => m.id));
-    this.needViews([...this.files.filter((f) => f.image).map((f) => f.path), ...rows.flatMap((r) => (r.kind === "imgs" ? r.paths : r.kind === "artifact" && r.peek ? r.peek.paths : []))], cx);
-    this.needPeeks(rows, cx);
+    const lit = prepared.lit;
+    this.needViews(this.files.filter(f=>f.image).map(f=>f.path),cx);
+    if(this.mediaSnapshot!==prepared){
+      this.mediaSnapshot=prepared;
+      cx.spawn(async cx=>{
+        for(let i=0;i<prepared.paths.length;i+=8){
+          if(this.history?.snapshot!==prepared||this.historyClosed)return;
+          this.needViews(prepared.paths.slice(i,i+8),cx);await cx.sleep(0);
+        }
+        for(const row of prepared.artifacts){
+          if(this.history?.snapshot!==prepared||this.historyClosed)return;
+          this.needPeeks([row],cx);await cx.sleep(0);
+        }
+      });
+    }
     // What sits under the list (an ask card, the working line) changes its height: stay on the newest.
     const below = `${this.asks.length}|${this.sasks.map((a) => a.name + (a.kept ? "+" : "")).join(",")}|${this.wasks.map((a) => a.id).join(",")}|${[this.addr, ...this.workerTasks().keys()].map((a) => openCard(a)?.id ?? "").join("")}|${st}|${this.focused}|${this.queue.length}|${Boolean(this.call)}|${this.files.length}|${Boolean(this.quote)}`;
     if (below !== this.below) { this.below = below; if (this.pinned) this.stick = true; }
-    if (this.heightsColumn !== this.column() || Math.abs(this.heightsFor - this.width) > 1 || (this.heightsZoom ?? 1) !== zoomOf()) {
-      this.heights.clear(); this.measuredAt.clear(); this.heightsFor = this.width; this.heightsColumn = this.column(); this.heightsZoom = zoomOf(); this.measureGen++;
-    }
-    const rowIndex = new Map();
-    const keys = rows.map((x) => { rowIndex.set(x.id, x); return this.key(x); });
-    // Every size a real number of pixels: one NaN, zero or runaway height leaves the list blank.
-    const sizes = rows.map((x, i) => {
-      const h = this.heights.get(keys[i]) ?? this.guess(x);
-      return Number.isFinite(h) && h > 0 ? Math.min(h, 40000) : 60;
-    });
     this.follow_bottom(rows);
     // Following the newest, the list sits at its end: the scroll position is exactly that.
-    if (this.pinned && this.listH) this.scrollTop = Math.max(0, sizes.reduce((a, b) => a + b, 0) - (this.listH - 8));
+    if (this.pinned && this.listH) this.scrollTop = Math.max(0, prepared.total - (this.listH - 8));
     this.prepareLinkedMarkdown(rows,t,cx,rowIndex);
     const body = rows.length === 0
       ? this.notice(t, "No messages", "Write to the agent below.")
       : v_flex().relative().flex_1().min_h(0).pt(8)
         .id("chat-body")
-        .on_size_change((size, cx) => {
+        .on_size_change(event((size, cx) => {
           const was = this.listH, h = unzoom(size.height);
           this.listH = h;
           if (was && Math.abs(was - h) > 0.5 && this.pinned) { this.stick = true; cx.notify(); }
-        })
+        }))
         // How far down the list a press was, for the action bands (rows take no handlers).
-        .on_mouse_down("left", (e) => { this.bodyPress = unzoom(e.local_position?.y); })
+        .on_mouse_down("left", event((e) => { this.bodyPress = unzoom(e.local_position?.y); }))
         // Hover repaint follows message boundaries; moving within a long reply does not remeasure it.
-        .on_mouse_move((e, cx) => {
-          const b = hoverMessage(unzoom(e.local_position?.y ?? 0), this.scrollTop ?? 0, rows, sizes);
+        .on_mouse_move(event((e, cx) => {
+          const row=rows[prepared.geometry.at((this.scrollTop??0)+unzoom(e.local_position?.y??0))];
+          const b=row?.bar?.of??row?.blk??row?.of??row?.id??null;
           if (b !== this.hoverBand) { this.hoverBand = b; cx.notify(); }
-        })
+        }))
         .on_hover((hovered, cx) => { if (!hovered) { this.hoverBand = null; cx.notify(); } })
-        .on_scroll_wheel((e, cx) => {
+        .on_scroll_wheel(event((e, cx) => {
           const y = e.delta?.y ?? 0;
           // Where the list is scrolled to, as near as known (the list doesn't say): wheel moves it.
-          const movement = viewportScroll(this.scrollTop, y, sizes.reduce((a, b) => a + b, 0), Math.max(0, (this.listH ?? 0) - 8));
+          const movement = viewportScroll(this.scrollTop, y, prepared.total, Math.max(0, (this.listH ?? 0) - 8));
           this.scrollTop = movement.offset;
           // Scrolling up to read stops following the newest; back at the bottom follows again.
           if (y > 0 && this.pinned) { this.pinned = false; cx.notify(); }
           if (y < 0 && !this.pinned && movement.bottom) { this.pinned = true; cx.notify(); }
           if (y > 0 && (this.range?.start ?? 9) <= 1) this.loadEarlier(cx);
-        })
+        }))
         .child(v_virtual_list("chat-rows", rows.length, sizes, (i) => rows[i].id, (range) => {
+          if(!this.historyCurrent(prepared))return [];
           this.range = range;
           if (rows.length && !(range.end > range.start)) this.blank = true;
           // The first row on screen bounds the scroll position: keep the estimate inside it.
-          const top = sizes.slice(0, range.start).reduce((a, b) => a + b, 0);
+          const top = prepared.geometry.sum(range.start);
           if ((this.scrollTop ?? 0) < top || (this.scrollTop ?? 0) >= top + (sizes[range.start] ?? 0)) this.scrollTop = top;
           return rows.slice(range.start, range.end).map((x, j) => {
             const flash = this.flash && (x.id === this.flash.id || String(x.id).startsWith(`${this.flash.id}:`));
@@ -5171,28 +5363,30 @@ export default class Chat extends View {
           });
         })
           .track_scroll(this.scroll).size_full()
-          .on_item_secondary_click((key,e,cx)=>{const row=rows.find(r=>r.id===key);this.clipboardMenu("reply",e,cx,this.clipboardText(row));})
-          .on_item_click((key, cx) => this.clickRow(key, rows, cx, sizes)))
+          .on_item_secondary_click(event((key,e,cx)=>{const row=rowIndex.get(key);this.clipboardMenu("reply",e,cx,this.clipboardText(row));}))
+          .on_item_click(event((key, cx) => this.clickRow(key, rows, cx, sizes))))
         .child(Scrollbar.vertical("chat-rows").absolute().inset_0())
         .child(this.measurer(rows, keys, t))
         // Cards' controls measured (strips.js hit()), and where question cards' keys come in.
-        .child(strips.measure(t, rows.filter((r) => r.kind === "cardstrip").map((r) => r.s), this.cardW, (cx) => cx.notify(), unzoom)
+        .child(strips.measure(t, prepared.strips, this.cardW, (cx) => cx.notify(), unzoom)
           .child(div().id("mw-accept").flex_none().on_size_change((size, cx) => { const w = unzoom(size.width); if (this.cardW.get("accept") !== w) { this.cardW.set("accept", w); cx.notify(); } })
             .child(this.acceptButton(false))))
-        .child(this.cards.sink("own")).child(this.workerCards.sink("worker"))
+        .child(this.cards.sink("own",()=>this.historyCurrent(prepared)))
+        .child(this.workerCards.sink("worker",()=>this.historyCurrent(prepared)))
+        .child(this.codexCards.sink("codex",()=>this.historyCurrent(prepared)))
         .when(!this.pinned, (el) => {
           // Scrolled up: a card waiting below what's shown is pointed to; else the newest.
-          const below = rows.map((r, i) => (r.kind === "cardstrip" && r.first && i >= (this.range?.end ?? rows.length) ? i : -1)).filter((i) => i >= 0);
+          const below = prepared.cards.filter(i=>i >= (this.range?.end??rows.length));
           const label = questionsBelow(below.length);
           return el.child(h_flex().absolute().bottom(10).left(0).right(0).justify_center()
             .child(h_flex().id("chat-latest").h(26).px(10).gap(5).items_center().rounded(13).cursor_pointer()
               .bg(t.popover).border_1().border_color(t.border).shadow_md().text_size(12).text_color(t.muted)
               .hover((s) => s.text_color(t.foreground))
-              .on_click((_e, cx) => {
+              .on_click(event((_e, cx) => {
                 if (below.length) this.scroll.scroll_to_item(below[0], "center");
                 else { this.pinned = true; this.stick = true; }
                 cx.notify();
-              })
+              }))
               .when(below.length > 0, (el) => el.child(div().size(6).flex_none().rounded(3).bg(red())))
               .child(svg("mods/workspace-chrome/chevron-down.svg").size(12).flex_none()).child(label)));
         });
@@ -5212,20 +5406,24 @@ export default class Chat extends View {
   // the list, which then places every row exactly. Those near what is shown go first.
   measurer(rows, keys, t) {
     const near = this.anchor && Date.now() < this.anchor.until
-      ? Math.max(0, rows.findIndex((r) => r.id === this.anchor.id))
+      ? Math.max(0, (this.history?.snapshot?.positions.get(this.anchor.id)??-1))
       : this.range ? this.range.start : rows.length - 1;
     // Rows never measured, nearest first; and, measured again, the rows on screen and those
     // measured in the last few seconds: markdown can lay out a moment after its first frame (a
     // long message first measures as one line), so a height is never taken once and kept.
     const generation = this.measureGen;
+    const prepared=this.history?.snapshot?.rows===rows?this.history.snapshot:null;
     const now = Date.now();
-    const order = measureOrder(rows, keys, this.heights, this.measuredAt, near, now);
+    const order = this.history?.snapshot?.rows===rows
+      ? this.history.snapshot.measureOrder(near,now,this.measuredAt)
+      : measureOrder(rows,keys,this.heights,this.measuredAt,near,now);
     const revisions = new Map(order.map(i => [i, this.rowRevisions?.get(rows[i].id)?.revision ?? 0]));
     return div().absolute().top(0).left(0).w(this.width).h(0).overflow_hidden().opacity(0)
       .child(v_flex().w_full().flex_none().children(order.map((i) => div().id(`m${this.measureGen}-${keys[i]}`).flex_none().w_full()
         .on_size_change((size, cx) => {
           // Size callbacks can arrive after a pane resize or a fold toggle. They
           // belong to the layout that created them, never the current cache.
+          if(prepared&&!this.historyCurrent(prepared))return;
           if (generation !== this.measureGen || revisions.get(i) !== (this.rowRevisions?.get(rows[i].id)?.revision ?? 0)) return;
           const h = measuredHeight(this.heights.get(keys[i]), unzoom(size.height));
           if (h === undefined || this.heights.get(keys[i]) === h) return;
@@ -5233,6 +5431,8 @@ export default class Chat extends View {
           if (pendingMarkdownHeight(rows[i], h, textWidth)) return;
           if (!this.measuredAt.has(keys[i])) this.measuredAt.set(keys[i], Date.now());
           this.heights.set(keys[i], h);
+          this.history?.snapshot?.measure(rows[i].id,keys[i],h,this.measuredAt.get(keys[i]));
+          this.preparingHistory?.measure(rows[i].id,keys[i],h,this.measuredAt.get(keys[i]));
           if (this.pinned) this.stick = true;
           if (this.anchor && Date.now() < this.anchor.until) this.reanchor = true;
           cx.notify();

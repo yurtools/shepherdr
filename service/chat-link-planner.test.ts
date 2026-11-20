@@ -24,7 +24,7 @@ function host(){
   scanChatLink:(scan:any,limit:number)=>{stats.scans++;const n=links.scanChatLink(scan,limit);stats.chars+=n;return n;},
  };
  const helpers=source.slice(source.indexOf('const wrapLines ='),source.indexOf('const ICONS ='))+'\n'+source.match(/^const typed = .*$/m)![0];
- const methods=['loadSpaceTasks','taskSig','key','findMark','mentionsIn','mentionableTasks','rowBare','reset','close','linkedMarkdownStamp','linkedMarkdownInputs','linkedMarkdownCurrent','retireLinkedMarkdown','drainLinkedMarkdown','disposeLinkedMarkdown','reconcileLinkedMarkdown','clearLinkedMarkdown','prepareLinkedMarkdown','scheduleLinkedMarkdown','stepLinkedMarkdown','linkedMarkdownView'].map(method).join('\n');
+ const methods=['loadSpaceTasks','taskSig','key','findMark','mentionsIn','mentionableTasks','rowBare','clearHistory','reset','close','linkedMarkdownStamp','linkedMarkdownInputs','linkedMarkdownCurrent','retireLinkedMarkdown','drainLinkedMarkdown','disposeLinkedMarkdown','reconcileLinkedMarkdown','clearLinkedMarkdown','prepareLinkedMarkdown','scheduleLinkedMarkdown','stepLinkedMarkdown','linkedMarkdownView'].map(method).join('\n');
  const C=new Function(...Object.keys(dependencies),`${helpers};return class {${methods}}`)(...Object.values(dependencies));
  const v:any=new C();
  Object.assign(v,{measureGen:1,width:1200,zoom:1,columnWidth:1000,opened:new Set(),unfolded:new Set(),rowRevisions:new Map(),results:new Map(),views:{},query:'',route:'pane',end:0,pending:[],replied:[]});

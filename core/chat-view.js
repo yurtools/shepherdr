@@ -1,3 +1,4 @@
+import { sortPlan } from "./chat-preparation.js";
 // Shared core: the source is core/chat-view.js; bin/sync-shared copies it into mods/chat/core/. Edit it here.
 // The chat's rows as the window's chat (mods/chat) draws them and the web app's chat (web/plugins/chat) draws them
 // too: their words, a message's time, who sent a message, a launch brief's label, a task's news line, which
@@ -317,21 +318,28 @@ export function newsTimeline(items, tasks, { start = null } = {}) {
 // artifacts ({ id, title, version, versions: [{ v, at, publisher }] }); me: the agent's terminal (no machine).
 // -> Map item id -> { id, title, version (its latest), v (this publish's), latest (the last publish of it here) }.
 export function resolveArtifacts(items, arts, me) {
-  const out = new Map();
-  const calls = items.filter((x) => x.kind === "artifact");
-  if (!calls.length || !arts?.length) return out;
-  const vs = arts.flatMap((a) => (a.versions ?? []).filter((v) => v.publisher === me).map((v) => ({ a, v }))).sort((p, q) => p.v.at - q.v.at);
-  const used = new Set();
-  for (const x of calls) {
-    const at = x.at ?? 0;
-    const hit = vs.find(({ a, v }) => !used.has(`${a.id}:${v.v}`) && v.at >= at - 5000 && v.at <= at + 300000);
-    if (!hit) continue;
-    used.add(`${hit.a.id}:${hit.v.v}`);
-    out.set(x.id, { id: hit.a.id, title: hit.a.title, version: hit.a.version, v: hit.v.v });
+  const plan=resolveArtifactPlan(items,arts,me);
+  for(;;){const next=plan.next();if(next.done)return next.value;}
+}
+
+// The native timeline consumes this iterator outside render; the web retains
+// the synchronous API above. Every scan, join and sort yields by source entry.
+export function* resolveArtifactPlan(items, arts, me) {
+  const out=new Map(),calls=[],versions=[];
+  for(const item of items){yield;if(item.kind==="artifact")calls.push(item);}
+  if(!calls.length||!arts?.length)return out;
+  for(const a of arts)for(const v of a.versions??[]){yield;if(v.publisher===me)versions.push({a,v});}
+  const vs=yield* sortPlan(versions,(p,q)=>p.v.at-q.v.at),used=new Set(),last=new Map();
+  for(const x of calls){
+    const at=x.at??0;
+    for(const {a,v} of vs){
+      yield;
+      if(used.has(`${a.id}:${v.v}`)||!(v.at>=at-5000&&v.at<=at+300000))continue;
+      used.add(`${a.id}:${v.v}`);
+      out.set(x.id,{id:a.id,title:a.title,version:a.version,v:v.v});last.set(a.id,x.id);break;
+    }
   }
-  const last = new Map();
-  for (const [k, r] of out) last.set(r.id, k);
-  for (const [k, r] of out) r.latest = last.get(r.id) === k;
+  for(const [id,r] of out){yield;r.latest=last.get(r.id)===id;}
   return out;
 }
 

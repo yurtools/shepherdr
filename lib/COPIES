@@ -91,3 +91,5 @@ core/feature-state.js: workspace-sessions
 core/approval-history.js: workspace-approvals
 
 project-folder.js: coordinator menu-tasks new-menu-tasks newspace shepherdr-settings spaces-chat tabs-tasks tasks chat workspace-sessions workspace-launchers workspace-files workspace-changes
+
+core/chat-preparation.js: chat

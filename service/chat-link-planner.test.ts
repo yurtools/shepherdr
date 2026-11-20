@@ -15,25 +15,28 @@ function method(name:string){
 const theme={accent:'#0088ff',raised:'#222222',foreground:'#eeeeee',dim:'#888888',muted:'#aaaaaa',hover:'#333333'};
 const md=(id='one',text='[doc](/repo/a.md)',kind='agent'):any=>({id,text,kind});
 function host(){
- const stats={chars:0,scans:0,collects:0,notifies:0,reads:0};
+ const stats={chars:0,scans:0,collects:0,notifies:0,reads:0,reconciled:0,cleanup:0};
  const div=()=>element('div');
- const dependencies:any={...links,literal,initialOf,clock,imagesLine,WORDS,mentions,div,h_flex:div,v_flex:div,svg:div,
+ let reload:any=[];const execs:any[]=[];
+ const dependencies:any={exec:async(...args:any[])=>{execs.push(args);return {stdout:JSON.stringify(reload)};},...links,literal,initialOf,clock,imagesLine,WORDS,mentions,div,h_flex:div,v_flex:div,svg:div,
   LINE_H:21,QUIET_PY:1,BgJobs:class {},LinkedMarkdown:class {},zoomOf:()=>v.zoom,
   taskRef:(x:any)=>x?.ref??String(x?.id),TextView:{markdown:(id:string,text:string)=>{const el=element('markdown');el.id(id).child(text);return el;}},
   scanChatLink:(scan:any,limit:number)=>{stats.scans++;const n=links.scanChatLink(scan,limit);stats.chars+=n;return n;},
  };
  const helpers=source.slice(source.indexOf('const wrapLines ='),source.indexOf('const ICONS ='))+'\n'+source.match(/^const typed = .*$/m)![0];
- const methods=['key','findMark','mentionsIn','mentionableTasks','rowBare','reset','close','linkedMarkdownStamp','linkedMarkdownInputs','linkedMarkdownCurrent','retireLinkedMarkdown','clearLinkedMarkdown','prepareLinkedMarkdown','scheduleLinkedMarkdown','stepLinkedMarkdown','linkedMarkdownView'].map(method).join('\n');
+ const methods=['loadSpaceTasks','taskSig','key','findMark','mentionsIn','mentionableTasks','rowBare','reset','close','linkedMarkdownStamp','linkedMarkdownInputs','linkedMarkdownCurrent','retireLinkedMarkdown','drainLinkedMarkdown','disposeLinkedMarkdown','reconcileLinkedMarkdown','clearLinkedMarkdown','prepareLinkedMarkdown','scheduleLinkedMarkdown','stepLinkedMarkdown','linkedMarkdownView'].map(method).join('\n');
  const C=new Function(...Object.keys(dependencies),`${helpers};return class {${methods}}`)(...Object.values(dependencies));
  const v:any=new C();
  Object.assign(v,{measureGen:1,width:1200,zoom:1,columnWidth:1000,opened:new Set(),unfolded:new Set(),rowRevisions:new Map(),results:new Map(),views:{},query:'',route:'pane',end:0,pending:[],replied:[]});
  v.column=()=>v.columnWidth;v.pickKey=()=>v.route;v.areaKey=()=> 'area';v.findQuery=()=>v.query;
+ let reconciling=false;
+ for(const [name,counter] of [['reconcileLinkedMarkdown','reconciled'],['drainLinkedMarkdown','cleanup']]){const fn=v[name];if(fn)v[name]=(...a:any[])=>{reconciling=name==='reconcileLinkedMarkdown';try{const n=fn.apply(v,a);(stats as any)[counter]+=n;return n;}finally{reconciling=false;}};}
  v.clipped=(_bg:any,_h:any,el:any)=>el;v.sender=()=> 'Another agent';
  const bare=v.rowBare.bind(v);
  v.rowBare=(...args:any[])=>{if(v.collectMarkdown)stats.collects++;return bare(...args);};
  const jobs:any[]=[],views:any[]=[],steps:any[]=[];
  let duringCreate:(()=>void)|undefined;
- const cx:any={timer:{after:(_ms:number,fn:any)=>{const job={fn,cancelled:false,cancel(){this.cancelled=true;}};jobs.push(job);return job;}},
+ const cx:any={sleep:async()=>{},timer:{after:(_ms:number,fn:any)=>{const job={fn,cancelled:false,cancel(){this.cancelled=true;}};jobs.push(job);return job;}},
   notify(){stats.notifies++;},new:(_C:any,p:any)=>{const view=element('retained');let released=0;
    const entity=new Proxy(view,{get(target,key){if(key==='release')return ()=>{released++;};if(key==='released')return released;if(key==='props')return p;return target[key];}});
    views.push(entity);duringCreate?.();return entity;
@@ -43,17 +46,17 @@ function host(){
   const before={...stats},released=views.reduce((n,p)=>n+p.released,0);
   const work=v.linkMarkdownWork;let visits=0;
   const pending=work?.pending,del=pending?.delete;
-  if(pending)pending.delete=function(e:any){visits++;return del.call(this,e);};
+  if(pending)pending.delete=function(e:any){if(!reconciling)visits++;return del.call(this,e);};
   try{job.fn(cx);}finally{if(pending)pending.delete=del;}
-  const step={chars:stats.chars-before.chars,collects:stats.collects-before.collects,visits,releases:views.reduce((n,p)=>n+p.released,0)-released};
-  steps.push(step);expect(step.chars).toBeLessThanOrEqual(4096);expect(step.collects).toBeLessThanOrEqual(1);expect(step.visits+step.releases).toBeLessThanOrEqual(32);
+  const step={reconciled:stats.reconciled-before.reconciled,cleanup:stats.cleanup-before.cleanup,chars:stats.chars-before.chars,collects:stats.collects-before.collects,visits,releases:views.reduce((n,p)=>n+p.released,0)-released};
+  steps.push(step);expect(step.chars).toBeLessThanOrEqual(4096);expect(step.collects).toBeLessThanOrEqual(1);expect(step.visits+step.reconciled+step.cleanup).toBeLessThanOrEqual(32);expect(step.reconciled).toBeLessThanOrEqual(8);expect(step.cleanup).toBeLessThanOrEqual(8);
   built.length=0;
  }
  function drain(){let n=0;while(jobs.length){if(++n>10000)throw Error('planner did not settle');one();}}
- function prepare(rows:any[],keys=true){if(keys)rows.forEach(r=>v.key(r));v.prepareLinkedMarkdown(rows,theme,cx);}
+ function prepare(rows:any[],keys=true){if(keys)rows.forEach(r=>v.key(r));v.prepareLinkedMarkdown(rows,theme,cx,new Map(rows.map(r=>[r.id,r])));}
  const entry=(id='one')=>v.linkMarkdownWork.rows.get(id);
- const lookup=(row:any)=>{const p=entry(row.id)?.views.values().next().value;return p?v.linkedMarkdownView(row,p.id,p.text):null;};
- return {v,stats,jobs,views,steps,cx,one,drain,prepare,entry,lookup,onCreate(fn:()=>void){duringCreate=fn;}};
+ const lookup=(row:any)=>{const p=entry(row.id)?.views?.values().next().value;return p?v.linkedMarkdownView(row,p.id,p.text):null;};
+ return {execs,reload(value:any){reload=value;},v,stats,jobs,views,steps,cx,one,drain,prepare,entry,lookup,onCreate(fn:()=>void){duringCreate=fn;}};
 }
 
 test('planning reads no row text and collects no Markdown on first, unchanged or edited render',()=>{
@@ -143,7 +146,7 @@ test('reset separates reused IDs and cancels scans, including reset before the f
 
 test('removed and superseded children detach immediately and release exactly once in bounded callbacks',()=>{
  const h=host(),rows=Array.from({length:100},(_,i)=>md(String(i)));h.prepare(rows);h.drain();
- h.prepare([]);expect(h.v.linkMarkdownWork.rows.size).toBe(0);h.one();expect(h.views.filter(p=>p.released===1).length).toBe(32);
+ h.prepare([]);expect(h.lookup(rows[0])).toBeNull();h.one();expect(h.views.filter(p=>p.released===1).length).toBeLessThanOrEqual(8);
  h.drain();expect(h.views.every(p=>p.released===1)).toBe(true);
  h.prepare(rows);h.drain();h.v.reset();h.drain();expect(h.views.every(p=>p.released===1)).toBe(true);
  h.v.clearLinkedMarkdown(true);h.drain();expect(h.views.every(p=>p.released===1)).toBe(true);
@@ -194,10 +197,96 @@ test('pending fallback preserves text and uses the same native Markdown ID',()=>
  expect(built.some(el=>el.kids.includes(h.lookup(row)))).toBe(true);
 });
 
+test('render hands off large histories without reconciling or sweeping retained rows',()=>{
+ const h=host(),rows=Array.from({length:4000},(_,i)=>md(String(i),'',i%2?'gap':'brief'));
+ h.prepare(rows);h.drain();
+ let visits=0;
+ const retained=h.v.linkMarkdownWork.rows;
+ const get=retained.get.bind(retained),iter=retained[Symbol.iterator].bind(retained);
+ retained.get=(id:string)=>{visits++;return get(id);};
+ retained[Symbol.iterator]=function*(){for(const pair of iter()){visits++;yield pair;}};
+ for(let i=0;i<20;i++)h.prepare(rows.map(r=>({...r})));
+ expect(visits).toBe(0);
+ h.prepare([]);expect(visits).toBe(0);h.drain();expect(retained.size).toBe(0);
+});
+
+test('unchanged actual periodic reload preserves inputs, signature and pending progress',async()=>{
+ const h=host();h.v.feature='feature';
+ const payload=[{folder:'/repo',tasks:[{ref:'TASK-1',title:'A task',feature:'feature',status:'working'}]}];
+ h.reload(payload);await h.v.loadSpaceTasks();
+ const input=h.v.spaceTasks,signature=h.v.taskSig();
+ const rows=[md('long','x'.repeat(20000)),md('linked')];h.prepare(rows);h.one();
+ const scan=h.entry('long').scan;
+ for(let i=0;i<5;i++){
+  await h.v.loadSpaceTasks();expect(h.v.taskSig()).toBe(signature);expect(h.v.spaceTasks).toBe(input);
+  h.prepare(rows.map(r=>({...r})));h.one();
+ }
+ h.drain();expect(h.entry('long').linked).toBe(false);expect(h.lookup(rows[1])).not.toBeNull();
+ expect(h.stats.chars).toBe(rows[0].text.length+rows[1].text.length);
+ expect(scan.at).toBe(rows[0].text.length);
+ const before={...h.stats};
+ for(let i=0;i<5;i++){await h.v.loadSpaceTasks();h.prepare(rows.map(r=>({...r})));}
+ expect(h.jobs.length).toBe(0);expect(h.stats).toEqual(before);
+ h.reload([{...payload[0],tasks:[{...payload[0].tasks[0],title:'New title'}]}]);await h.v.loadSpaceTasks();
+ expect(h.v.spaceTasks).not.toBe(input);h.prepare(rows);h.drain();
+ expect(h.stats.chars).toBe(before.chars);
+});
+
+test('retiring empty rows does not replace their empty view map',()=>{
+ const h=host();h.prepare([md('empty','','gap')]);h.drain();
+ const entry=h.entry('empty'),views=entry.views;
+ for(let i=0;i<50;i++)h.v.retireLinkedMarkdown(h.v.linkMarkdownWork,entry);
+ expect(entry.views).toBe(views);
+});
+
+test('streaming while reconciliation and sweeping are unfinished cannot starve stable rows or releases',()=>{
+ const h=host(),old=Array.from({length:100},(_,i)=>md(`old-${i}`));h.prepare(old);h.drain();
+ const released=h.views.slice(),stable=md('stable'),long=md('long','x'.repeat(100000));
+ const quiet=Array.from({length:700},(_,i)=>md(`quiet-${i}`,'','gap'));
+ let stream=md('stream','['.repeat(10000));
+ let stableDuringCursor=false,releasedDuringCursor=false;
+ for(let i=0;i<500;i++){
+  stream={...stream,text:stream.text+'x'};
+  h.prepare([stable,long,stream,...quiet].map(r=>({...r})));h.one();
+  stableDuringCursor ||= !!h.v.linkMarkdownWork.cursor&&!!h.lookup(stable);
+  releasedDuringCursor ||= !!h.v.linkMarkdownWork.cursor&&released.every(p=>p.released===1);
+ }
+ expect(stableDuringCursor).toBe(true);expect(releasedDuringCursor).toBe(true);
+ expect(h.entry('long').linked).toBe(false);h.drain();
+ expect(h.lookup(stable)).not.toBeNull();expect(released.every(p=>p.released===1)).toBe(true);
+});
+
+test('mass child retirement and reset detach without a scan and close yields between bounded drains',async()=>{
+ const h=host(),row=md();h.prepare([row]);h.drain();
+ const entry=h.entry(),views=entry.views;
+ for(let i=0;i<1000;i++)views.set(`extra-${i}`,{view:h.cx.new(null,{})});
+ let walked=0;
+ const values=views.values.bind(views),entries=views.entries.bind(views);
+ views.values=function*(){for(const p of values()){walked++;yield p;}};
+ views.entries=function*(){for(const p of entries()){walked++;yield p;}};
+ h.prepare([]);expect(walked).toBe(0);expect(h.lookup(row)).toBeNull();
+ const beforeReset=walked;h.v.reset();expect(walked).toBe(beforeReset);
+ let lastReleased=0,yields=0;
+ h.cx.sleep=async()=>{const n=h.views.filter(p=>p.released).length;expect(n-lastReleased).toBeLessThanOrEqual(32);lastReleased=n;yields++;};
+ h.v.box=h.v.findBox=h.v.scroll={release(){}};h.v.dict={cancel(){}};
+ await h.v.close(h.cx);h.drain();
+ expect(yields).toBeGreaterThan(1);expect(h.views.every(p=>p.released===1)).toBe(true);
+});
+
 test('resumable detector preserves hasChatLink semantics across every boundary',()=>{
  function check(text:string,limit:number){const scan=links.chatLinkScan(text);while(scan.result===null){const at=scan.at,n=links.scanChatLink(scan,limit);expect(n).toBeLessThanOrEqual(limit);expect(scan.at-at).toBe(n);}expect(scan.result).toBe(links.hasChatLink(text));}
  const alphabet='[]()\na';function walk(text:string,depth:number){check(text,2);if(depth)for(const c of alphabet)walk(text+c,depth-1);}walk('',6);
  for(const text of ['http://x','https://x','hhttp://x','htthttp://','HTTPS://x','[a](b)','[]()','[a]()','[a]())','[a\nb](c)','[x](\n)','[[]((x)','😀[x](y)'])for(let size=1;size<9;size++)check(text,size);
  let seed=183206;const chars='[]()http:/sabcXYZ\n\r \\😀';
  for(let n=0;n<12000;n++){let text='';seed=(Math.imul(seed,1664525)+1013904223)>>>0;const length=seed%257;for(let i=0;i<length;i++){seed=(Math.imul(seed,1664525)+1013904223)>>>0;text+=chars[seed%chars.length];}check(text,1+n%31);}
+});
+
+test('close starts the local hook handoff before waiting for SDK cleanup yields',async()=>{
+ const h=host();h.prepare(Array.from({length:200},(_,i)=>md(String(i))));h.drain();
+ h.v.box=h.v.findBox=h.v.scroll={release(){}};h.v.dict={cancel(){}};h.v.addr='terminal';h.v.askDir='/inert-asks';
+ let resume:any;h.cx.sleep=()=>new Promise(resolve=>{resume=resolve;});
+ const closing=h.v.close(h.cx);
+ expect(h.execs).toContainEqual(['sh',expect.arrayContaining(['/inert-asks','terminal'])]);
+ h.cx.sleep=async()=>{};resume();await closing;
+ expect(h.views.every(p=>p.released===1)).toBe(true);
 });

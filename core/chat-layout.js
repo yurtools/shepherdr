@@ -18,12 +18,21 @@ export function hoverMessage(y, top, rows, sizes) {
   return null;
 }
 export function measureOrder(rows, keys, heights, measuredAt, near, now) {
-  const fresh = rows.map((_, i) => i).filter(i => !heights.has(keys[i]))
-    .sort((a, b) => Math.abs(a - near) - Math.abs(b - near)).slice(0, 30);
+  const order = [], n = rows.length;
+  near = Number.isFinite(near) ? near : 0;
+  let left = Math.max(-1, Math.min(n - 1, Math.floor(near))), right = Math.max(0, Math.min(n, Math.floor(near) + 1));
+  // Walk outward in the same distance/index order as the old full-history sort.
+  // Only eight fresh rows can be used; a cold history need visit only those eight.
+  while ((left >= 0 || right < n) && order.length < 8) {
+    const i = right >= n || left >= 0 && near - left <= right - near ? left-- : right++;
+    if (!heights.has(keys[i])) order.push(i);
+  }
   // Native Markdown settles over several frames. Once settled, pointer repaint must not
   // continuously recreate its hidden measuring views. Content/width/zoom changes get new keys.
-  const settling = rows.map((_, i) => i).filter(i => heights.has(keys[i]) && now - (measuredAt.get(keys[i]) ?? 0) < 4000);
-  return [...new Set([...fresh, ...settling])].slice(0, 8);
+  for (let i = 0; i < n && order.length < 8; i++) {
+    if (heights.has(keys[i]) && now - (measuredAt.get(keys[i]) ?? 0) < 4000) order.push(i);
+  }
+  return order;
 }
 
 // External agents can send large context messages, bypassing the composer's

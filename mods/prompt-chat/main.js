@@ -4,7 +4,7 @@
 // { ...args, name: the text }. Enter saves, Esc cancels.
 import { View, div } from "gpui-kit";
 import { v_flex, InputState, Input } from "gpui-base";
-import { run, props, closeOverlay, theme } from "herdr";
+import { run, props, closeOverlay, theme, setShared } from "herdr";
 import { dialogFooter, TEXT, RADIUS, H } from "./ui.js";
 
 export default class Prompt extends View {
@@ -27,7 +27,8 @@ export default class Prompt extends View {
   submit() {
     const p = props();
     closeOverlay(p.overlay);
-    run(p.command.name, { ...(p.command.args ?? {}), name: this.text.trim() });
+    if (p.feature) setShared('workspace.feature.request', {rename:{id:p.feature,name:this.text.trim()},at:Date.now(),nonce:Math.random()});
+    else run(p.command.name, { ...(p.command.args ?? {}), name: this.text.trim() });
   }
 
   key(e, cx) {

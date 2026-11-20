@@ -23,6 +23,45 @@ export function chatPane(k) {
   return m ? `${m}/${id}` : id;
 }
 
+// Feature names belong to records, never to a terminal's title or a saved tab/pane address.
+export const isFeatureAssistant = (k) => k?.state === "live" && k.labels?.["herdr.role"] === "feature" && Boolean(k.labels?.["herdr.feature"]) && !k.labels?.["herdr.task"];
+export function featureViews({ features = [], spaces = [], panes = [], terminals = [], slots = {}, companions = {} }) {
+  const records = new Map(features.map(r => [r.id, r]));
+  const locations = new Map(spaces.filter(s => !s.machine).flatMap(s => s.tabs.map(t => [t.id, s.id])));
+  const extras = new Set(Object.values(companions).map(r => r.pane));
+  const visible = new Set(terminals.filter(k => isFeatureAssistant(k) && panes.some(p => !extras.has(p.pane) &&
+    (p.terminal === k.address || (p.mod === "chat" && p.pane === chatPane(k))))).map(k => k.labels["herdr.feature"]));
+  const byPane = new Map(), byTab = new Map(), ambiguous = new Set();
+  for (const p of panes) {
+    const space = locations.get(p.tab);
+    if (!space) continue;
+    const attached = terminals.filter(k => k.state === "live" &&
+      (k.address === p.terminal || (p.mod === "chat" && chatPane(k) === p.pane)));
+    let id;
+    if (attached.length) {
+      // A stale slot must not claim a pane now occupied by another agent or a worker.
+      if (!attached.every(isFeatureAssistant)) continue;
+      const ids = new Set(attached.map(k => k.labels["herdr.feature"]));
+      if (ids.size !== 1) continue;
+      id = attached[0].labels["herdr.feature"];
+    } else if (p.mod === "chat") {
+      const entry = Object.entries(slots).find(([slot, s]) => slot === `feature-${s.feature}` &&
+        s.feature && s.space === space && s.pane === p.pane && s.tab === p.tab);
+      id = entry?.[1].feature;
+      if (visible.has(id)) continue; // A live owner outranks an obsolete slot's pane binding.
+    }
+    const record = records.get(id);
+    if (!record?.name || record.space !== space) continue;
+    byPane.set(p.pane, record);
+    // A view beside an ordinary agent does not own that agent's tab name.
+    if (extras.has(p.pane)) continue;
+    if (byTab.has(p.tab) && byTab.get(p.tab).id !== id) ambiguous.add(p.tab);
+    byTab.set(p.tab, record);
+  }
+  for (const tab of ambiguous) byTab.delete(tab);
+  return { byPane, byTab };
+}
+
 // A space's Assistant: the live coordinator terminal labelled for it, on the space's machine (labels hold that
 // machine's own ids, without the "<machine>/" an app id has).
 export function assistantOf(space, ts) {

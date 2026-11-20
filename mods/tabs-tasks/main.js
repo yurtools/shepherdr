@@ -2,7 +2,7 @@ import { watchTerminalClipboard } from './workspace-store.js';
 import { watchBrowserTabs } from "./workspace-browser.js";
 import { View, div, svg, image } from "gpui-kit";
 import { h_flex } from "gpui-base";
-import { panes, run, openOverlay, theme, window, shared, setShared, layout, settings, nextCommand, readTextFile, appHome, home } from "herdr";
+import { run, openOverlay, theme, window, shared, setShared, layout, settings, nextCommand, readTextFile, appHome, home } from "herdr";
 import { spacesWithChats as spaces, sweep } from "./parked.js";
 import { agentIn, isCoordinatorTab, closeTab, watchNewSpaces, newSpace, openCoordinator, renameTab, renameSpace } from "./coordinator.js";
 import { startTick, tickOnChange } from "./tick.js";
@@ -15,10 +15,11 @@ import { on as addonOn } from "./addons.js";
 import { watchViews } from "./usage.js";
 // A tab's name (what runs in it while Herdr named it): core/menus.js, as the web app's tab bar names it.
 import { tabName } from "./core/menus.js";
-import { inRender } from "./live.js";
+import { inRender, panes } from "./live.js";
 import { dirsReady } from "./dirs.js";
 import { watchCompanions } from "./companions.js";
-import { watchFeatures, startFeature } from "./features.js";
+import { watchFeatures, startFeature, featureViewState } from "./features.js";
+import { featureViews } from "./core/spaces.js";
 import { watchSessionHistory, openHistory } from "./session-history.js";
 
 function find(node, id) {
@@ -164,9 +165,10 @@ export default class Tabs extends View {
     // Its "Tab bar" off (shared "tabbar.tabs" false): the bar keeps +, the panels and the window's
     // buttons (and its background work), without the tabs.
     const tabsShown = shared("tabbar.tabs") !== false;
+    const featureNames = featureViews(featureViewState()).byTab;
     const item = (c, i) => {
       const program = panes().find(p => p.tab === c.id && p.program?.agent)?.program ?? panes().find(p => p.tab === c.id)?.program;
-      const name = tabName(c.name, program?.name);
+      const name = featureNames.get(c.id)?.name ?? tabName(c.name, program?.name);
       return h_flex().id(`tab-${c.id}`).h(H.sm).px(8).gap(6).rounded(RADIUS.control).items_center().flex_none().text_size(TEXT.body)
         .border(1).border_color(c.active ? t.border : t.chrome).bg(c.active ? t.raised : t.chrome).text_color(c.active ? t.foreground : t.muted)
         .cursor_pointer().hover(s => s.bg(t.hover))

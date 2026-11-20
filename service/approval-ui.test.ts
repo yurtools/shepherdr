@@ -1,8 +1,8 @@
 import { beforeEach, expect, mock, test } from 'bun:test';
 import { fakeHerdr } from './fake-herdr';
 import { fakeGpuiBase, fakeGpuiKit, element, built, byId, handler } from './fake-gpui';
-const state=new Map();let writes:any[]=[],notices:any[]=[],approvalResult:any={rows:[]};
-mock.module('herdr',()=>fakeHerdr({theme:()=>new Proxy({},{get:()=> '#111111'}),settings:()=>({}),shared:(k:string)=>state.get(k),setShared:(k:string,v:any)=>state.set(k,v),props:()=>({}),appHome:()=>'/test-app',notify:(n:any)=>notices.push(n),exec:async()=>({code:0,stdout:JSON.stringify(approvalResult),stderr:''})}));
+const state=new Map();let writes:any[]=[],notices:any[]=[],approvalResult:any={rows:[]},commands:any[]=[];
+mock.module('herdr',()=>fakeHerdr({theme:()=>new Proxy({},{get:()=> '#111111'}),settings:()=>({}),shared:(k:string)=>state.get(k),setShared:(k:string,v:any)=>state.set(k,v),props:()=>({}),appHome:()=>'/test-app',notify:(n:any)=>notices.push(n),exec:async(...args:any[])=>{commands.push(args);return{code:0,stdout:JSON.stringify(approvalResult),stderr:''}}}));
 mock.module('gpui-kit',()=>fakeGpuiKit());mock.module('gpui-base',()=>fakeGpuiBase());
 const { approvalsInit, approvalsSection, approvalsFlush }=await import('../mods/shepherdr-settings/approval-section.js');
 const { rememberedControls }=await import('../mods/chat/approval-cards.js');
@@ -10,7 +10,7 @@ const { AskCards }=await import('../mods/chat/cards.js');
 const { words, permissionStatus, requestHash }=await import('../core/asks.js');
 const { strip }=await import('../mods/chat/strips.js');
 const { default: Approvals }=await import('../mods/workspace-approvals/main.js');
-beforeEach(()=>{state.clear();writes=[];notices=[];approvalResult={rows:[]};built.length=0;});
+beforeEach(()=>{state.clear();writes=[];notices=[];commands=[];approvalResult={rows:[]};built.length=0;});
 test('Agents exposes a manual default plus role overrides without changing settings on render',()=>{
  const cx:any={timer:{after(){}}};const view:any={scope:null,chain(_section:string,key:string){return[{value:key==='mode'?'manual':key==='policy'?'':undefined}]},scoped(){return{}},set(...args:any[]){writes.push(args)},row(_t:any,title:string,_about:any,control:any,_scope:any,below:any){return element().child(title).when(Boolean(control),(e:any)=>e.child(control)).when(Boolean(below),(e:any)=>e.child(below))}};
  approvalsInit(view,cx);approvalsSection(view,{dim:'#111'},cx);expect(writes).toEqual([]);
@@ -27,6 +27,18 @@ test('remembered execution grants are absent for plans/questions and bind the re
  const remote=rememberedControls({id:'id',machine:'remote',words:{kind:'permission'}},host);expect(remote.every((x:any)=>x.disabled)).toBe(true);
  const named=rememberedControls({id:'id',words:{kind:'permission'},req:{tool_name:'mcp__openmemory__openmemory_store_project',tool_input:{content:'test'}}},host);
  expect(named.find((c:any)=>c.label==='Create rule…')?.disabled).toBe(false);
+});
+test('Ask Assistant button delegates the original request through the explicit helper route',async()=>{
+ const ask={id:'worker.123.4',terminal:'worker',words:{kind:'permission'},req:{tool_name:'Bash',tool_input:{command:'git status | wc -l'}}};
+ const review=rememberedControls(ask,{terminal:()=> 'assistant'}).find((c:any)=>c.label==='Ask Assistant')!;
+ approvalResult={action:'wait',reason:'Requesting Assistant review.'};
+ await review.fn({spawn:async(fn:any)=>fn({notify(){}})});
+ expect(commands).toHaveLength(1);
+ expect(commands[0].slice(0,2)).toEqual(['python3',['/test-app/mods/chat/approval-policy.py','review','--request','/test-app/data/chat-asks/req/worker.123.4.json','--terminal','worker']]);
+ const req=ask.req,approval=permissionStatus(req,{version:1,request_hash:requestHash(req),state:'person',reason:'assistant-asked',review_reason:'The script destination is unknown. Please choose.'})!;
+ const cards=new AskCards({reply(){}},{}),strips:any[]=cards.strips({...ask,approval});
+ expect(strips.find((s:any)=>s.key==='status-detail')?.text).toBe(approval.detail);
+ expect(strips.find((s:any)=>s.key==='actions').ctls.map((c:any)=>c.label)).toEqual(['Allow once','Deny']);
 });
 
 test('native permission strips keep visible status, distinct icons and manual keyboard actions',()=>{

@@ -17,7 +17,7 @@ import { View, div, svg, image } from "gpui-kit";
 import { h_flex } from "gpui-base";
 import { props, run, theme, home, exec, hc, notify, nextCommand, shared, setShared, openOverlay, focused } from "herdr";
 import { panes, terminals, spaces, inRender } from "./live.js";
-import { spaceName, chatPane, chatLabel } from "./core/spaces.js";
+import { spaceName, chatPane, chatLabel, featureViews, isFeatureAssistant } from "./core/spaces.js";
 import { apSpace, apWatch, apPoll, apGroup, apHeartbeatLink, COMPACT_BELOW } from "./autopilot.js";
 import { button as uiButton, segmented, TEXT, RADIUS, toast, plainError } from "./ui.js";
 import { on as addonOn } from "./addons.js";
@@ -54,6 +54,16 @@ function chatOf(terminal) {
 // A Coordinator tab's chat with no agent yet (mods/coordinator records it in shared
 // "coordinator.slots"): it has the switch too; Terminal starts its agent first (mods/chat).
 const lazySlot = (pane) => Object.values(shared("coordinator.slots") ?? {}).find((r) => r?.pane === pane) ?? null;
+
+function featureOf(pane) {
+  return featureViews({ features: shared('workspace.features') ?? [], spaces: spaces(), panes: panes(), terminals: terminals(),
+    slots: shared('coordinator.slots') ?? {}, companions: shared('workspace.companions') ?? {} }).byPane.get(pane);
+}
+function bindFeature(record, pane, tab) {
+  if (!record || !pane) return;
+  setShared('coordinator.slots', { ...(shared('coordinator.slots') ?? {}),
+    [`feature-${record.id}`]: { feature: record.id, space: record.space, folder: record.folder, pane, tab } });
+}
 
 // The agent a chat pane shows.
 const agentOf = (chat) => terminals().find((x) => chatPane(x) === chat && x.state === "live")?.address ?? null;
@@ -148,13 +158,16 @@ export default class Pane extends View {
     if (this.busy) return;
     this.busy = true;
     const terminal = p.terminal;
+    const feature = featureOf(p.pane);
     cx.spawn(async (cx) => {
       try {
-        const out = await app("pane.split", { direction: "right", pane: p.pane, mod: CHAT, props: { terminal } });
+        const out = await app("pane.split", { direction: "right", pane: p.pane, mod: CHAT, props: { terminal,
+          ...(feature ? {role:'feature',template:'feature',slot:`feature-${feature.id}`,feature:feature.id,space:feature.space,folder:feature.folder,settings:feature.settings,featureRecord:feature} : {}) } });
         if (!out.pane) throw new Error("Herdr didn't open the chat");
         // The agent knows its chat: if that pane goes with its tab or space, the agents list
         // ends the agent (parked.js sweep), as closing its own pane would have.
         await hc(["label", terminal, `${LABEL}=${chatLabel(out.pane)}`]);
+        bindFeature(feature, out.pane, p.tab);
         run("pane.focus", { pane: out.pane });
         // Last: parking removes this pane, and this header with it. The chat turns core keep
         // back on once the park has gone through (mods/chat).
@@ -174,8 +187,10 @@ export default class Pane extends View {
     const live = Boolean(terminal);
     // Not running, or still in a pane of its own (a chat opened beside it): just close the chat.
     const own = live && panes().find((x) => x.terminal === terminal);
+    const feature = featureOf(chat), tab = panes().find(p => p.pane === chat)?.tab;
     if (!live || own) {
       const zoomed = panes().find((x) => x.pane === chat)?.zoomed;
+      if (own) bindFeature(feature, own.pane, own.tab);
       run("pane.close", { pane: chat });
       if (terminal) hc(["label", terminal, `${LABEL}=`]);
       if (own) { if (zoomed && own.zoomed) run("pane.zoom", { pane: own.pane }); run("pane.focus", { pane: own.pane }); }
@@ -188,6 +203,7 @@ export default class Pane extends View {
         await app("pane.focus", { pane: chat });
         const out = await app("terminal.keep", { terminal, place: "right" });
         await hc(["label", terminal, `${LABEL}=`]);
+        bindFeature(feature, out.pane, tab);
         if (out.pane) run("pane.focus", { pane: out.pane });
         // Last: closing the chat removes this header too.
         await app("pane.close", { pane: chat });
@@ -249,8 +265,11 @@ export default class Pane extends View {
     // An Assistant reads as its space ("tor-gameboy"), never its role or what it runs (SHEP-36: the composer's model
     // menu says which agent): the space's name, then its folder, quieter.
     const labels = terminals().find((x) => x.address === (agent ?? self.terminal))?.labels ?? {};
-    const featureId = lazy?.feature ?? labels['herdr.feature'];
-    const featureName = featureId && (shared('workspace.features') ?? []).find(x => x.id === featureId)?.name;
+    const terminal = terminals().find(x => x.address === (agent ?? self.terminal));
+    const feature = featureOf(self.pane) ?? (extra && isFeatureAssistant(terminal) &&
+      (shared('workspace.features') ?? []).find(x => x.id === labels['herdr.feature'] && spaces().some(s => s.id === x.space && s.tabs.some(t => t.id === self.tab))));
+    const featureId = feature?.id;
+    const featureName = feature?.name;
     const isAssistant = !featureId && (Boolean(lazy) || terminals().find((x) => x.address === (agent ?? self.terminal))?.labels?.["herdr.role"] === "coordinator");
     const space = isAssistant ? spaces().find((s) => s.tabs?.some((x) => x.id === self.tab)) : null;
     const name = art ?? featureName ?? (isAssistant ? spaceName(space, { home: home() }) : chatMode && p === self ? "Chat" : prog);

@@ -67,8 +67,8 @@ test('Feature creation resolves its folder from saved project roots instead of a
  const source=readFileSync(new URL('../lib/features.js',import.meta.url),'utf8'),a=source.indexOf('export function watchFeatures('),b=source.indexOf('\n}',a)+2;
  const fn=source.slice(a,b).replace(/^export /,'');let request:any=null,created:any;const timers=new Map<number,any>(),pending:Promise<any>[]=[];
  const cx:any={notify(){},spawn(f:any){const p=Promise.resolve(f(cx));pending.push(p);return p},timer:{every:(ms:number,f:any)=>timers.set(ms,f)}};
- const watch=new Function('shared','setShared','featureRecords','workspaceCall','spaces','run','shepherdrFor','readShepherdr','featureSettings','projectFolder','openFeature',`return ${fn}`)(
-  ()=>request,()=>{},()=>[],async(command:string,payload:any)=>{if(command==='feature-create'){created=payload;return {id:'feature',...payload}}return {features:[]}},()=>[{id:'sp1',folder:'/native/fallback'}],()=>{},()=>({}),async()=>({}),()=>({agent:'codex'}),async()=>'/saved/project',async()=>{});
+ const watch=new Function('shared','setShared','featureRecords','workspaceCall','spaces','run','shepherdrFor','readShepherdr','featureSettings','projectFolder','openFeature','featureViewState','reconcileNames',`return ${fn}`)(
+  ()=>request,()=>{},()=>[],async(command:string,payload:any)=>{if(command==='feature-create'){created=payload;return {id:'feature',...payload}}return {features:[]}},()=>[{id:'sp1',folder:'/native/fallback'}],()=>{},()=>({}),async()=>({}),()=>({agent:'codex'}),async()=>'/saved/project',async()=>{},()=>({}),()=>{});
  watch(cx,(e:any)=>{throw e});await Promise.all(pending);request={nonce:1,at:Date.now(),create:{space:'sp1',folder:'/stale/request'}};
  timers.get(150)(cx);await Promise.all(pending);expect(created.folder).toBe('/saved/project');
 });

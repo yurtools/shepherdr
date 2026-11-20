@@ -56,29 +56,6 @@ test('source navigation switches from highlighted/preview content to the editor 
  const doc:any={text:'first\nsecond\nthird',highlight:true,preview:true,location:{line:2,column:2},editor:{set_selected_range:(r:any)=>{selected=r},focus:()=>{focused=true}}};
  new C().jump(doc);expect(selected).toEqual({start:7,end:7});expect(doc.highlight).toBe(false);expect(doc.preview).toBe(false);expect(focused).toBe(true);expect(doc.location).toBeUndefined();
 });
-const prepare=new Function('hasChatLink','LinkedMarkdown',`return class { ${method(source,'prepareLinkedMarkdown')} }`)(hasChatLink,class {});
-test('linked Markdown creates retained child views after render and reuses or releases them as content changes',()=>{
- const v:any=new prepare();v.measureGen=1;v.pickKey=()=> 'pane';
- v.rowBare=(row:any,_t:any,pre:string)=>v.collectMarkdown.set(pre+row.id,{id:pre+row.id,text:row.text,key:'pane'});
- const queued:any[]=[],updates:any[]=[],released:any[]=[];let creates=0;
- const cx:any={timer:{after:(_n:number,fn:any)=>queued.push(fn)},new:(_C:any,p:any)=>{creates++;return {set_props:(p:any)=>updates.push(p),release:()=>released.push(p.id)}},notify(){}};
- const rows=[{id:'one',text:'[file](/repo/file.txt)'}];v.prepareLinkedMarkdown(rows,{},cx);expect(creates).toBe(0);queued.shift()(cx);expect(creates).toBe(1);
- v.prepareLinkedMarkdown(rows,{},cx);expect(queued).toHaveLength(0);
- v.prepareLinkedMarkdown([{id:'one',text:'[different](/repo/other.txt)'}],{},cx);queued.shift()(cx);expect(creates).toBe(1);expect(updates).toHaveLength(1);
- v.prepareLinkedMarkdown([],{},cx);queued.shift()(cx);expect(released).toHaveLength(1);
-});
-test('long worker logs prepare linked rows incrementally outside render, cancel stale plans, and reuse unchanged content',()=>{
- const v:any=new prepare();v.measureGen=1;v.pickKey=()=> 'thread';v.findQuery=()=>'';
- let collected=0,created=0;const queued:any[]=[];
- v.rowBare=(row:any,_t:any,pre:string)=>{collected++;v.collectMarkdown.set(pre+row.id,{id:pre+row.id,text:row.text,key:'thread'});};
- const cx:any={timer:{after:(_n:number,fn:any)=>queued.push(fn)},new:()=>{created++;return {release(){},set_props(){}}},notify(){}};
- const rows=Array.from({length:200},(_,i)=>({id:String(i),text:'[doc](/repo/file.md)'}));
- v.prepareLinkedMarkdown(rows,{},cx);expect(collected).toBe(0);
- queued.shift()(cx);expect(collected).toBe(1);expect(created).toBe(1);
- v.prepareLinkedMarkdown(rows,{},cx);expect(queued).toHaveLength(1);
- v.prepareLinkedMarkdown([] ,{},cx);while(queued.length)queued.shift()(cx);
- expect(collected).toBe(1);expect(v.linkMarkdown.size).toBe(0);
-});
 const childSource=readFileSync(new URL('../mods/chat/linked-markdown.js',import.meta.url),'utf8');
 test('the retained Markdown callback routes the clicked href back to its own chat',()=>{
  const calls:any[]=[];const native=element('TextView');

@@ -31,3 +31,29 @@ export function sourceOffset(text,line,column=1) {
 export function hasChatLink(text) {
  return /\[[^\]\n]+\]\([^\n]+\)|https?:\/\//.test(String(text??''));
 }
+
+// The native planner can yield even in one very long row. This recognizes exactly
+// hasChatLink's case-sensitive URL prefix / nonempty Markdown label and body,
+// retaining partial matches across UTF-16 slices. It never interprets a href.
+export function chatLinkScan(text) {
+ return {text:String(text??''),at:0,url:0,label:-1,paren:false,body:-1,result:/** @type {boolean|null} */ (null)};
+}
+export function scanChatLink(s,limit) {
+ let count=0;
+ while(s.at<s.text.length&&count<limit&&s.result===null){
+  const i=s.at++,c=s.text[i];count++;
+  if(c==='\n'){s.label=-1;s.paren=false;s.body=-1;}
+  else {
+   if(s.body>=0&&c===')'&&i>s.body)s.result=true;
+   if(s.paren&&c==='('&&s.body<0)s.body=i+1;
+   s.paren=false;
+   if(c===']'){s.paren=s.label>=0&&i>s.label+1;s.label=-1;}
+   else if(c==='['&&s.label<0)s.label=i;
+  }
+  const u=s.url;
+  s.url=u===0?(c==='h'?1:0):u===1?(c==='t'?2:c==='h'?1:0):u===2?(c==='t'?3:c==='h'?1:0):u===3?(c==='p'?4:c==='h'?1:0):u===4?(c==='s'?5:c===':'?6:c==='h'?1:0):u===5?(c===':'?6:c==='h'?1:0):u===6?(c==='/'?7:c==='h'?1:0):(c==='/'?8:c==='h'?1:0);
+  if(s.url===8)s.result=true;
+ }
+ if(s.result===null&&s.at===s.text.length)s.result=false;
+ return count;
+}

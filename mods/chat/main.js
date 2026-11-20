@@ -3,7 +3,7 @@ import {projectFolder} from './project-folder.js';
 import {appendInstructions,spaceInstructions} from './core/instructions.js';
 import {readShepherdr} from './coordinator.js';
 import LinkedMarkdown from './linked-markdown.js';
-import { chatLink, hasChatLink } from './core/chat-links.js';
+import { chatLink, chatLinkScan, scanChatLink } from './core/chat-links.js';
 import { startFeature, workspaceCall } from "./features.js";
 import { approvalArgv, answerPermission } from "./approval.js";
 import { measuredHeight, viewportScroll, hoverMessage, measureOrder, pendingMarkdownHeight, messageChunks } from "./core/chat-layout.js";
@@ -613,6 +613,7 @@ export default class Chat extends View {
 
   // Forget what was read: another log file, or this one replaced.
   reset() {
+    this.clearLinkedMarkdown();
     this.records = [];
     this.rowRevisions = new Map();
     this.start = null;
@@ -633,7 +634,7 @@ export default class Chat extends View {
   // on the web's cards: its terminal shows its own prompt meanwhile. A call or a recording ends with it.
   async close(cx) {
     if (this.host) return this.host.close(cx);
-    for(const kept of this.linkMarkdown?.values()??[])kept.view.release();
+    this.clearLinkedMarkdown(true);
     this.box.release();
     this.findBox.release();
     this.scroll.release();
@@ -3436,7 +3437,7 @@ export default class Chat extends View {
   key(x) {
     this.rowRevisions ??= new Map();
     const content=x.text??x.code??'', previous=this.rowRevisions.get(x.id);
-    if(!previous||previous.content!==content)this.rowRevisions.set(x.id,{content,revision:(previous?.revision??-1)+1});
+    if(!previous||previous.content!==content)this.rowRevisions.set(x.id,{content,revision:(previous?.revision??-1)+1,contentRevision:(previous?.contentRevision??-1)+1});
     const revision=this.rowRevisions.get(x.id).revision;
     const q = this.findQuery();
     const found = q && String(x.text ?? x.code ?? "").toLowerCase().includes(q.toLowerCase()) ? `|f:${q}` : "";
@@ -3522,41 +3523,150 @@ export default class Chat extends View {
           : p.pill ? pill(p.pill) : icon(p.what))));
   }
 
+  // Presentation inputs can change before the next draw. Conversation objects are
+  // only a callback validity guard: rebuild() replaces them during ordinary loads.
+  linkedMarkdownStamp() {
+    return [this.measureGen,this.width,this.column(),zoomOf(),this.findQuery(),this.pickKey()??this.areaKey(),this.reach,this.tasks,this.spaceTasks];
+  }
+
+  linkedMarkdownInputs() {
+    return [this.conv,this.end,this.pending,this.pending?.length,this.replied];
+  }
+
+  linkedMarkdownCurrent(work,entry=null,token=entry?.token) {
+    const same=(a,b)=>a?.length===b.length&&b.every((v,i)=>v===a[i]);
+    return !work.closed&&same(work.stamp,this.linkedMarkdownStamp())&&same(work.inputs,this.linkedMarkdownInputs())&&(!entry||
+      work.rows.get(entry.id)===entry&&entry.epoch===work.epoch&&entry.token===token&&
+      entry.revision===(this.rowRevisions?.get(entry.id)?.revision??0)&&
+      entry.open===this.opened.has(entry.id)&&entry.unfold===this.unfolded.has(entry.row.blk??entry.id));
+  }
+
+  retireLinkedMarkdown(work,entry) {
+    for(const kept of entry.views.values())work.releases.add(kept.view);
+    entry.views=new Map();
+  }
+
+  clearLinkedMarkdown(closed=false) {
+    const work=this.linkMarkdownWork;
+    if(!work)return;
+    work.epoch++;
+    for(const entry of work.rows.values())this.retireLinkedMarkdown(work,entry);
+    work.rows.clear();work.pending.clear();work.stamp=null;work.inputs=null;
+    if(closed){
+      work.closed=true;work.task?.cancel();work.task=null;work.cx=null;work.theme=null;work.scheduled=false;
+      for(const view of work.releases)view.release();
+      work.releases.clear();
+    }else if(work.cx)this.scheduleLinkedMarkdown(work.cx);
+  }
+
   prepareLinkedMarkdown(rows,t,cx) {
-    // Preparing every linked row inside render exceeded the native time budget
-    // on long worker logs. Reuse the plan and build one row per deferred callback.
-    const plan=rows.filter(row=>hasChatLink(row.text)).map(row=>({row,pre:`v${this.measureGen}-${this.rowRevisions?.get(row.id)?.revision??0}-`,open:this.unfolded?.has(row.id)}));
-    const key=this.pickKey()??this.areaKey(),query=this.findQuery?.()??'',previous=this.linkMarkdownPlan;
-    if(previous?.key===key&&previous.query===query&&previous.rows.length===plan.length&&plan.every((p,i)=>{
-      const old=previous.rows[i];return old.pre===p.pre&&old.open===p.open&&old.row.text===p.row.text&&old.row.kind===p.row.kind&&old.row.clip===p.row.clip;
-    }))return;
-    const generation=(this.linkMarkdownGeneration??0)+1;this.linkMarkdownGeneration=generation;
-    this.linkMarkdownPlan={key,query,rows:plan};
-    const want=new Map();let index=0;
-    const current=this.linkMarkdown??new Map();
-    const step=cx=>{
-      if(generation!==this.linkMarkdownGeneration)return;
-      if(index<plan.length){
-        const p=plan[index++],collected=new Map();this.collectMarkdown=collected;
-        try{this.rowBare(p.row,t,p.pre);}finally{this.collectMarkdown=null;}
-        for(const [id,p] of collected){
-          want.set(id,p);const old=current.get(id);
-          if(old){if(old.text!==p.text||old.key!==p.key){old.view.set_props(p);current.set(id,{...p,view:old.view});}}
-          else current.set(id,{...p,view:cx.new(LinkedMarkdown,p)});
-        }
+    // The existing keys pass has already revised content. Render reconciles only
+    // scalar metadata; fresh rows()/spaced() arrays are not a cache identity.
+    const work=this.linkMarkdownWork??= {epoch:0,rows:new Map(),pending:new Set(),releases:new Set(),seen:0};
+    if(work.closed)return;
+    const stamp=this.linkedMarkdownStamp(),changed=!work.stamp||stamp.some((v,i)=>v!==work.stamp[i]);
+    work.stamp=stamp;work.inputs=this.linkedMarkdownInputs();work.theme=t;
+    const seen=++work.seen;
+    for(const row of rows){
+      const {revision=0,contentRevision=0}=this.rowRevisions?.get(row.id)??{};
+      const open=this.opened.has(row.id),unfold=this.unfolded.has(row.blk??row.id),who=!!row.who;
+      let entry=work.rows.get(row.id);
+      if(!entry){entry={id:row.id,epoch:work.epoch,token:0,views:new Map(),linked:null};work.rows.set(row.id,entry);}
+      entry.seen=seen;
+      const textChanged=entry.contentRevision!==contentRevision;
+      const dirty=changed||textChanged||entry.revision!==revision||entry.kind!==row.kind||entry.clip!==row.clip||entry.open!==open||entry.unfold!==unfold||entry.who!==who;
+      entry.row=row;
+      if(!dirty)continue;
+      Object.assign(entry,{revision,contentRevision,kind:row.kind,clip:row.clip,open,unfold,who,ready:false,token:entry.token+1});
+      if(textChanged){entry.scan=null;entry.linked=null;}
+      if(['user','pending','agent','brief','ask'].includes(row.kind)&&(row.kind!=='brief'||open))work.pending.add(entry);
+      else {work.pending.delete(entry);this.retireLinkedMarkdown(work,entry);}
+    }
+    for(const [id,entry] of work.rows)if(entry.seen!==seen){
+      this.retireLinkedMarkdown(work,entry);work.pending.delete(entry);work.rows.delete(id);
+    }
+    this.scheduleLinkedMarkdown(cx);
+  }
+
+  scheduleLinkedMarkdown(cx) {
+    const work=this.linkMarkdownWork;
+    if(work.closed||work.scheduled||!work.pending.size&&!work.releases.size)return;
+    work.scheduled=true;
+    work.task=cx.timer.after(0,cx=>{
+      work.scheduled=false;work.task=null;
+      if(work.closed)return;
+      // Only retain an AsyncContext, never draw's call-scoped Context. Reset can
+      // then drain detached children even when the next draw is a notice.
+      work.cx=cx;
+      this.stepLinkedMarkdown(cx);
+    });
+  }
+
+  stepLinkedMarkdown(cx) {
+    const work=this.linkMarkdownWork;
+    let visits=0,chars=0,collectedRows=0,changed=false,paused=false;
+    while(work.releases.size&&visits<32){
+      const view=work.releases.values().next().value;work.releases.delete(view);view.release();visits++;
+    }
+    if(work.pending.size&&!this.linkedMarkdownCurrent(work)){cx.notify();if(work.releases.size)this.scheduleLinkedMarkdown(cx);return;}
+    while(work.pending.size&&visits<32&&chars<4096&&collectedRows<1){
+      const entry=work.pending.values().next().value;work.pending.delete(entry);visits++;
+      const token=entry.token;
+      if(!this.linkedMarkdownCurrent(work,entry,token)){
+        if(work.rows.get(entry.id)===entry)work.pending.add(entry);
+        if(!work.closed)cx.notify();
+        paused=true;break;
       }
-      this.linkMarkdown=current;cx.notify();
-      if(index<plan.length)cx.timer.after(0,step);
-      else for(const [id,p] of current)if(!want.has(id)){p.view.release();current.delete(id);}
-    };
-    cx.timer.after(0,step);
+      if(entry.linked===null){
+        entry.scan??=chatLinkScan(entry.row.text);
+        chars+=scanChatLink(entry.scan,4096-chars);entry.linked=entry.scan.result;
+      }
+      if(entry.linked===null){work.pending.add(entry);continue;}
+      const collected=new Map();
+      if(entry.linked){
+        collectedRows++;
+        this.collectMarkdown=collected;
+        try{this.rowBare(entry.row,work.theme,`v${this.measureGen}-${entry.revision}-`);}finally{this.collectMarkdown=null;}
+      }
+      if(!this.linkedMarkdownCurrent(work,entry,token)){
+        if(work.rows.get(entry.id)===entry)work.pending.add(entry);
+        if(!work.closed)cx.notify();
+        paused=true;break;
+      }
+      const views=new Map(),previous=entry.views,created=[];
+      for(const [id,p] of collected){
+        const old=previous.get(id);
+        const view=old&&old.epoch===work.epoch&&old.text===p.text&&old.key===p.key?old.view:cx.new(LinkedMarkdown,p);
+        if(view!==old?.view)created.push(view);
+        views.set(id,{...p,view,epoch:work.epoch,token});
+      }
+      // Even child creation may run host code. Nothing from an obsolete token
+      // may become visible, including a reset or close during collection.
+      if(!this.linkedMarkdownCurrent(work,entry,token)){
+        for(const view of created)if(work.closed)view.release();else work.releases.add(view);
+        if(work.rows.get(entry.id)===entry)work.pending.add(entry);
+        if(!work.closed)cx.notify();
+        paused=true;break;
+      }
+      for(const [id,p] of entry.views)if(p.view!==views.get(id)?.view)work.releases.add(p.view);
+      changed ||= entry.views.size>0||views.size>0;
+      entry.views=views;entry.ready=true;entry.scan=null;
+    }
+    if(changed&&!work.closed)cx.notify();
+    if(!paused||work.releases.size)this.scheduleLinkedMarkdown(cx);
+  }
+
+  linkedMarkdownView(row,id,text) {
+    const work=this.linkMarkdownWork,entry=work?.rows.get(row.id),kept=entry?.views.get(id);
+    return entry?.ready&&entry.kind===row.kind&&entry.clip===row.clip&&entry.who===!!row.who&&kept?.epoch===work.epoch&&kept.token===entry.token&&kept.id===id&&
+      kept.text===text&&kept.key===(this.pickKey()??this.areaKey())&&this.linkedMarkdownCurrent(work,entry)?kept.view:null;
   }
 
   rowBare(x, t, pre = "") {
     const markdown=(id,text)=>{
       if(this.collectMarkdown){this.collectMarkdown.set(id,{id,text,key:this.pickKey()??this.areaKey()});return div();}
-      const kept=this.linkMarkdown?.get(id);
-      return kept&&kept.text===text?div().flex_none().child(kept.view):TextView.markdown(id,text).scrollable(false).selectable(true).flex_none();
+      const kept=this.linkedMarkdownView(x,id,text);
+      return kept?div().flex_none().child(kept):TextView.markdown(id,text).scrollable(false).selectable(true).flex_none();
     };
     // A readable column, centered when the pane is wide.
     // At a block's edge a row drops its outer room there: spaced() puts the gap between blocks.

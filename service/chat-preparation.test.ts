@@ -12,7 +12,7 @@ function method(name: string) {
   if (!match) return '';
   return source.slice(match.index, source.indexOf('\n  }', match.index) + 4);
 }
-const names = ['rows', 'rowPlan', 'spaced', 'spacedPlan', 'foldOf', 'key', 'guess', 'guessBare', 'findMatches',
+const names = ['rows', 'rowPlan', 'spaced', 'spacedPlan', 'foldOf', 'key', 'guess', 'guessBare', 'findMatches', 'findRow',
   'newsLines', 'newsPlan', 'resolveArts', 'resolveArtsPlan', 'timelineCards', 'timelinePlan',
   'historyCurrent', 'historyEvent', 'historyContext', 'historyStamp', 'historyPlan', 'prepareHistory', 'scheduleHistory', 'clearHistory'];
 export function historyHost(items: any[], sharedRead: (key: string) => any = () => null) {
@@ -209,4 +209,12 @@ test('old native event callbacks cannot act before redraw, after supersession, r
   // Test the actual integration uses the guard, rather than only its helper.
   expect(source).toContain('.on_item_click(event('); expect(source).toContain('.on_item_secondary_click(event(');
   expect(source).toContain('if(prepared&&!this.historyCurrent(prepared))return;');
+});
+
+
+test('Find uses prepared match counts and indexed match selection on every repaint',()=>{
+ const h=historyHost(large());h.v.findQuery=()=> 'Reply';h.request();h.drain();
+ const p=h.v.history.snapshot;expect(p.findTotal).toBe(p.found.reduce((n:number,m:any)=>n+m.n,0));
+ let offset=0;for(const match of p.found){h.v.findIdx=offset;expect(h.v.findRow(p.found)).toBe(match);offset+=match.n;}
+ h.v.findIdx=p.findTotal+10;expect(h.v.findRow(p.found)).toBe(p.found.at(-1));
 });

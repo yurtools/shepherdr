@@ -127,7 +127,7 @@ export class PreparedHistory {
   constructor() {
     this.rows = []; this.keys = []; this.index = new Map(); this.positions = new Map();
     this.geometry = new PrefixIndex(); this.missing = new PrefixIndex(); this.recent = new RecentIndex(0);
-    this.paths = []; this.artifacts = []; this.strips = []; this.cards = []; this.found = []; this.lit = new Set();
+    this.paths = []; this.artifacts = []; this.strips = []; this.cards = []; this.found = []; this.findEnds = []; this.findTotal = 0; this.lit = new Set();
   }
   get sizes() { return this.geometry.values; }
   get total() { return this.geometry.sum(); }

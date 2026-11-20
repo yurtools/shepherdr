@@ -2059,6 +2059,12 @@ export default class Chat extends View {
 
   // The match `findIdx` (counted over all matches): its row.
   findRow(matches) {
+    const plan=this.history?.snapshot;
+    if(plan?.found===matches){
+      let lo=0,hi=plan.findEnds.length;
+      while(lo<hi){const mid=Math.floor((lo+hi)/2);if(this.findIdx<plan.findEnds[mid])hi=mid;else lo=mid+1;}
+      return matches[Math.min(lo,matches.length-1)]??null;
+    }
     let k = this.findIdx;
     for (const m of matches) { if (k < m.n) return m; k -= m.n; }
     return matches[matches.length - 1] ?? null;
@@ -2067,7 +2073,7 @@ export default class Chat extends View {
   findStep(d, rows, cx) {
     if(this.history?.snapshot&&(!this.historyCurrent(this.history.snapshot)||this.history.snapshot.rows!==rows))return;
     const matches = this.findMatches(rows);
-    const total = matches.reduce((n, m) => n + m.n, 0);
+    const total = this.history?.snapshot?.found===matches?this.history.snapshot.findTotal:matches.reduce((n,m)=>n+m.n,0);
     if (!total) return;
     this.findIdx = (this.findIdx + d + total) % total;
     this.findJump = true;
@@ -2085,7 +2091,7 @@ export default class Chat extends View {
   // The find bar: the box, how many, up and down, earlier messages, close.
   findBar(t, rows) {
     const matches = this.findMatches(rows);
-    const total = matches.reduce((n, m) => n + m.n, 0);
+    const total = this.history?.snapshot?.found===matches?this.history.snapshot.findTotal:matches.reduce((n,m)=>n+m.n,0);
     const q = this.findQuery();
     const count = !q ? "" : total ? `${Math.min(this.findIdx, total - 1) + 1} of ${total}` : WORDS.noMatches;
     const icon = (id, path, fn) => div().id(id).size(22).flex_none().flex().items_center().justify_center().rounded(6).cursor_pointer()
@@ -3311,7 +3317,7 @@ export default class Chat extends View {
         if(row.peek)for(const path of row.peek.paths){yield;plan.paths.push(path);}
       }
       if(row.kind==="cardstrip"){plan.strips.push(row.s);if(row.first)plan.cards.push(i);}
-      if(q){const matches=host.findMatches([row]);if(matches.length){plan.found.push({...matches[0],index:i});plan.lit.add(row.id);}}
+      if(q){const matches=host.findMatches([row]);if(matches.length){plan.found.push({...matches[0],index:i});plan.findTotal+=matches[0].n;plan.findEnds.push(plan.findTotal);plan.lit.add(row.id);}}
     }
     plan.hasArtifacts=false;
     for(const item of host.conv?.items??[]){yield;if(item.kind==="artifact")plan.hasArtifacts=true;}

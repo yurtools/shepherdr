@@ -57,13 +57,39 @@ const STATUS_DETAILS = {
 // Readers accept only known codes bound to this exact request. No tokens, payloads,
 // arbitrary error messages, configured modes or inferred elapsed-time progress reach a card.
 // The helper may also supply an intentional, redacted rationale for an ask decision.
-function reviewReason(v) {
-  if (typeof v !== 'string' || !v.trim() || v.length > 400 || /[\x00-\x1f\x7f]/.test(v)) return '';
+function reviewReason(v, limit = 400) {
+  if (typeof v !== 'string' || !v.trim() || [...v].length > limit || /[\x00-\x1f\x7f\u202a-\u202e\u2066-\u2069]/.test(v)) return '';
+  v = v.replace(/<\/?hc\b[^>]*>/g, '[omitted]');
   return v.replace(/\bBearer\s+[^\s,;]+/gi, 'Bearer [redacted]')
-    .replace(/((?:token|password|secret|api[_-]?key|authorization)["']?\s*[=:\s]\s*)("[^"]*"|'[^']*'|[^\s,;]+)/gi, '$1[redacted]').slice(0,400);
+    .replace(/((?:token|password|secret|api[_-]?key|authorization|cookie|credential)["']?\s*[=:\s]\s*)("[^"]*"|'[^']*'|[^\s,;]+)/gi, '$1[redacted]').slice(0,limit);
 }
-export function permissionStatus(req, metadata) {
-  if (!req || ['request_user_input','EnterPlanMode'].includes(req.tool_name) || words(req).kind !== 'permission') return undefined;
+export const ADVICE_NOTE = 'Advice only. This request is still waiting for your decision.';
+const ADVICE_STATES = {
+  processing: 'Finding the owning Assistant for advice…', pending: 'Waiting for Assistant advice…',
+  unavailable: 'The owning Assistant is unavailable. You can still decide here.',
+  busy: 'The owning Assistant is busy or waiting for an answer. Try Advice when it is free.',
+  expired: 'Assistant advice timed out. You can ask for advice again or decide here.',
+};
+export function permissionAdvice(req, metadata) {
+  let v; try { v = typeof metadata === 'string' ? JSON.parse(metadata) : metadata; } catch { return undefined; }
+  if (v?.version !== 1 || v.request_hash !== requestHash(req)) return undefined;
+  const state = ['processing','pending'].includes(v.state) && Number.isFinite(v.expires) && v.expires * 1000 <= Date.now() ? 'expired' : v.state;
+  const owner = typeof v.owner === 'string' && /^[\w.-]+$/.test(v.owner) ? v.owner : undefined;
+  const ownerType = ['feature','space'].includes(v.owner_type) ? v.owner_type : undefined;
+  if (state === 'ready') {
+    const summary = reviewReason(v.summary), detail = reviewReason(v.detail, 2400);
+    return summary && owner && ownerType ? { state, text: summary, ...(detail ? { detail } : {}), note: ADVICE_NOTE, owner, ownerType, requestHash: v.request_hash } : undefined;
+  }
+  const text = state === 'pending' && ownerType ? `Waiting for ${ownerType === 'feature' ? 'Feature' : 'Space'} Assistant advice…` : ADVICE_STATES[state];
+  return text ? { state, text, note: ADVICE_NOTE, ...(owner ? {owner} : {}), ...(ownerType ? {ownerType} : {}), requestHash: v.request_hash } : undefined;
+}
+export function permissionStatus(req, metadata, adviceMetadata) {
+  const value = decisionStatus(req, metadata);
+  const advice = value && permissionAdvice(req, adviceMetadata);
+  return advice ? { ...value, advice } : value;
+}
+function decisionStatus(req, metadata) {
+  if (!req || ['request_user_input','request_user_input_async','EnterPlanMode'].includes(req.tool_name) || words(req).kind !== 'permission') return undefined;
   const unknown = { state: 'unknown', text: 'Approval status unavailable', detail: 'You can decide here.', attention: true };
   let v; try { v = typeof metadata === 'string' ? JSON.parse(metadata) : metadata; } catch { return unknown; }
   if (v?.version !== 1 || v.request_hash !== requestHash(req)) return unknown;

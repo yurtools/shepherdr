@@ -250,47 +250,52 @@ def waiting(path, req, reason, detail, reviewer='', stage=None, review_reason=''
 
 def review_status(path, req, retry_unavailable=False):
  """Read an existing request's ticket; this never delivers or evaluates a review."""
- ticket=read(store()/'pending'/(Path(path).stem+'.json'))
- if not ticket or ticket.get('key')!=request_key(req):return None
- state=ticket.get('status')
- if state=='ask':
-  reason=public_review_reason(ticket.get('reason',''),req,ticket)
-  code=ticket.get('reason_code','assistant-asked')
-  return waiting(path,req,code,('Assistant asks you: ' if code=='assistant-asked' else '')+reason,review_reason=reason)
- if state=='unavailable':
-  if retry_unavailable:return None
-  return waiting(path,req,'review-unavailable','Assistant review is unavailable. You can decide here.')
- if state in ('processing','pending'):
-  if ticket.get('expires',0)<=time.time():return waiting(path,req,'review-expired','Assistant review expired. You can decide here or ask for review again.')
-  if state=='processing':return waiting(path,req,'review-requested','Requesting Assistant review.')
-  if not reviewer_type(hc_get(ticket.get('reviewer')),ticket['context']):return waiting(path,req,'review-unavailable','Assistant review is unavailable. You can decide here.')
-  return waiting(path,req,'review-pending','Waiting for Assistant review.',ticket.get('reviewer_type',''))
- return None
+ while True:
+  ticket_path=store()/'pending'/(Path(path).stem+'.json')
+  ticket=read(ticket_path)
+  if not ticket or ticket.get('key')!=request_key(req):return None
+  available=reviewer_type(hc_get(ticket.get('reviewer')),ticket['context']) if ticket.get('status')=='pending' and ticket.get('expires',0)>time.time() else ''
+  with locked():
+   if read(ticket_path)!=ticket:continue
+   state=ticket.get('status')
+   if state=='ask':
+    reason=public_review_reason(ticket.get('reason',''),req,ticket)
+    code=ticket.get('reason_code','assistant-asked')
+    return waiting(path,req,code,('Assistant asks you: ' if code=='assistant-asked' else '')+reason,review_reason=reason)
+   if state=='unavailable':
+    if retry_unavailable:return None
+    return waiting(path,req,'review-unavailable','Assistant review is unavailable. You can decide here.')
+   if state in ('processing','pending'):
+    if ticket.get('expires',0)<=time.time():return waiting(path,req,'review-expired','Assistant review expired. You can decide here or ask for review again.')
+    if state=='processing':return waiting(path,req,'review-requested','Requesting Assistant review.')
+    if not available:return waiting(path,req,'review-unavailable','Assistant review is unavailable. You can decide here.')
+    return waiting(path,req,'review-pending','Waiting for Assistant review.',ticket.get('reviewer_type',''))
+   return None
 def redact(text):
  text=re.sub(r'(?i)((?:token|password|secret|api[_-]?key|authorization)[=:\s]+)([^\s]+)',r'\1[redacted]',text)
  return text[:500]
 
-def public_review_reason(reason, req, ticket):
+def public_review_reason(reason, req, ticket, limit=400):
  """Only an intentional decision rationale may enter public status/end/history.
  Remove known private values as well as common credential forms before bounding it.
  This is never used on exceptions, subprocess output or arbitrary tool payloads.
  """
- text=str(reason)
+ text=re.sub(r'\x1b\[[0-?]*[ -/]*[@-~]|</?hc\b[^>]*>', '[omitted]', str(reason))
  private=[ticket.get('token',''),json.dumps(req,ensure_ascii=False),json.dumps(req.get('tool_input'),ensure_ascii=False)]
- def sensitive(value):
+ def sensitive(value,hidden=False):
   if isinstance(value,dict):
    for key,item in value.items():
-    if re.search(r'(?i)token|password|secret|api[_-]?key|authorization',key) and isinstance(item,str):private.append(item)
-    else:sensitive(item)
+    sensitive(item,hidden or bool(re.search(r'(?i)token|password|secret|api[_-]?key|authorization|cookie|credential',key)))
   elif isinstance(value,list):
-   for item in value:sensitive(item)
+   for item in value:sensitive(item,hidden)
+  elif hidden and isinstance(value,str):private.append(value)
  sensitive(req.get('tool_input'))
  for value in sorted(filter(None,private),key=len,reverse=True):text=text.replace(value,'[redacted]')
  text=re.sub(r'(?i)\bBearer\s+[^\s,;]+','Bearer [redacted]',text)
- text=re.sub(r'''(?i)((?:token|password|secret|api[_-]?key|authorization)["']?\s*[=:\s]\s*)("[^"]*"|'[^']*'|[^\s,;]+)''',r'\1[redacted]',text)
+ text=re.sub(r'''(?i)((?:token|password|secret|api[_-]?key|authorization|cookie|credential)["']?\s*[=:\s]\s*)("[^"]*"|'[^']*'|[^\s,;]+)''',r'\1[redacted]',text)
  text=' '.join(''.join(c if c.isprintable() else ' ' for c in text).split())
  if 'Traceback (most recent call last)' in text:return 'Assistant could not determine safety. Please decide.'
- return text[:400]
+ return text[:limit]
 
 def hc_get(terminal):
  try:
@@ -693,6 +698,8 @@ def audit_result(req,ctx,out):
 def _evaluate(path, terminal=None):
  req,ctx=request_context(path,terminal)
  if not is_permission(req):return {'action':'wait','reason':'Plans and questions require their own answer.'}
+ from . import approval_advice
+ if approval_advice.own_command(req,ctx):return response('allow','Owning Assistant may submit information only.','advice-control')
  if own_feature_name(req,ctx):return response('allow','Feature Assistant may name its own feature.','feature-name')
  if own_review_command(req,ctx):return response('allow','Designated Assistant may submit this exact review decision.','review-control')
  saved=rules();opts=settings(ctx);missing=None

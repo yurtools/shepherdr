@@ -411,7 +411,9 @@ export interface Question {
   title: string
   kind: 'Form' | 'Question' | 'Plan'
   /** Execution permission lifecycle; absent on ordinary questions, plans and older sources. */
-  approval?: { state: string; text: string; detail?: string; attention: boolean }
+  approval?: { state: string; text: string; detail?: string; attention: boolean; advice?: { state: string; text: string; detail?: string; note: string; owner?: string; ownerType?: string; requestHash: string } }
+  requestHash?: string
+  permissionLocal?: boolean
   steps?: string[]
   /** several questions on one card (3.0's): a step for each, then one to check the answers and Submit */
   parts?: { title: string; header?: string; multi?: boolean; choices: Choice[] }[]
@@ -1240,6 +1242,7 @@ export interface Snapshot {
 }
 
 export type Action =
+  | { type: 'permission-info'; question: string; hash: string; command: 'advice' | 'review' }
   | { type: 'evidence'; task: string }
   | { type: 'accept'; task: string; expect?: string; preceding?: string[] }
   | { type: 'later'; task: string; restore?: boolean }

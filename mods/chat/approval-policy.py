@@ -11,13 +11,19 @@ except ImportError:
  sys.path.insert(0,os.path.realpath(entry));from herdr_task import approvals as A
 
 def parser():
- p=argparse.ArgumentParser();p.add_argument('command',choices=['evaluate','answer','status-error','inspect','grant','history-inspect','history-grant','list','history','revoke','clear-history','review','review-input','decide','launch','override','record'])
+ p=argparse.ArgumentParser();p.add_argument('command',choices=['advice','advice-input','advise','evaluate','answer','status-error','inspect','grant','history-inspect','history-grant','list','history','revoke','clear-history','review','review-input','decide','launch','override','record'])
+ p.add_argument('--summary',default='');p.add_argument('--detail',default='')
  p.add_argument('--request');p.add_argument('--terminal');p.add_argument('--space',default='');p.add_argument('--role',default='agent');p.add_argument('--cwd',default='')
  p.add_argument('--scope',choices=['task','space','account','global'],default='task');p.add_argument('--match',choices=['exact','prefix','tool'],default='exact');p.add_argument('--prefix');p.add_argument('--hours',type=float,default=1);p.add_argument('--stage',type=int)
  p.add_argument('--id');p.add_argument('--token');p.add_argument('--decision',choices=['allow','deny','ask'],default='allow');p.add_argument('--reason',default='')
  p.add_argument('--respond',action='store_true');p.add_argument('--task-grant',action='store_true');p.add_argument('--hash');p.add_argument('--answer');p.add_argument('--argv');p.add_argument('--mode',choices=[*A.MODES,'inherit']);return p
 
 def main(a):
+ if a.command in ('advice','advice-input','advise'):
+  from herdr_task import approval_advice as advice
+  if a.command=='advice':return advice.request(a.request,a.hash,a.terminal)
+  if a.command=='advice-input':return advice.evidence(a.id,a.token)
+  return advice.submit(a.id,a.token,a.summary,a.detail)
  if a.command=='history-inspect':return A.history_inspect(a.id)
  if a.command=='history-grant':return A.grant_history(a.id,a.scope,a.match,a.prefix,a.hours,a.decision,a.stage)
  if a.command=='status-error':
@@ -83,6 +89,7 @@ def main(a):
   req,ctx=A.request_context(a.request,a.terminal);A.audit(req,ctx,a.decision,a.reason,'user');return {'ok':True}
  if a.command=='review':
   req,ctx=A.request_context(a.request,a.terminal)
+  if a.hash and a.hash!=A.status_key(req):raise ValueError('This request changed. Refresh before asking for review.')
   if not A.is_permission(req):raise ValueError('Plans and questions need a human answer.')
   return A.review_ticket(a.request,req,ctx,True)
  if a.command=='decide':return A.decide(a.id,a.token,a.decision,a.reason)

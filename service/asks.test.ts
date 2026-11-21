@@ -146,6 +146,20 @@ test('a stale or answered permission cannot overwrite another decision',async()=
  await expect(asks.answer(id,{choice:0})).rejects.toThrow();expect(JSON.parse(readFileSync(join(dir,'ans',id+'.json'),'utf8')).hookSpecificOutput.decision.behavior).toBe('deny');
 });
 
+test('web Advice dispatch preserves a pending card and rejects changed remote and closed requests',async()=>{
+ const id='advice.1700000000.1',req={tool_name:'Bash',tool_input:{command:'git status'}};put(id,req);
+ const asks=new Asks();(asks as any).read();const calls:string[][]=[];
+ const run=async(argv:string[])=>{calls.push(argv);return{code:0}};
+ await asks.information(id,requestHash(req),'advice',run);
+ expect(calls[0]).toEqual(['python3',join(home,'mods/chat/approval-policy.py'),'advice','--request',join(dir,'req',id+'.json'),'--terminal','advice','--hash',requestHash(req)]);
+ expect(asks.of('advice')).toHaveLength(1);expect(existsSync(join(dir,'ans',id+'.json'))).toBe(false);
+ await expect(asks.information(id,'stale','advice',run)).rejects.toThrow('changed or closed');
+ put(id,{...req,tool_input:{command:'git push'}});await expect(asks.information(id,requestHash(req),'advice',run)).rejects.toThrow('changed or closed');
+ asks.open.get(id)!.machine='other';await expect(asks.information(id,requestHash(req),'advice',run)).rejects.toThrow('local');
+ delete asks.open.get(id)!.machine;put(id,req);writeFileSync(join(dir,'ans',id+'.json'),'{}');
+ await expect(asks.information(id,requestHash(req),'advice',run)).rejects.toThrow('changed or closed');expect(calls).toHaveLength(1);
+});
+
 test("another machine's ask answered there first: it closes here with how", async () => {
   const there = mkdtempSync(join(tmpdir(), "shep-asks-m4-"));
   const td = join(there, "data", "chat-asks");

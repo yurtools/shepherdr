@@ -16,6 +16,17 @@ test('an approval removed during Auto-review handoff never creates an unreadable
 test('a genuinely malformed approval uses agent-neutral wording',async()=>{
  const h=local('{bad json');await h.v.readAsks({notify(){}});expect(h.v.asks[0].words).toMatchObject({title:'Approval request details unavailable',unread:true});
 });
+test('closing a request during its Advice read cannot leave a live native card',async()=>{
+ const req={tool_name:'Bash',tool_input:{command:'git status'}},id='t1.123.456';let closed=false;
+ const C=new Function('exec','readTextFile','words','permissionStatus',`${constants};return class {${method('readAsks')}}`)(async()=>({stdout:id+'.json\n'}),async(path:string)=>{
+  if(path.endsWith('.advice')){closed=true;return null;}
+  if(path.includes('/ans/'))return closed?'{}':null;
+  if(path.endsWith('.json'))return JSON.stringify(req);
+  return null;
+ },()=>({kind:'permission',title:'Run: git status'}),permissionStatus);
+ const v:any=new C();Object.assign(v,{addr:'t1',askDir:'/fixture',asks:[],cards:{keep(){}},askEnded(){},askAlert(){}});
+ await v.readAsks({notify(){}});expect(v.asks).toEqual([]);
+});
 test('a readable approval retains its actual command title',async()=>{
  const h=local('{"tool_name":"Bash"}');await h.v.readAsks({notify(){}});expect(h.v.asks[0].words.title).toBe('Real command');
 });

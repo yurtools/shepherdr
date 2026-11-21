@@ -38,7 +38,7 @@ test('Ask Assistant button delegates the original request through the explicit h
  const req=ask.req,approval=permissionStatus(req,{version:1,request_hash:requestHash(req),state:'person',reason:'assistant-asked',review_reason:'The script destination is unknown. Please choose.'})!;
  const cards=new AskCards({reply(){}},{}),strips:any[]=cards.strips({...ask,approval});
  expect(strips.find((s:any)=>s.key==='status-detail')?.text).toBe(approval.detail);
- expect(strips.find((s:any)=>s.key==='actions').ctls.map((c:any)=>c.label)).toEqual(['Allow once','Deny']);
+ expect(strips.find((s:any)=>s.key==='actions').ctls.map((c:any)=>c.label)).toEqual(['Allow once','Deny','Advice']);
 });
 
 test('native permission strips keep visible status, distinct icons and manual keyboard actions',()=>{
@@ -49,11 +49,35 @@ test('native permission strips keep visible status, distinct icons and manual ke
   const strips:any[]=cards.strips(ask),status=strips.find((s:any)=>s.kind==='status');expect(status.text).toBe(ask.approval.text);expect(strips[0].neutral).toBe(true);
   built.length=0;strip({muted:'#888'},status,false,false);
   expect(built.some((e:any)=>e.calls.some(([n,a]:any)=>n==='text_color'&&a[0]===(state==='person'?'#f5b544':'#888')))).toBe(true);
-  expect(strips.find((s:any)=>s.key==='actions').ctls.map((c:any)=>c.label)).toEqual(['Allow once','Deny']);
+  expect(strips.find((s:any)=>s.key==='actions').ctls.map((c:any)=>c.label)).toEqual(['Allow once','Deny','Advice']);
  }
  cards.key(ask,{key:'escape'},{stop_propagation(){},notify(){}});expect(JSON.parse(replies[0]).hookSpecificOutput.decision.behavior).toBe('deny');
  const plan={id:'plan',req:{tool_name:'ExitPlanMode'},words:{kind:'plan',title:'Plan',detail:''}};
  expect(cards.strips(plan).some((s:any)=>s.kind==='status')).toBe(false);
+ for(const tool_name of ['EnterPlanMode','request_user_input','request_user_input_async']){
+  const req={tool_name,tool_input:{}};
+  expect(cards.strips({id:'product-choice',req,words:words(req)}).flatMap((s:any)=>s.ctls??[]).some((c:any)=>c.label==='Advice')).toBe(false);
+ }
+});
+test('Advice binds the original hash and keeps Allow Deny and Ask Assistant available while pending',async()=>{
+ const req={session_id:'original',tool_name:'Bash',tool_input:{command:'cp report /tmp/report'}},id='worker.123.4',hash=requestHash(req),replies:any[]=[];
+ const metadata={version:1,request_hash:hash,state:'person',reason:'assistant-asked',review_reason:'This writes outside the project.'};
+ const advice={version:1,request_hash:hash,state:'pending',owner:'owner',owner_type:'feature',expires:Date.now()/1000+600};
+ const cards=new AskCards({terminal:()=> 'worker',reply:(_a:any,text:string)=>replies.push(text)},{});
+ const ask:any={id,req,words:words(req),approval:permissionStatus(req,metadata)};
+ const initial:any[]=cards.strips(ask),controls=initial.find((s:any)=>s.key==='actions').ctls;
+ await controls.find((c:any)=>c.label==='Advice').fn({spawn:async(fn:any)=>fn({notify(){}})});
+ expect(commands[0][1]).toEqual(['/test-app/mods/chat/approval-policy.py','advice','--request',`/test-app/data/chat-asks/req/${id}.json`,'--terminal','worker','--hash',hash]);
+ ask.approval=permissionStatus(req,metadata,advice);
+ const pending:any[]=cards.strips(ask),actions=pending.find(s=>s.key==='actions').ctls;
+ expect(actions.find((c:any)=>c.label==='Advice').disabled).toBe(true);
+ expect(actions.filter((c:any)=>['Allow once','Deny'].includes(c.label)).every((c:any)=>!c.disabled)).toBe(true);
+ expect(pending.find(s=>s.key==='review-action').ctls[0].label).toBe('Ask Assistant');
+ expect(pending.find(s=>s.key==='status-detail').text).toContain(metadata.review_reason);
+ actions.find((c:any)=>c.label==='Deny').fn({});expect(JSON.parse(replies[0]).hookSpecificOutput.decision.behavior).toBe('deny');
+ expect(pending.find(s=>s.key==='advice-note').text).toContain('still waiting');
+ ask.approval=permissionStatus(req,metadata,{...advice,state:'ready',summary:'Copies the file.',detail:'The destination may already exist.'});
+ const ready:any[]=cards.strips(ask);expect(ready.find((s:any)=>s.key==='status-detail').text).toContain(metadata.review_reason);
 });
 test('the approval manager holds and releases dialog keyboard ownership',()=>{
  const c:any=new Approvals(),cx:any={focus_handle:()=>({focus(){}}),spawn(){},timer:{every(){}}};c.init({},cx);expect(state.get('keyboard.holder').who).toContain('dialog:approvals:');c.close();expect(state.get('keyboard.holder').who).toBeNull();

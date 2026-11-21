@@ -17,6 +17,7 @@ import { terminals, panes, spaces as allSpaces } from "./live.js";
 import { chatPane, chatLabel, featureViews } from "./core/spaces.js";
 import { logSpace } from "./spacelog.js";
 import { toast, plainError } from "./ui.js";
+import { startRole, withRoleView } from './role-launch.js';
 
 // "vm/tb12" -> ["vm", "tb12"]; this machine's ids have no prefix.
 const split = (id) => (id?.includes("/") ? [id.split("/")[0], id.split("/").slice(1).join("/")] : ["", id]);
@@ -176,36 +177,53 @@ function runningAssistant(space, ps = panes()) {
     && [k.labels?.["herdr.coordinator.space"], k.labels?.["herdr.space"]].includes(id)) ?? null;
 }
 
-// Opens a space's coordinator tab, first in the space: a chat with no agent yet, which starts
-// the coordinator on the person's first message (mods/chat), on the space's machine. show: go to
-// it; else the view stays. settings ({ agent, model, effort, fast, perm }, from the New space
+// Opens a space's coordinator tab in Terminal, first in the space, starting or adopting
+// its Assistant on the space's machine. show: go to it; else restore the view. settings ({ agent, model, effort, fast, perm }, from the New space
 // dialog): what it starts with. A machine that's offline gets it once it's back (watchNewSpaces).
 export async function openCoordinator(space, show = true, settings = null) {
+  const present = coordinatorTab(space);
+  if (present) {
+    if (show) { run('space.select', { id: space.id }); run('tab.select', { id: present.id }); }
+    return;
+  }
   if (space.machine && !machineReady(space.machine)) {
     setShared("coordinator.pending", { ...(shared("coordinator.pending") ?? {}), [space.id]: { settings, at: Date.now() } });
     toast({ title: `${space.machine} is offline`, body: "Its Assistant starts when it's back." });
     return;
   }
+  // Keep one slot through delayed terminals()/panes() snapshots and overlapping opens.
+  const opening = shared('coordinator.opening') ?? {};
+  const slot = opening[space.id] ?? `coord-${space.id}-${Math.random().toString(36).slice(2, 10)}`;
+  setShared('coordinator.opening', { ...opening, [space.id]: slot });
   await loadProjectRoots();
   const folder = folderOf(space);
   // Unless the New space dialog chose, the coordinator runs what Shepherdr settings say for the space.
   if (!settings) settings = shepherdrFor(await readShepherdr(), space.id).coordinator;
-  const slot = `coord-${space.id}-${Math.random().toString(36).slice(2, 10)}`;
-  const was = focused();
   const running = runningAssistant(space);
   try {
-    const out = await app("tab.new", { space: space.id, name: "Assistant", mod: "chat",
-      props: { role: "coordinator", template: "assistant", space: space.id, folder, slot, ...(settings ? { settings } : {}) } });
-    const pane = out.pane ?? panes().find((p) => p.tab === out.tab && p.mod === "chat")?.pane ?? null;
-    setShared("coordinator.slots", { ...liveSlots(), [slot]: { space: space.id, tab: out.tab, pane, folder } });
-    // The chat follows the agent its slot names (mods/chat adoptSlot).
-    if (running && pane) await hc(["label", running.address, `herdr.chat=${chatLabel(pane)}`, `herdr.chat.slot=${slot}`, `herdr.chat.origin=slot:${slot}`,
-      `herdr.coordinator.tab=${String(out.tab).split("/").pop()}`]).catch(() => {});
-    await app("tab.move", { id: out.tab, index: 1 });
-    if (show) {
-      if (!space.active) run("space.select", { id: space.id });
-      run("tab.select", { id: out.tab });
-    } else if (was?.pane) run("pane.focus", { pane: was.pane }); // tab.new shows the new tab: back to where the person was.
+    const terminal = running?.address ?? await startRole({ role: 'coordinator', template: 'assistant', space, folder, slot, settings });
+    await withRoleView(async () => {
+      const was = focused();
+      try {
+        await app('space.select', { id: space.id });
+        const out = await app('terminal.keep', { terminal, place: 'tab' });
+        const pane = out.pane ?? panes().find(p => p.terminal === terminal)?.pane ?? null;
+        await app('tab.rename', { id: out.tab, name: 'Assistant' });
+        setShared("coordinator.slots", { ...liveSlots(), [slot]: { space: space.id, tab: out.tab, pane, folder } });
+        await hc(['label', terminal, 'herdr.chat=', `herdr.chat.slot=${slot}`, `herdr.chat.origin=${running?.labels?.['herdr.chat.origin'] || `slot:${slot}`}`,
+          `herdr.coordinator.tab=${String(out.tab).split('/').pop()}`]);
+        await app("tab.move", { id: out.tab, index: 1 });
+        if (show) {
+          if (!space.active) run("space.select", { id: space.id });
+          run("tab.select", { id: out.tab });
+        }
+      } finally {
+        if (!show && was) {
+          if (was.space) await app('space.select', { id: was.space });
+          if (was.pane) await app('pane.focus', { pane: was.pane });
+        }
+      }
+    });
   } catch (e) {
     toast({ title: "Assistant didn't open", body: plainError(e), level: "error" });
   }
@@ -268,7 +286,7 @@ export async function recentFolders(machine = null) {
 }
 
 // Makes a space at `folder` (New space dialog), on `machine` (null: this computer), and, unless
-// `settings` is null, its Coordinator tab, started with those settings on the first message; lands
+// `settings` is null, its Coordinator tab, started with those settings in Terminal; lands
 // in it. `icon`: the emoji the dialog picked (null: "#"), kept as the sidebar's Rename keeps it
 // (mods/spaces-chat sections.js setIcon). Resolves with the space id.
 // With a coordinator, the space has only its Coordinator tab: Herdr's first shell tab goes, while
@@ -290,7 +308,7 @@ export async function createSpace(folder, settings, machine = null, icon = null)
     setShared("spaces-chat", { ...d, icons: { ...(d.icons ?? {}), [out.space]: icon } });
   }
   if (settings === null) return out.space;
-  await openCoordinator({ id: out.space, tabs: [], active: true, folder }, true, settings);
+  await openCoordinator({ id: out.space, tabs: [], active: true, folder, machine }, true, settings);
   if (out.terminal && out.tab && (await freshShell(out.terminal)))
     await app("tab.close", { id: out.tab, confirmed: true }).catch(() => {});
   return out.space;
@@ -312,7 +330,7 @@ export async function makeHomeSpace(machine = null) {
   const was = focused();
   const out = await app("space.new", { folder: at, ...(machine ? { machine } : {}) });
   try {
-    await openCoordinator({ id: out.space, tabs: [], active: false, folder: at }, false);
+    await openCoordinator({ id: out.space, tabs: [], active: false, folder: at, machine }, false);
     if (out.terminal && out.tab && (await freshShell(out.terminal)))
       await app("tab.close", { id: out.tab, confirmed: true }).catch(() => {});
   } finally {

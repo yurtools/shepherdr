@@ -1,7 +1,7 @@
 import { Preparation, PreparedHistory, RecentIndex, sortPlan, equal } from "./core/chat-preparation.js";
 import { inReviewScope } from "./core/review.js";
 import {projectFolder} from './project-folder.js';
-import {appendInstructions,spaceInstructions} from './core/instructions.js';
+import { startRole, roleStart, featureTask } from './role-launch.js';
 import {readShepherdr} from './coordinator.js';
 import LinkedMarkdown from './linked-markdown.js';
 import { chatLink, chatLinkScan, scanChatLink } from './core/chat-links.js';
@@ -64,7 +64,6 @@ import { SH } from "./core/paths.js";
 import { settle } from "./core/pending.js";
 import { dirsReady } from "./dirs.js";
 import * as agent from "./agent.js";
-import { cleanCommand } from "./core/clean-env.js";
 import * as choices from "./settings.js";
 import { Dictation, BUN_PATH, warmAudio } from "./dictate.js";
 
@@ -93,8 +92,6 @@ const KEEP = 2000;
 const COMFORTABLE_COLUMN = 760;
 const KINDS = { "claude-code": "claude", claude: "claude", codex: "codex" };
 const norm = (s) => String(s ?? "").replace(/\s+/g, " ").trim();
-// The role templates' folder on the machine a command runs on (sh -c prefix: $dir).
-const TEMPLATE = 'dir="$HOME/.config/herdr-core/templates"; ';
 // Whether a machine's layout is here now (it's connected); this computer always is.
 const online = (machine) => !machine || machines().find((m) => m.name === machine)?.layout === "ready";
 const same = (a, b) => norm(a) === norm(b);
@@ -429,7 +426,7 @@ export default class Chat extends View {
     this.workerCards = new AskCards({
       reply: (ask, text, cx) => this.replyWorker(ask, text, cx),
       toTerminal: (ask) => { openTaskThread(ask.terminal, ask.ref, ask.title); requestWorkerTerminal(ask.terminal); },
-      chatAbout: (ask) => openTaskThread(ask.terminal, ask.ref, ask.title),
+      chatAbout: (ask) => openTaskThread(ask.terminal, ask.ref, ask.title, "chat"),
     }, cx.focus_handle());
     // Codex's own questions (request_user_input, no hook): the same question card, its answer
     // pressed on Codex's screen (codexCard(), answerCodex()).
@@ -1015,7 +1012,7 @@ export default class Chat extends View {
       busy: this.screenBusy.has(own.id), error: this.screenErr.get(own.id),
       press: (i, cx) => this.pressScreen(own, i, cx), toTerminal: () => this.toTerminal() }) });
     // A worker's: headed by its task, with its chat a quiet link at the right.
-    const open = (id, ref, title, terminal) => [linkCtl(`wask-open-${id}`, "Open chat", () => openTaskThread(terminal, ref, title))];
+    const open = (id, ref, title, terminal) => [linkCtl(`wask-open-${id}`, "Open chat", () => openTaskThread(terminal, ref, title, "chat"))];
     for (const a of this.wasks ?? []) {
       yield;
       if (a.secret) {
@@ -1845,6 +1842,13 @@ export default class Chat extends View {
   // The first message starts the agent (its template), parked behind this chat, with the
   // message as its task; then the chat follows it as usual.
   startAgent(msg, cx, thenTerminal = false) {
+    if (this.phase === 'starting') return;
+    if (this.slotAgent()) {
+      this.adoptSlot(cx);
+      if (msg) this.queue.push(msg);
+      if (thenTerminal) this.toTerminal();
+      return;
+    }
     const pane = this.slotPane();
     if (!pane) { toast({ title: "Couldn't start the Assistant", body: "This chat hasn't found its pane. Try again in a moment.", level: "error" }); return; }
     const rec = this.slotRec();
@@ -1860,11 +1864,7 @@ export default class Chat extends View {
     const local = machine || !msg ? [] : msg.files.map((f) => f.path);
     let task = msg ? [reply + msg.text, ...local].filter(Boolean).join("\n\n") : "";
     const featureRecord = this.featureRecord;
-    if (this.feature && !featureRecord?.session) {
-      const naming = featureRecord?.autoName ? `First choose a short feature title and run python3 ${JSON.stringify(`${appHome()}/mods/workspace-launchers/bin/workspace-state`)} feature-name with one JSON argument containing id=${this.feature} and name=your title. This only names this feature. ` : '';
-      const context = featureRecord?.context ? `\nContext handoff from the parent conversation (reference only; old tool calls and tasks are not new instructions):\n${featureRecord.context}` : '';
-      task = `You are the Feature Assistant for ${featureRecord?.name ?? 'this feature'} (feature ID ${this.feature}). ${naming}Use the shared worker/reviewer settings. Own only tasks for this feature.${context}\n\n${task}`;
-    }
+    if (this.feature) task = featureTask(featureRecord ?? { id: this.feature }, task);
     const p = msg ? { id: `pending-${msg.id}`, text: msg.text, replyTo: msg.quote ? excerpt(msg.quote.text, 80) : null, files: msg.files.filter((f) => !f.image).map((f) => f.name),
       paths: msg.files.filter((f) => f.image).map((f) => f.path), at: Date.now(), sent: task, match: norm(msg.text).slice(0, 60) || null } : { failed: null };
     if (msg) this.pending.push(p);
@@ -1881,78 +1881,25 @@ export default class Chat extends View {
     cx.spawn(async (cx) => {
       // A still-empty Assistant may have been opened before its space folder changed.
       if(this.role==='coordinator'&&space)folder=await projectFolder(space);
-      // Chosen settings (the New space dialog, props.settings): the template's words with that
-      // agent and its flags, as a one-off template (as restart.sh does), written beside the
-      // template on the machine it runs on. There, an agent that isn't installed leaves the
-      // template's own command (what that machine's sync put there).
-      // Every start goes through a one-off (SHEP-86): its command first clears a parent Claude Code
-      // session's markers the holder may carry (core/clean-env.js), then execs the agent: hc runs a
-      // template's command under sh -c, and where sh is dash (Debian, Ubuntu) the shell would stay
-      // the terminal's program, so the chat wouldn't know its CLI.
-      let launch = template, oneOff = null, words = "";
-      const st = this.choice?.sel ?? props()?.settings;
-      const on = machine ? { on: machine } : {};
-      const there = !machine || !st?.agent ? true : (await knownAgents(on).catch(() => []))
-        .some((a) => (a.key === st.agent || (a.run ?? [])[0] === st.agent) && a.installed !== false);
-      {
-        const q = (a) => (/^[\w@%+=:,./-]+$/.test(a) ? a : `'${String(a).replace(/'/g, "'\\''")}'`);
-        const src = (await exec("sh", ["-c", TEMPLATE + 'cat "$dir/$1.md"', "x", template], on).catch(() => null))?.stdout ?? "";
-        const head = /^---\n([\s\S]*?)\n---\n?/.exec(src);
-        const body = appendInstructions(head ? src.slice(head[0].length) : src,spaceInstructions(await readShepherdr(),space?.id,this.role));
-        const own = /^command:[ \t]*(.+)$/m.exec(head?.[1] ?? "")?.[1]?.trim();
-        let selected = st;
-        try {
-          if (st?.agent && !there) throw new Error("The assigned agent is not installed on this machine.");
-          selected = await agent.profilePick(st, machine);
-        } catch (error) {
-      this.historySourceRevision=(this.historySourceRevision??0)+1;
-          this.phase = "fresh"; p.failed = String(error.message ?? error);
-          toast({ title: "Assistant did not start", body: p.failed, level: "error" }); cx.notify(); return;
-        }
-        const selectedArgv = selected?.agent ? await approvalArgv(agent.argvFor(selected, { agent: null, argv: [] }).argv, space?.id, this.role, folder, machine) : null;
-        const cmd = selectedArgv ? selectedArgv.map(q).join(" ") : own;
-        if (body.trim() && cmd) {
-          words = body.trim();
-          oneOff = `herdr-${template}-${Date.now().toString(36)}`;
-          const file = `---\nname: ${oneOff}\ndescription: A one-off ${template} start with chosen settings (mods/chat), removed after use.\ncommand: ${cleanCommand(cmd)}\n---\n${body}`;
-          await exec("sh", ["-c", TEMPLATE + 'printf "%s" "$2" > "$dir/$1.md"', "x", oneOff, file], on);
-          launch = oneOff;
-        }
+      let address;
+      const spec = { slot: this.slot, pane, tab: rec?.tab, role: this.role, template, space, folder,
+        settings: this.choice?.sel ?? props()?.settings, featureRecord, task };
+      try { address = await startRole(spec); }
+      catch (error) {
+        p.failed = String(error.message ?? error);
+        toast({ title: "Assistant did not start", body: p.failed, level: "error" });
+        if (msg) { this.pending = this.pending.filter(x => x !== p); if (!this.box.value().trim()) this.box.set_value(msg.text); }
+        this.phase = "fresh"; cx.notify(); return;
       }
-      const args = ["run", "--bg", "--json", "--no-parent", "--keep", ...(machine ? ["--on", machine] : []), ...(folder ? ["--cwd", folder] : []),
-        "--label", `herdr.chat=${chatLabel(pane)}`, "--label", `herdr.chat.slot=${this.slot}`, "--label", `herdr.chat.origin=slot:${this.slot}`,
-        "--label", `herdr.role=${this.role}`,
-        ...(this.feature ? ["--label", `herdr.feature=${this.feature}`] : []),
-        ...(space ? ["--label", `herdr.coordinator.space=${String(space.id).split("/").pop()}`] : []),
-        ...(rec?.tab ? ["--label", `herdr.coordinator.tab=${String(rec.tab).split("/").pop()}`] : []),
-        ...(this.feature && featureRecord?.session ? ["--", ...agent.resumeArgv(featureRecord.kind ?? "codex", featureRecord.argv ?? ["codex", "--no-daemon"], featureRecord.session), ...(task ? [task] : [])] : [launch, ...(task ? [task] : [])])];
-      const r = await hc(args).catch((e) => ({ code: 1, stderr: String(e?.message ?? e), stdout: "" }));
-      if (oneOff) exec("sh", ["-c", TEMPLATE + 'rm -f "$dir/$1.md"', "x", oneOff], on);
-      let out = {};
-      try { out = JSON.parse(r.stdout || "{}"); } catch {}
-      // hc waits to hand the agent its first message and gives up while the CLI shows a screen of
-      // its own (trust this folder, in a new folder on another machine): hc took too long, but the
-      // agent runs. Then this chat sends the template's words and the task itself once the agent is
-      // idle past that screen (follow()), so the Assistant never starts without its instructions.
-      const late = (r.code !== 0 || !out.address) && this.slotAgent();
-      if (late) out = { address: late, first_message: { sent: false } };
-      if (out.address && out.first_message?.sent === false && words) this.firstSend = [words, task].filter(Boolean).join("\n\n");
-      if (r.code !== 0 && !late || !out.address) {
-      this.historySourceRevision=(this.historySourceRevision??0)+1;
-        p.failed = (r.stderr || r.stdout || "It didn't start.").trim();
-        toast({ title: `The ${this.role === "coordinator" ? "Assistant" : this.role} didn't start`, body: msg ? `${p.failed} Your message is back in the box.` : p.failed, level: "error" });
-        // the fresh chat shows no pending rows: the message goes back in the box rather than vanish (GitHub #839)
-        if (msg) { this.pending = this.pending.filter((x) => x !== p); if (!this.box.value().trim()) this.box.set_value(msg.text); }
-        this.phase = "fresh";
-        cx.notify();
-        return;
-      }
+      // Another view may have won the shared launch. Its first prompt is already in flight;
+      // retain this Chat's message to deliver afterwards rather than start again or lose it.
+      if (msg && roleStart(spec)?.task !== task) { this.pending = this.pending.filter(x => x !== p); this.queue.push(msg); }
       // Remember what the person asked: the agent's first message is the template's words with it.
       if (msg) {
         this.firstTask = msg.text;
         fs.mkdir(`${appHome()}/data/chat-first`, { recursive: true }).then(() => fs.writeFile(this.firstFile, msg.text)).catch(() => {});
       }
-      this.addr = machine && !out.address.includes("/") ? `${machine}/${out.address}` : out.address;
+      this.addr = address;
       this.machine = this.addr.includes("/") ? this.addr.split("/")[0] : null;
       await this.flag();
       this.phase = "finding";

@@ -1,0 +1,198 @@
+import {beforeEach,expect,mock,test} from 'bun:test';
+import {fakeHerdr} from '../../service/fake-herdr';
+import {fakeGpuiKit,fakeGpuiBase,byId,handler,built} from '../../service/fake-gpui';
+let state:Map<string,any>,ps:any[],ts:any[],ss:any[],core:Map<string,any>,calls:any[],files:string[],cfg:any,focus:any,tree:any;
+let props:any,holdRun:any,runRelease:any,failKeep=false,sent=false,runTimeout=false,serial=0;
+const ok=(value:any={})=>({code:0,stdout:typeof value==='string'?value:JSON.stringify(value),stderr:''});
+function appArgs(args:string[]) {
+ if(args[2]?.startsWith('{'))return JSON.parse(args[2]);
+ return Object.fromEntries(Array.from({length:(args.length-2)/2},(_,i)=>[args[i*2+2].slice(2),args[i*2+3]]));
+}
+mock.module('gpui-kit',()=>fakeGpuiKit());mock.module('gpui-base',()=>fakeGpuiBase());
+mock.module('herdr',()=>fakeHerdr({
+ appHome:()=>'/app',home:()=>'/person',shared:(k:string)=>state?.get(k),setShared:(k:string,v:any)=>state.set(k,v),
+ spaces:()=>ss,panes:()=>ps,terminals:()=>ts,machines:()=>[{name:null,layout:'ready'},{name:'remote',layout:'ready'}],
+ focused:()=>({...focus}),props:()=>props,layout:()=>tree,theme:()=>new Proxy({},{get:()=> '#444444'}),settings:()=>({zoom:1}),keys:()=>[],window:()=>({platform:'linux'}),
+ knownAgents:async()=>[{key:'codex',name:'Codex',installed:true,run:['codex']}],
+ readTextFile:async(path:string)=>path.endsWith('workspace-folders.json')?'{}':JSON.stringify(cfg),
+ run:(name:string,data:any)=>{calls.push([name,data]);if(name==='space.select')focus.space=data.id;if(name==='pane.focus')focus.pane=data.pane;},
+ hc:async(args:string[])=>{
+  calls.push(['hc',args]);
+  if(args[0]==='run'){
+   const address=`t${++serial}`,labels=Object.fromEntries(args.flatMap((a,i)=>a==='--label'?[args[i+1].split(/=(.*)/s).slice(0,2)]:[]));
+   core.set(address,{address,state:'live',labels,status:{app:'codex',state:'blocked'},turn:0,foreground:{pid:100+serial,name:'codex',argv:['codex','--no-daemon']}});
+   if(holdRun)await holdRun;
+   return runTimeout?{code:1,stdout:"",stderr:"trust timeout"}:ok({address,first_message:{sent}});
+  }
+  if(args[0]==='get')return ok(core.get(args[1])??{state:'done'});
+  if(args[0]==='ls')return ok({terminals:[...core.values()]});
+  if(args[0]==='label'){const t=core.get(args[1]);if(t)for(const label of args.slice(2)){const at=label.indexOf('=');t.labels[label.slice(0,at)]=label.slice(at+1);}}
+  return ok();
+ },
+ exec:async(bin:string,args:string[])=>{
+  if(bin==='sleep'){await Bun.sleep(1);return ok();}
+  if(bin==='test')return ok();
+  if(bin==='sh'){
+   if(args[1].includes('agent-profiles.json'))return ok({profiles:[{id:'account-two',name:'Second',agent:'codex',home:'/account-two'}]});
+   if(args[1].includes('cat "$dir/$1.md"'))return ok('---\ncommand: codex --no-daemon\n---\nGlobal '+args[3]+' instructions.');
+   if(args[1].includes('printf "%s" "$2"')){files.push(args[4]);return ok();}
+   if(args[2]==='defaults')return ok('home\t/account-two\n');
+   if(args[2]==='chat')return ok('/account-two/sessions/rollout-00000000-0000-0000-0000-000000000001.jsonl');
+   return ok();
+  }
+  if(bin==='python3'){
+   if(args[1]==='launch'){calls.push(['approval',args]);return ok({argv:JSON.parse(args[args.indexOf('--argv')+1])});}
+   calls.push(['workspace',args]);return ok();
+  }
+  if(bin==='git')return ok('/project');
+  if(bin!=='herdr-app')return ok();
+  if(args[0]==='ls')return ok({spaces:ss});
+  const name=args[1],data=appArgs(args);calls.push([name,data]);
+  if(name==='space.select')focus.space=data.id;
+  if(name==='pane.focus')focus.pane=data.pane;
+  if(name==='terminal.keep'){
+   if(failKeep)return {code:1,stdout:'{}',stderr:'fixture refusal'};
+   return ok({tab:'role-tab',pane:'role-pane',terminal:data.terminal});
+  }
+  if(name==='space.new')return ok({space:'new-space'});
+  if(name==='pane.split')return ok({pane:'extra-pane'});
+  return ok();
+ }
+}));
+const C=await import('../../mods/tabs-tasks/coordinator.js');
+const R=await import('../../mods/tabs-tasks/role-launch.js').catch(()=>null) as any;
+const OtherR=await import('../../mods/chat/role-launch.js').catch(()=>null) as any;
+const {default:Chat}=await import('../../mods/chat/main.js');
+const F=await import('../../mods/tabs-tasks/features.js');
+const {default:NewMenu}=await import('../../mods/new-menu-tasks/main.js');
+const B=await import('../../mods/pane-chat/companions.js');
+const {openTaskThread}=await import('../../mods/chat/panel.js');
+const spec=()=>({slot:'slot',space:ss[0],folder:'/project',role:'coordinator',template:'assistant',settings:cfg.everywhere.coordinator});
+const launches=()=>calls.filter(c=>c[0]==='hc'&&c[1][0]==='run');
+beforeEach(()=>{
+ serial=0;state=new Map();ps=[];ts=[];core=new Map();calls=[];files=[];props={};holdRun=null;runRelease=null;sent=true;failKeep=false;runTimeout=false;
+ ss=[{id:'space',folder:'/project',machine:null,active:true,tabs:[]}];focus={space:'original-space',pane:'original-pane'};
+ tree={id:'tasks-thread-body',active:'tasks-thread-chat'};
+ cfg={everywhere:{coordinator:{agent:'codex',profile:'account-two',model:'chosen-model',effort:'high',perm:'auto'}},spaces:{space:{instructions:{coordinator:'Only this space.',feature:'Only this feature.'}}}};
+ built.length=0;
+});
+test('new and automatically discovered spaces open their Assistant in Terminal with the resolved role and account',async()=>{
+ await C.createSpace('/project',cfg.everywhere.coordinator);
+ expect(launches()).toHaveLength(1);expect(launches()[0][1]).toContain('herdr.role=coordinator');
+ expect(calls).toContainEqual(['terminal.keep',{terminal:'t1',place:'tab'}]);expect(files[0]).toContain('CODEX_HOME=/account-two');expect(files[0]).toContain('chosen-model');
+ expect(calls.some(c=>c[0]==='tab.new'&&c[1].mod==='chat')).toBe(false);
+});
+test('space-specific and global instructions remain in the same role template with the same approval launch',async()=>{
+ await C.openCoordinator(ss[0]);
+ expect(files[0]).toContain('Global assistant instructions.');expect(files[0]).toContain('Only this space.');
+ expect(calls.find(c=>c[0]==='approval')[1]).toContain('coordinator');expect(calls.find(c=>c[0]==='approval')[1]).toContain('/project');
+ expect(launches()[0][1]).toContain('--no-parent');expect(launches()[0][1]).toContain('herdr.coordinator.space=space');
+});
+test('an already-running Assistant is adopted without a second launch',async()=>{
+ ts=[{address:'existing',state:'live',labels:{'herdr.role':'coordinator','herdr.coordinator.space':'space'}}];
+ await C.openCoordinator(ss[0]);expect(launches()).toEqual([]);expect(calls).toContainEqual(['terminal.keep',{terminal:'existing',place:'tab'}]);
+});
+test('focusing an existing lazy Chat Assistant preserves Chat and does not launch',async()=>{
+ ss[0].tabs=[{id:'existing-tab'}];ps=[{pane:'existing-pane',tab:'existing-tab',mod:'chat'}];
+ state.set('coordinator.slots',{legacy:{space:'space',tab:'existing-tab',pane:'existing-pane'}});
+ await C.openCoordinator(ss[0]);expect(launches()).toEqual([]);expect(calls).toEqual([['space.select',{id:'space'}],['tab.select',{id:'existing-tab'}]]);
+});
+test('hidden Assistant creation restores both space and pane, including a failed keep',async()=>{
+ for(const fail of [false,true]){
+  state.clear();core.clear();calls=[];failKeep=fail;focus={space:'original-space',pane:'original-pane'};
+  await C.openCoordinator(ss[0],false);
+  expect(focus).toEqual({space:'original-space',pane:'original-pane'});
+  expect(calls.slice(-2)).toEqual([['space.select',{id:'original-space'}],['pane.focus',{pane:'original-pane'}]]);
+ }
+});
+test('a second Assistant open during delayed terminal and layout snapshots never starts twice',async()=>{
+ await C.openCoordinator(ss[0],false);expect(ts).toEqual([]);expect(ps).toEqual([]);
+ await C.openCoordinator(ss[0],false);expect(launches()).toHaveLength(1);expect(focus.space).toBe('original-space');
+});
+test('different module copies share an in-flight slot and its resolved receipt before native lists catch up',async()=>{
+ holdRun=new Promise(resolve=>{runRelease=resolve;});
+ const first=R.startRole(spec());while(!launches().length)await Bun.sleep(1);
+ const second=OtherR.startRole(spec());runRelease();
+ expect(await first).toBe('t1');expect(await second).toBe('t1');
+ expect(await OtherR.startRole(spec())).toBe('t1');expect(launches()).toHaveLength(1);expect(ts).toEqual([]);
+});
+test('legacy lazy Chat and the tab owner cannot race to launch the same slot',async()=>{
+ ps=[{pane:'legacy-pane',tab:'legacy-tab',mod:'chat'}];state.set('coordinator.slots',{slot:{space:'space',tab:'legacy-tab',pane:'legacy-pane',folder:'/project'}});
+ holdRun=new Promise(resolve=>{runRelease=resolve;});const native=R.startRole(spec());while(!launches().length)await Bun.sleep(1);
+ const work:Promise<any>[]=[],cx:any={notify(){},spawn:(fn:any)=>{const p=Promise.resolve(fn(cx));work.push(p);return p;}};
+ const chat:any=Object.create(Chat.prototype);Object.assign(chat,{slot:'slot',role:'coordinator',phase:'fresh',pending:[],queue:[],featureRecord:null,choice:{sel:cfg.everywhere.coordinator},
+  flag:async()=>{},follow:async()=>{},watchAsks:async()=>{},reset(){}});
+ props={space:'space',folder:'/project'};chat.startAgent(null,cx);runRelease();await native;await Promise.all(work);
+ expect(launches()).toHaveLength(1);expect(chat.addr).toBe('t1');expect(ts).toEqual([]);
+});
+test('folder trust keeps instructions pending across view disposal and sends them once after idle',async()=>{
+ sent=false;await R.startRole(spec());await R.deliverRoleInstructions();expect(calls.filter(c=>c[0]==='hc'&&c[1][0]==='send')).toEqual([]);
+ core.get('t1').status.state='idle';await OtherR.deliverRoleInstructions();await R.deliverRoleInstructions();
+ const sends=calls.filter(c=>c[0]==='hc'&&c[1][0]==='send');expect(sends).toHaveLength(1);expect(sends[0][1][2]).toContain('Only this space.');
+});
+test('a Feature start retains feature, slot, account, instructions and bounded parent context',async()=>{
+ const record={id:'feature-one',name:'Feature one',context:'Parent handoff',autoName:true};
+ await R.startRole({...spec(),role:'feature',template:'feature',slot:'feature-feature-one',featureRecord:record});
+ const args=launches()[0][1];expect(args).toContain('herdr.feature=feature-one');expect(args).toContain('herdr.chat.slot=feature-feature-one');
+ expect(args.at(-1)).toContain('Parent handoff');expect(args.at(-1)).toContain('feature-name');expect(files[0]).toContain('Only this feature.');
+});
+test('opening a lazy Feature beside starts its exact slot and keeps the original Chat owner',async()=>{
+ ss[0].tabs=[{id:'source-tab'},{id:'feature-tab'}];ps=[{pane:'source-pane',tab:'source-tab',terminal:'ordinary'},{pane:'feature-pane',tab:'feature-tab',mod:'chat'}];
+ state.set('workspace.features',[{id:'feature-one',space:'space',folder:'/project',name:'One',settings:cfg.everywhere.coordinator}]);
+ state.set('coordinator.slots',{'feature-feature-one':{space:'space',tab:'feature-tab',pane:'feature-pane',feature:'feature-one',folder:'/project'}});
+ const choice=B.besideChoices('source-pane')[0];await B.openBeside('source-pane',choice);
+ expect(launches()[0][1]).toContain('herdr.feature=feature-one');expect(core.get('t1').labels['herdr.chat']).toBe('feature-pane');
+ expect(B.companionFor('extra-pane')?.mode).toBe('terminal');B.closeCompanion('extra-pane');expect(calls.some(c=>c[0]==='terminal.kill')).toBe(false);
+});
+test('task opening selects Terminal through its header and focusing preserves an explicit Chat selection',()=>{
+ openTaskThread('worker-one','T-1',null);expect(state.get('tasks.thread.termreq').terminal).toBe('worker-one');
+ calls=[];state.delete('tasks.thread.termreq');openTaskThread('worker-one','T-1',null);
+ expect(state.has('tasks.thread.termreq')).toBe(false);expect(calls.some(c=>c[1]?.stack==='tasks-thread-body')).toBe(false);
+ openTaskThread('worker-two','T-2',null);expect(state.get('tasks.thread.termreq').terminal).toBe('worker-two');
+});
+test('ordinary and terminal-only launcher menu actions remain Terminal launches',()=>{
+ const menu:any=Object.create(NewMenu.prototype);menu.agents=[{key:'codex',name:'Codex',installed:true,run:['codex']},{key:'goose',name:'Goose',installed:true,run:['goose']}];menu.catalog={chats:[],hidden_agents:[]};
+ menu.draw();handler(byId('codex')!,'on_click')!();handler(byId('goose')!,'on_click')!();
+ expect(calls.filter(c=>c[0]==='tab.new').map(c=>c[1])).toEqual([{name:'Codex',space:'space',argv:['codex']},{name:'Goose',space:'space',argv:['goose']}]);
+});
+
+test('a Terminal-only Feature saves the exact process log and owning account without opening Chat',async()=>{
+ const record={id:'feature-one',space:'space',name:'One'};
+ await R.startRole({...spec(),role:'feature',template:'feature',slot:'feature-feature-one',featureRecord:record});
+ await F.captureFeatureSession(record,'t1');
+ const update=calls.find(c=>c[0]==='workspace'&&c[1][1]==='feature-update');
+ expect(JSON.parse(update[1][2])).toMatchObject({id:'feature-one',kind:'codex',home:'/account-two',session:'00000000-0000-0000-0000-000000000001',terminal:'t1'});
+ expect(JSON.parse(update[1][2]).argv).toContain('CODEX_HOME=/account-two');
+ expect(calls.some(c=>c[0]==='tab.new'||c[0]==='terminal.park')).toBe(false);
+});
+
+test('simultaneous hidden openings in different spaces restore the original focus',async()=>{
+ const other={id:'other-space',folder:'/other',tabs:[]};ss.push(other);
+ await Promise.all([C.openCoordinator(ss[0],false),C.openCoordinator(other,false)]);
+ expect(launches()).toHaveLength(2);expect(focus).toEqual({space:'original-space',pane:'original-pane'});
+});
+
+test('a timed-out launch is adopted from core labels even before native snapshots know it',async()=>{
+ runTimeout=true;expect(await R.startRole(spec())).toBe('t1');expect(await OtherR.startRole(spec())).toBe('t1');
+ expect(launches()).toHaveLength(1);expect(state.get('workspace.role.first').t1).toContain('Global assistant');
+});
+
+test('lazy Chat can win the shared start while the native owner waits on the same slot',async()=>{
+ ps=[{pane:'legacy-pane',tab:'legacy-tab',mod:'chat'}];state.set('coordinator.slots',{slot:{space:'space',tab:'legacy-tab',pane:'legacy-pane',folder:'/project'}});
+ holdRun=new Promise(resolve=>{runRelease=resolve;});
+ const work:Promise<any>[]=[],cx:any={notify(){},spawn:(fn:any)=>{const p=Promise.resolve(fn(cx));work.push(p);return p;}};
+ const chat:any=Object.create(Chat.prototype);Object.assign(chat,{slot:'slot',role:'coordinator',phase:'fresh',pending:[],queue:[],featureRecord:null,choice:{sel:cfg.everywhere.coordinator},
+  flag:async()=>{},follow:async()=>{},watchAsks:async()=>{},reset(){}});
+ props={space:'space',folder:'/project'};chat.startAgent(null,cx);while(!launches().length)await Bun.sleep(1);
+ const native=R.startRole(spec());runRelease();expect(await native).toBe('t1');await Promise.all(work);expect(launches()).toHaveLength(1);
+});
+
+test('a configured unavailable account is refused without any fallback launch',async()=>{
+ await expect(R.startRole({...spec(),settings:{agent:'codex',profile:'missing'}})).rejects.toThrow();expect(launches()).toHaveLength(0);
+});
+
+test('focusing the current task in Terminal preserves its selection and pending approvals',()=>{
+ state.set('tasks.thread',{terminal:'worker-one'});tree.active='tasks-thread-term';state.set('approval',{id:'pending',terminal:'worker-one'});
+ openTaskThread('worker-one','T-1',null);expect(calls.some(c=>c[1]?.stack==='tasks-thread-body')).toBe(false);
+ expect(state.get('approval')).toEqual({id:'pending',terminal:'worker-one'});
+});

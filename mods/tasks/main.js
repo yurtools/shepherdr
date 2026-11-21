@@ -1,3 +1,4 @@
+import { openWorkerView } from './task-view.js';
 // Tasks: named pieces of work with a prompt, one list per folder (the repo root in git, worktrees
 // included). Each folder's list is ~/.herdr/tasks/<slug>.json on the machine the folder is on,
 // changed only through the herdr-task CLI (bin/herdr-task), which coordinators and agents use.
@@ -1013,11 +1014,7 @@ function agentName(address) {
 const hasNode = (n, id) => Boolean(n && typeof n === "object") && (n.id === id || (n.children ?? []).some((c) => hasNode(c, id)));
 const threads = () => hasNode(layout(), "tasks-thread");
 function openThread({ terminal = null, task = null, title = null, key = null, log = null, note = null }) {
-  setShared("tasks.thread", { terminal, task, title, key, log, note, at: Date.now() });
-  run("layout.select", { stack: "tasks", child: "tasks-thread" });
-  // On its chat, as mods/chat/panel.js openTaskThread: the drill-in has one Terminal block, so it would
-  // still show the last task's worker under this task's header (GitHub #756).
-  if (hasNode(layout(), "tasks-thread-body")) run("layout.select", { stack: "tasks-thread-body", child: "tasks-thread-chat" });
+  openWorkerView({ terminal, task, title, key, log, note }, { panel: false });
 }
 
 // The Accept card's accept under way (shared "tasks.accepting" = { "<machine>:<folder>:<ref>": at },

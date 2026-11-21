@@ -54,6 +54,10 @@ test('native permission strips keep visible status, distinct icons and manual ke
  cards.key(ask,{key:'escape'},{stop_propagation(){},notify(){}});expect(JSON.parse(replies[0]).hookSpecificOutput.decision.behavior).toBe('deny');
  const plan={id:'plan',req:{tool_name:'ExitPlanMode'},words:{kind:'plan',title:'Plan',detail:''}};
  expect(cards.strips(plan).some((s:any)=>s.kind==='status')).toBe(false);
+ for(const tool_name of ['EnterPlanMode','request_user_input','request_user_input_async']){
+  const req={tool_name,tool_input:{}};
+  expect(cards.strips({id:'product-choice',req,words:words(req)}).flatMap((s:any)=>s.ctls??[]).some((c:any)=>c.label==='Advice')).toBe(false);
+ }
 });
 test('Advice binds the original hash and keeps Allow Deny and Ask Assistant available while pending',async()=>{
  const req={session_id:'original',tool_name:'Bash',tool_input:{command:'cp report /tmp/report'}},id='worker.123.4',hash=requestHash(req),replies:any[]=[];

@@ -791,9 +791,9 @@ export default class Chat extends View {
       // Unreadable here: it can only be allowed in the terminal.
       const w = req ? words(req) : { kind: "permission", title: UNREAD_APPROVAL, detail: "", unread: true };
       const metadata = await readTextFile(`${this.askDir}/req/${id}.status`).catch(() => null);
+      const advice = await readTextFile(`${this.askDir}/req/${id}.advice`).catch(() => null);
       // Recheck after the async reads: a handoff/answer may have closed it in between.
       if (await readTextFile(`${this.askDir}/ans/${id}.json`).catch(() => null) !== null || await readTextFile(`${this.askDir}/req/${id}.json`).catch(() => null) !== text) continue;
-      const advice = await readTextFile(`${this.askDir}/req/${id}.advice`).catch(() => null);
       const approval = permissionStatus(req, metadata, advice), old = this.asks.find(a => a.id === id);
       kept.push({ id, req, words: w, approval });
       if ((!old || old.approval?.attention === false) && approval?.attention !== false) added = true;

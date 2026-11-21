@@ -78,7 +78,7 @@ export class AskCards {
       if (!w.unread) ctls.push({ id: `ask-allow-${id}`, label: w.kind === "plan" ? "Approve" : "Allow once", look: "primary", fn: (cx) => this.host.reply(ask,allow(),cx) });
       ctls.push({ id: `ask-deny-${id}`, label: w.kind === "plan" ? "Keep planning" : "Deny", look: "secondary",
         fn: (cx) => this.host.reply(ask,w.kind === "plan" ? deny("The person didn't approve this plan yet. Ask them what to change.") : deny(),cx) });
-      if(w.kind==='permission'&&!w.unread)ctls.push(adviceControl(ask,this.host));
+      if(status&&!w.unread)ctls.push(adviceControl(ask,this.host));
       out.push({ key: "actions", kind: "controls", align: "start", ctls });
       if(w.kind==='permission'&&(ask.machine??this.host.machine?.()))out.push({key:'advice-remote',kind:'text',tone:'muted',text:'Advice and Assistant review require the original machine’s compatible permission card.'});
       const remembered=rememberedControls(ask,this.host);

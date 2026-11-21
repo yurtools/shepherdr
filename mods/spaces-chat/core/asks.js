@@ -89,7 +89,7 @@ export function permissionStatus(req, metadata, adviceMetadata) {
   return advice ? { ...value, advice } : value;
 }
 function decisionStatus(req, metadata) {
-  if (!req || ['request_user_input','EnterPlanMode'].includes(req.tool_name) || words(req).kind !== 'permission') return undefined;
+  if (!req || ['request_user_input','request_user_input_async','EnterPlanMode'].includes(req.tool_name) || words(req).kind !== 'permission') return undefined;
   const unknown = { state: 'unknown', text: 'Approval status unavailable', detail: 'You can decide here.', attention: true };
   let v; try { v = typeof metadata === 'string' ? JSON.parse(metadata) : metadata; } catch { return unknown; }
   if (v?.version !== 1 || v.request_hash !== requestHash(req)) return unknown;

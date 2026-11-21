@@ -46,32 +46,31 @@ def unsafe_prefix(words):
 
 
 def lex(value):
- """Return complete words up to the first unsupported boundary, with quote provenance.
-
- Do not skip over unknown syntax looking for another command: it may change shell
- grouping. This deliberately small reader explains that boundary instead.
+ """Read words and operators without interpreting any command or expansion.
+ Complete literal words before an unsupported boundary remain future-rule inputs.
  """
+ groups=[[]];operators=[];terminator=''
+ def result(boundary=''):return groups,operators,terminator,boundary
  if isinstance(value,list):
-  if not value or not all(isinstance(w,str) and '\x00' not in w for w in value):return [],'Invalid argument vector.'
-  return [[(w,bool(ASSIGNMENT.match(w))) for w in value]],''
- if not isinstance(value,str):return [],'This tool has no supported shell command field.'
- groups=[[]];word=[];quote=None;start=None;dynamic=False;i=0
+  if not value or not all(isinstance(w,str) and '\x00' not in w for w in value):return result('Invalid argument vector.')
+  groups[0]=[(w,bool(ASSIGNMENT.match(w))) for w in value];return result()
+ if not isinstance(value,str):return result('This tool has no supported shell command field.')
+ word=[];quote=None;start=None;dynamic=False;i=0
  def finish(end):
   nonlocal word,start,dynamic
-  if start is not None:
-   groups[-1].append((None if dynamic else ''.join(word),bool(ASSIGNMENT.match(value[start:end]))))
+  if start is not None:groups[-1].append((None if dynamic else ''.join(word),bool(ASSIGNMENT.match(value[start:end]))))
   word=[];start=None;dynamic=False
  while i<len(value):
   c=value[i]
-  if c in '\x00\n\r':return groups,'Newlines or control characters need a separate decision.'
+  if c in '\x00\r':return result('Control characters or CR need a separate decision.')
   if quote=="'":
    if c=="'":quote=None
    else:word.append(c)
    i+=1;continue
   if c=='\\':
    if start is None:start=i
-   if i+1==len(value):return groups,'An unfinished escape prevents full command parsing.'
-   if value[i+1] in '\n\r\x00':return groups,'Line continuations need a separate decision.'
+   if i+1==len(value):return result('An unfinished escape prevents full command parsing.')
+   if value[i+1] in '\n\r\x00':return result('Escaped line continuations need a separate decision.')
    if quote=='"' and value[i+1] not in '$`"\\':word.append(c);i+=1;continue
    word.append(value[i+1]);i+=2;continue
   if c=='$':
@@ -79,9 +78,9 @@ def lex(value):
    parameter=PARAMETER.match(value,i)
    if parameter:dynamic=True;i=parameter.end();continue
    if value[i:i+2] in ('$(', '${', "$'", '$"') or i+1<len(value) and value[i+1] in '@*#?$!0123456789-':
-    return groups,'Command substitution or unsupported parameter expansion needs a separate decision.'
+    return result('Command substitution or unsupported parameter expansion needs a separate decision.')
    word.append(c);i+=1;continue
-  if c=='`':return groups,'Command substitution needs a separate decision.'
+  if c=='`':return result('Command substitution needs a separate decision.')
   if quote=='"':
    if c=='"':quote=None
    else:word.append(c)
@@ -89,29 +88,33 @@ def lex(value):
   if c in ("'",'"'):
    if start is None:start=i
    quote=c;i+=1;continue
+  operator=next((op for op in ('&&','||','|&','|',';','\n') if value.startswith(op,i)),None)
+  if operator:
+   finish(i)
+   if not groups[-1]:
+    if operator=='\n':i+=1;continue  # Blank lines and binary-operator continuations.
+    return result('An empty component command or malformed operator cannot be covered.')
+   groups.append([]);operators.append(operator);i+=len(operator);continue
   if c.isspace():finish(i);i+=1;continue
-  if c=='|':
+  if c in '&<>()':
    finish(i)
-   if i+1<len(value) and value[i+1] in '|&':return groups,'Additional commands (|| or |&) need a separate decision.'
-   if not groups[-1]:return groups,'An empty pipeline stage cannot be covered.'
-   groups.append([]);i+=1;continue
-  if c in ';&<>()':
-   finish(i)
-   return groups,'Redirection or process substitution needs a separate decision.' if c in '<>' else 'Additional commands or shell grouping need a separate decision.'
+   return result('Redirection or process substitution needs a separate decision.' if c in '<>' else 'Background execution or shell grouping needs a separate decision.')
   if c in '{}*?[]~' or c=='#' and start is None:
-   # The current word is not a literal token. Earlier complete words remain useful.
-   return groups,'Globbing, comments or other shell expansion needs a separate decision.'
+   return result('Globbing, comments or other shell expansion needs a separate decision.')
   if start is None:start=i
   word.append(c);i+=1
- if quote:return groups,'An unfinished quote prevents full command parsing.'
+ if quote:return result('An unfinished quote prevents full command parsing.')
  finish(i)
- if not groups[-1]:return groups,'An empty command or pipeline stage cannot be covered.'
- return groups,''
+ if not groups[-1]:
+  if operators and operators[-1] in (';','\n'):
+   terminator=operators.pop();groups.pop()
+  else:return result('An empty command or incomplete trailing operator cannot be covered.')
+ return result()
 
 
 def literal_prefix(value):
- groups,boundary=lex(value)
- return [w for w,_ in groups[0]] if not boundary and len(groups)==1 and all(w is not None for w,_ in groups[0]) else None
+ groups,operators,terminator,boundary=lex(value)
+ return [w for w,_ in groups[0]] if not boundary and not operators and not terminator and len(groups)==1 and all(w is not None for w,_ in groups[0]) else None
 
 
 def possible_match(argv,pattern,prefix=False):
@@ -130,9 +133,9 @@ def possible_match(argv,pattern,prefix=False):
 
 def parse(value,depth=0):
  if depth>8:return {'stages':[],'complete':False,'boundary':'Shell wrapper nesting is too deep.'}
- groups,boundary=lex(value);stages=[]
+ groups,operators,terminator,boundary=lex(value);stages=[]
  for group in groups:
-  argv=[w for w,_ in group];reason='';at=0
+  argv=[w for w,_ in group];reason='';prefix_boundary='';at=0
   while at<len(group) and group[at][1]:
    if argv[at] is None:reason='A dynamic assignment must keep its literal value before a reusable executable can be identified.';break
    at+=1
@@ -145,9 +148,11 @@ def parse(value,depth=0):
     reason='This shell wrapper cannot be resolved as one literal -c or -lc command.'
    else:
     inner=parse(argv[2],depth+1)
-    if len(groups)>1 and len(inner['stages'])>1:reason='A nested pipeline changes shell grouping and needs a separate decision.'
+    if len(groups)>1 and len(inner['stages'])>1:reason='A nested command chain changes shell grouping and needs a separate decision.'
     else:
-     stages.extend(inner['stages']);boundary=boundary or inner['boundary'];continue
+     stages.extend(inner['stages']);boundary=boundary or inner['boundary'];
+     if len(groups)==1:operators=inner.get('operators',[]);terminator=terminator or inner.get('terminator','')
+     continue
   words=[]
   if not reason:
    for w in argv:
@@ -155,7 +160,10 @@ def parse(value,depth=0):
     words.append(w)
    # env's assignment token can itself be dynamic, before its executable.
    if effective>=len(words):
-    reason='A dynamic executable, assignment or unsupported wrapper prevents a literal executable prefix.';words=[]
-  stages.append({'argv':argv,'words':words,'exact':not reason and all(w is not None for w in argv),'boundary':reason})
+    prefix_boundary='A dynamic executable, assignment or unsupported wrapper prevents a literal executable prefix.';words=[]
+    # An unsupported prefix wrapper is still an ordinary literal argv. Preserve
+    # old exact allow/deny rules; never confuse prefix eligibility with parsing.
+    if any(w is None for w in argv):reason=prefix_boundary
+  stages.append({'argv':argv,'words':words,'exact':not reason and all(w is not None for w in argv),'boundary':reason,'prefix_boundary':prefix_boundary})
   boundary=boundary or reason
- return {'stages':stages,'complete':bool(stages) and not boundary,'boundary':boundary}
+ return {'stages':stages,'operators':operators,'terminator':terminator,'contains_chain':bool(operators or terminator or len(stages)>1),'complete':bool(stages) and not boundary,'boundary':boundary}

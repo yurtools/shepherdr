@@ -251,11 +251,11 @@ class ApprovalAdvice(unittest.TestCase):
 
 class ApprovalEnhancements(unittest.TestCase):
  setUp=ApprovalPolicy.setUp
- def test_compound_exact_action_is_scoped_to_task_and_payload(self):
-  req={**self.req,'tool_input':{'command':'git status && echo done'}};A.write(self.path,req)
+ def test_redirected_exact_action_is_scoped_to_task_and_payload(self):
+  req={**self.req,'tool_input':{'command':'git status > report.txt'}};A.write(self.path,req)
   rule=A.grant(self.path);self.assertEqual(rule['match'],'request');ctx=A.request_context(self.path)[1]
   self.assertTrue(A.matches(rule,{**req,'session_id':'new-request-id'},ctx))
-  self.assertFalse(A.matches(rule,{**req,'tool_input':{'command':'git status && git push'}},ctx))
+  self.assertFalse(A.matches(rule,{**req,'tool_input':{'command':'git status > other-report.txt'}},ctx))
   self.assertFalse(A.matches(rule,req,{**ctx,'task':'other'}))
   with self.assertRaisesRegex(ValueError,'plain command'):A.grant(self.path,scope='space')
  def test_quoted_shell_punctuation_is_literal_but_expansion_and_compounds_are_not(self):
@@ -437,7 +437,7 @@ class AssistantReviewRegression(unittest.TestCase):
   _,ticket,send=self.delegate()
   prompt=send.call_args.args[0][-1]
   self.assertIn('No saved allow rule is required',prompt)
-  self.assertIn('every pipeline stage',prompt);self.assertIn('before going quiet',prompt)
+  self.assertIn('every component command',prompt);self.assertIn('before going quiet',prompt)
   self.assertIn(json.dumps(self.req,ensure_ascii=False),prompt)
   self.assertEqual(ticket['context']['task'],'TASK-1')
  def test_explicit_review_does_not_delegate_around_an_unreadable_policy(self):
@@ -699,7 +699,7 @@ class ApprovalHistoryRules(unittest.TestCase):
   self.assertFalse(list((A.app_home()/'data/chat-asks/ans').glob('*')))
   self.assertEqual(A.history_rows()[-1]['source'],'user')
  def test_complex_historical_actions_remain_task_and_payload_bound(self):
-  self.req={**self.req,'tool_input':{'command':'git status && echo done'}};A.write(self.path,self.req)
+  self.req={**self.req,'tool_input':{'command':'git status > report.txt'}};A.write(self.path,self.req)
   row,ctx=self.history();rule=A.grant_history(row['id'])['rule'];self.assertEqual(rule['match'],'request')
   self.assertTrue(A.matches(rule,self.req,ctx));self.assertFalse(A.matches(rule,{**self.req,'tool_input':{'command':'git push'}},ctx))
   with self.assertRaisesRegex(ValueError,'plain command'):A.grant_history(row['id'],scope='space')

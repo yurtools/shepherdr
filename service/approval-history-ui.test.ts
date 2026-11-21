@@ -99,9 +99,10 @@ test('named tool any-arguments is an explicit match and retains the full tool id
  f.v.scope='global';f.segments.find(s=>s.id==='approval-match').pick('exact',null,f.cx);expect(f.v.scope).toBe('task');
  expect(ruleUI.approvalRuleTitle({tool,match:'tool',decision:'allow'})).toContain('openmemory_store_project · any arguments');
 });
-test('stage selection submits only the selected stage and its own prefix',async()=>{
- const f=fixture({tool:'Bash',context:{account:'A',cwd:'/p'},words:['git','status'],stages:[['git','status'],['timeout','50s','hc','wait']],stage_prefixes:['git status','timeout 50s hc wait'],stage_commands:['git status','timeout 50s hc wait'],stage:0});
+test('component selection in a conditional chain submits only the chosen command prefix',async()=>{
+ const f=fixture({tool:'Bash',context:{account:'A',cwd:'/p'},words:['git','status'],stages:[['git','status'],['timeout','50s','hc','wait']],operators:['&&'],stage_prefixes:['git status','timeout 50s hc wait'],stage_commands:['git status','timeout 50s hc wait'],stage:0});
  f.v.chooseHistory({id:'pipeline'},f.cx);await f.wait();f.v.grantForm({},f.cx);
+ expect(f.buttons.find(b=>b.id==='approval-stage-1').label).toContain('Command 2');
  f.buttons.find(b=>b.id==='approval-stage-1').opts.onClick(null,f.cx);expect(f.v.prefix.value()).toBe('timeout 50s hc wait');expect(f.v.info.words[0]).toBe('timeout');
  f.buttons.length=0;f.v.grantForm({},f.cx);f.buttons.find(b=>b.id==='approval-save-rule').opts.onClick(null,f.cx);await f.wait();
  expect(f.calls.find(c=>c[0]==='history-grant')[1]).toEqual(expect.arrayContaining(['--stage','1','--prefix','timeout 50s hc wait']));
@@ -146,4 +147,12 @@ test('out-of-order previews cannot replace the newest valid coverage',async()=>{
  replies[1]({valid:true,coverage:'tail arguments may vary'});await second;
  replies[0]({valid:false,error:'old error'});await first;
  expect(f.v.preview).toEqual({valid:true,coverage:'tail arguments may vary'});expect(f.v.previewing).toBe(false);
+});
+
+test('literal wrapper options retain exact command editing without offering an unresolved prefix',async()=>{
+ const f=fixture({context:{account:'A',cwd:'/p'},tool:'Bash',words:['env','-u','FOO','tail','file'],stages:[['env','-u','FOO','tail','file']],stage_exact:[true],prefix_available:false,boundary:'Unsupported wrapper options prevent a reusable prefix.'});
+ f.v.chooseHistory({id:'legacy-wrapper'},f.cx);await f.wait();f.v.grantForm({},f.cx);
+ expect(f.segments.find(s=>s.id==='approval-match').opts).toEqual([['exact','Exact command']]);
+ expect(f.buttons.find(b=>b.id==='approval-save-rule').opts.disabled).toBe(false);
+ expect(f.segments.find(s=>s.id==='approval-scope').opts).toHaveLength(4);
 });

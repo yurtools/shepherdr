@@ -68,7 +68,7 @@ test('permission statuses require exact request binding and never expose arbitra
   expect(permissionStatus({...req,tool_input:{command:'git push'}},metadata).state).toBe('unknown');
   for (const v of [undefined,'{bad', {...metadata,version:2}, {...metadata,state:'made-up'}]) expect(permissionStatus(req,v).state).toBe('unknown');
   expect(permissionStatus(req,{...metadata,state:'person',reason:'review-expired'})).toMatchObject({attention:true,detail:'Assistant review expired. You can decide or ask again.'});
-  expect(permissionStatus(req,{...metadata,state:'person',reason:'pipeline-stage',stage:1}).detail).toBe('Stage 2 needs an allow rule. Every pipeline stage must be allowed.');
+  expect(permissionStatus(req,{...metadata,state:'person',reason:'pipeline-stage',stage:1}).detail).toBe('Command 2 needs an allow rule. Every component command must be allowed, including conditional branches.');
   expect(permissionStatus(req,{...metadata,state:'person',reason:'pipeline-stage',stage:'private'}).detail).toBe('You can decide here.');
   for (const tool_name of ['AskUserQuestion','ExitPlanMode','request_user_input']) {
     expect(permissionStatus({...req,tool_name},metadata)).toBeUndefined();

@@ -84,7 +84,7 @@ def main(a):
      A.waiting(a.request,req,'deny-uncertain' if result else 'rule-partial','Rule saved for future matches. This request still needs your decision.')
   pending=not covered
   action=result['action'] if answered else 'wait' if pending else 'saved'
-  reason='Rule saved for future matches. This request is still waiting: '+(result['reason'] if result else A.request_analysis(req)['boundary'] or 'Other stages need approval.') if pending else 'Request denied by a matching saved rule.' if answered and action=='deny' else 'Every action in this request is covered by saved rules.' if answered else 'Rule saved for future requests.'
+  reason='Rule saved for future matches. This request is still waiting: '+(result['reason'] if result else A.request_analysis(req)['boundary'] or 'Other component commands need approval.') if pending else 'Request denied by a matching saved rule.' if answered and action=='deny' else 'Every action in this request is covered by saved rules.' if answered else 'Rule saved for future requests.'
   return {**rule,'rule':rule,'action':action,'pending_stages':pending,'reason':reason}
  if a.command=='record':
   req,ctx=A.request_context(a.request,a.terminal);A.audit(req,ctx,a.decision,a.reason,'user');return {'ok':True}

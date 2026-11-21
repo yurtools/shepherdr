@@ -52,7 +52,9 @@ class ApprovalHook(unittest.TestCase):
  def test_variable_cannot_bypass_deny_and_substitution_cannot_hide_an_action(self):
   allow={'id':'tail','scope':'space','space':'space','tool':'Bash','decision':'allow','match':'prefix','pattern':['tail'],'expires':0}
   deny={**allow,'id':'restricted','match':'exact','pattern':['tail','/restricted/file'],'decision':'deny'}
-  for command,rules,reason in [('tail "$FILE"',[allow,deny],'deny-uncertain'),('tail "$(touch MARKER)"',[allow],'no-rule')]:
+  cases=[('tail "$FILE"',[allow,deny],'deny-uncertain'),('tail "$(touch MARKER)"',[allow],'no-rule')]
+  cases += [('tail file '+op+' touch MARKER',[allow],'pipeline-stage') for op in ('|','&&','||',';','\n','|&')]
+  for command,rules,reason in cases:
    result,app=self.run_hook('rules',rules,command=command,wait_reason=reason)
    self.assertIsNotNone(self.wait_status);self.assertEqual(result.returncode,0,result.stderr)
    self.assertEqual(json.loads(result.stdout)['hookSpecificOutput']['decision']['behavior'],'deny')

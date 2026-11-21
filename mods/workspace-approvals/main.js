@@ -35,7 +35,7 @@ export default class Approvals extends View {
   if(!this.closed&&version===this.previewVersion){this.previewing=false;cx.notify();}
  }
 
- chooseStage(stage,cx){this.stage=stage;this.info.words=this.info.stages[stage];this.prefix.set_value(this.info.stage_prefixes?.[stage]??'');if(this.match==='exact'&&!this.info.stage_exact?.[stage])this.scope='task';this.queuePreview(cx);}
+ chooseStage(stage,cx){this.stage=stage;this.info.words=this.info.stages[stage];this.info.prefix_available=this.info.stage_prefix_available?.[stage]??Boolean(this.info.words);if(this.match==='prefix'&&!this.info.prefix_available)this.match='exact';this.prefix.set_value(this.info.stage_prefixes?.[stage]??'');if(this.match==='exact'&&!this.info.stage_exact?.[stage])this.scope='task';this.queuePreview(cx);}
 
  render(cx){const p=props()??{},t=theme();return v_flex().id('approval-manager').track_focus(this.handle).size_full().min_h(0).p(18).gap(12).bg(t.popover).text_color(t.foreground)
   .on_key_down(e=>{if(e.key==='escape')closeOverlay(p.overlay);})
@@ -65,9 +65,10 @@ export default class Approvals extends View {
    .child(div().text_size(11).text_color(t.dim).child(`Folder: ${this.info?.context.cwd??''}`))
    .when(Boolean(this.info.boundary),el=>el.child(div().text_size(12).text_color(t.muted).child(this.info.boundary)))
    .when(pipeline,el=>el.child(v_flex().gap(6)
-    .child(div().text_size(12).child('Choose a pipeline stage. Every stage needs its own allow rule; any matching deny wins.'))
-    .children(this.info.stages.map((words,i)=>button(`approval-stage-${i}`,`${i===this.stage?'Selected · ':''}Stage ${i+1}: ${this.info.stage_commands?.[i]??words.join(' ')}`,{kind:i===this.stage?'primary':'secondary',onClick:(_e,cx)=>this.chooseStage(i,cx)})))))
-   .child(segmented('approval-match',this.info.words?[['exact',exactStage?'Exact command':'Exact payload for this task'],['prefix','Starting with…']]:[['exact','Exact payload for this task'],...(this.info.tool_wide?[['tool','This tool · any arguments']]:[])],this.match,(v,_e,cx)=>{this.match=v;if(v==='exact'&&!exactStage)this.scope='task';this.queuePreview(cx);}))
+    .child(div().text_size(12).child('Choose a component command. Every command needs an allow rule, including conditional branches. Any matching deny wins.'))
+    .children(this.info.stages.map((words,i)=>button(`approval-stage-${i}`,`${i===this.stage?'Selected · ':''}Command ${i+1}: ${this.info.stage_commands?.[i]??words.join(' ')}`,{kind:i===this.stage?'primary':'secondary',onClick:(_e,cx)=>this.chooseStage(i,cx)})))))
+   .when(Boolean(this.info.operators?.length),el=>el.child(div().text_size(11).text_color(t.dim).child(`Chain operators: ${this.info.operators.map(op=>op==='\n'?'newline':op).join(' → ')}`)))
+   .child(segmented('approval-match',this.info.words?[['exact',exactStage?'Exact command':'Exact payload for this task'],...(this.info.prefix_available!==false?[['prefix','Starting with…']]:[])]:[['exact','Exact payload for this task'],...(this.info.tool_wide?[['tool','This tool · any arguments']]:[])],this.match,(v,_e,cx)=>{this.match=v;if(v==='exact'&&!exactStage)this.scope='task';this.queuePreview(cx);}))
    .when(this.match==='prefix',el=>el.child(Input.new(this.prefix).w_full()))
    .child(div().id('approval-coverage').text_size(12).text_color(this.preview?.valid===false?t.blocked:t.muted).child(this.previewing?'Checking rule coverage…':this.preview?.error??this.preview?.coverage??'Choose a match to preview coverage.'))
    .when(future,el=>el.child(div().text_size(12).child('Save this literal prefix for future matching requests. Other actions in the current request still need approval; any matching deny wins.')))
@@ -79,6 +80,6 @@ export default class Approvals extends View {
    .when(this.match==='tool',el=>el.child(div().text_size(12).child('Any arguments allows or denies all input variants of this exact tool identity. Other names and namespaces do not match.')))
    .child(div().text_size(11).text_color(t.dim).child('In inherited Ask me mode, saving activates Approved rules for this task/session for at most one day, or the rule’s shorter lifetime. Configured Assistant and Codex review modes and explicit task/session choices are kept. Forever keeps the rule, not the activation. Global, space and role defaults stay unchanged.'))
    .when(this.mode==='history-grant',el=>el.child(div().text_size(12).text_color(t.muted).child('Applies to future matching requests. Saving does not rerun or answer the original action.')))
-   .child(button('approval-save-rule',this.busy?'Saving…':this.mode==='history-grant'||future?'Save rule for future requests':pipeline?'Save stage rule and check pipeline':'Save rule and check this request',{kind:'primary',disabled:this.busy||this.previewing||!this.preview?.valid,onClick:(_e,cx)=>this.action(this.mode==='history-grant'?'history-grant':'grant',[...(this.mode==='history-grant'?['--id',this.historyId]:this.args()),'--scope',this.scope,'--match',this.match,'--prefix',this.prefix.value(),'--hours',String(this.hours),'--decision',this.decision,...(pipeline?['--stage',String(this.stage)]:[]),...(this.mode==='history-grant'?[]:['--respond',...(this.info.request_hash?['--hash',this.info.request_hash]:[])])],cx)}));}
+   .child(button('approval-save-rule',this.busy?'Saving…':this.mode==='history-grant'||future?'Save rule for future requests':pipeline?'Save command rule and check chain':'Save rule and check this request',{kind:'primary',disabled:this.busy||this.previewing||!this.preview?.valid,onClick:(_e,cx)=>this.action(this.mode==='history-grant'?'history-grant':'grant',[...(this.mode==='history-grant'?['--id',this.historyId]:this.args()),'--scope',this.scope,'--match',this.match,'--prefix',this.prefix.value(),'--hours',String(this.hours),'--decision',this.decision,...(pipeline?['--stage',String(this.stage)]:[]),...(this.mode==='history-grant'?[]:['--respond',...(this.info.request_hash?['--hash',this.info.request_hash]:[])])],cx)}));}
  close(){this.closed=true;this.invalidatePreview();this.prefix?.release();dropKeys(this.holder);}
 }

@@ -208,7 +208,8 @@ const ASKS_THERE = 'd="${HERDR_APP_HOME:-$HOME/.config/herdr-app}/data/chat-asks
 const REMOTE_LIST = `${ASKS_THERE}; t=$1; shift
 for f in "$d/req/$t".*.json; do [ -f "$f" ] || continue; n=\${f##*/}; n=\${n%.json}; [ -f "$d/ans/$n.json" ] && continue
   kill -0 "\${n##*.}" 2>/dev/null || continue; printf 'req\\t%s\\t' "$n"; tr '\\n\\t' '  ' < "$f"; echo
-  if [ -f "$d/req/$n.status" ]; then printf 'status\\t%s\\t' "$n"; tr '\\n\\t' '  ' < "$d/req/$n.status"; echo; fi; done
+  if [ -f "$d/req/$n.status" ]; then printf 'status\\t%s\\t' "$n"; tr '\\n\\t' '  ' < "$d/req/$n.status"; echo; fi
+  if [ -f "$d/req/$n.advice" ]; then printf 'advice\\t%s\\t' "$n"; tr '\\n\\t' '  ' < "$d/req/$n.advice"; echo; fi; done
 for n in "$@"; do [ -f "$d/end/$n" ] && printf 'end\\t%s\\t%s\\n' "$n" "$(head -n 1 "$d/end/$n")"; done; exit 0`;
 // An answer there: how it went, then the answer ($3) in place at once.
 const REMOTE_ANSWER = `${ASKS_THERE}; mkdir -p "$d/ans" "$d/end"; [ -f "$d/req/$1.json" ] || exit 3
@@ -734,12 +735,13 @@ export default class Chat extends View {
     const machine = this.machine, address = this.addr, local = address.slice(machine.length + 1);
     const r = await exec("hc", ["exec", "--on", machine, "sh", "-c", REMOTE_LIST, "x", local, ...this.asks.map((a) => a.id)]);
     if (r.code !== 0 || this.machine !== machine || this.addr !== address) return;
-    const reqs = new Map(), ends = new Map(), statuses = new Map();
+    const reqs = new Map(), ends = new Map(), statuses = new Map(), advice = new Map();
     for (const line of String(r.stdout ?? "").split("\n")) {
       const [kind, id, ...rest] = line.split("\t");
       if (!id || !/^[\w.-]+$/.test(id)) continue;
       if (kind === "req") reqs.set(id, rest.join("\t"));
       else if (kind === "status") statuses.set(id, rest.join("\t"));
+      else if (kind === "advice") advice.set(id, rest.join("\t"));
       else if (kind === "end" && rest.join("\t").trim()) ends.set(id, rest.join("\t").trim());
     }
     const kept = [];
@@ -751,7 +753,7 @@ export default class Chat extends View {
       let req = null;
       try { req = JSON.parse(text); } catch {}
       const w = req ? words(req) : { kind: "permission", title: UNREAD_APPROVAL, detail: "", unread: true };
-      const approval = permissionStatus(req, statuses.get(id)), old = this.asks.find(a => a.id === id);
+      const approval = permissionStatus(req, statuses.get(id), advice.get(id)), old = this.asks.find(a => a.id === id);
       kept.push({ id, req, words: w, approval, machine });
       if ((!old || old.approval?.attention === false) && approval?.attention !== false) added = true;
     }
@@ -791,7 +793,8 @@ export default class Chat extends View {
       const metadata = await readTextFile(`${this.askDir}/req/${id}.status`).catch(() => null);
       // Recheck after the async reads: a handoff/answer may have closed it in between.
       if (await readTextFile(`${this.askDir}/ans/${id}.json`).catch(() => null) !== null || await readTextFile(`${this.askDir}/req/${id}.json`).catch(() => null) !== text) continue;
-      const approval = permissionStatus(req, metadata), old = this.asks.find(a => a.id === id);
+      const advice = await readTextFile(`${this.askDir}/req/${id}.advice`).catch(() => null);
+      const approval = permissionStatus(req, metadata, advice), old = this.asks.find(a => a.id === id);
       kept.push({ id, req, words: w, approval });
       if ((!old || old.approval?.attention === false) && approval?.attention !== false) added = true;
     }

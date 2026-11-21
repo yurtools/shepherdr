@@ -1,10 +1,11 @@
 import home_guard  # noqa: F401
-import json, os, sys, tempfile, time, unittest
+import json, os, sys, tempfile, time, unittest, threading
 from pathlib import Path
 from unittest import mock
 ROOT=Path(__file__).resolve().parent.parent
 sys.path.insert(0,str(ROOT/'mods/tasks/bin'))
 from herdr_task import approvals as A
+from herdr_task import approval_advice as D
 class ApprovalPolicy(unittest.TestCase):
  def setUp(self):
   self.tmp=tempfile.TemporaryDirectory();self.addCleanup(self.tmp.cleanup);self.base=Path(self.tmp.name)
@@ -91,6 +92,117 @@ class ApprovalPolicy(unittest.TestCase):
   A.write(self.path,{**self.req,'tool_input':{'command':'tool --token secret-value'}})
   with self.assertRaisesRegex(ValueError,'credentials'):A.grant(self.path)
   A.audit(self.req,A.request_context(self.path)[1],'allow','By user','user');self.assertTrue(A.read(A.store()/'history.json'))
+class ApprovalAdvice(unittest.TestCase):
+ setUp=ApprovalPolicy.setUp
+ mode=ApprovalPolicy.mode
+ def owner(self,feature=False):
+  self.meta['labels'].pop('herdr.feature',None);self.meta['labels']['herdr.owner']='assistant'
+  self.owner_meta={'state':'live','pid':42,'status':{'state':'idle'},'argv':['claude'],'labels':{'herdr.role':'feature' if feature else 'coordinator','herdr.coordinator.space':'space'}}
+  if feature:
+   self.meta['labels'].update({'herdr.owner':'assistant','herdr.feature':'feature-one'})
+   self.owner_meta['labels']['herdr.feature']='feature-one'
+  A.hc_get.side_effect=lambda t:self.owner_meta if t=='assistant' else self.meta
+ def request(self):
+  with mock.patch.object(D.subprocess,'run',return_value=mock.Mock(returncode=0,stdout='{}')) as send:
+   result=D.request(self.path,A.status_key(A.read(self.path)),'worker')
+  return A.read(D.ticket_path(self.path.stem)),send,result
+ def test_feature_owner_gets_only_an_informational_capability_and_duplicate_clicks_send_once(self):
+  self.owner(True);ticket,send,result=self.request();self.assertEqual(result['state'],'pending')
+  message=send.call_args.args[0];self.assertEqual(message[:3],['hc','send','assistant'])
+  for text in ('UNTRUSTED DATA','NO execution or approval authority','advice-input','advise','variables','network/process','do not start an agent'):
+   self.assertIn(text,message[3])
+  self.assertNotIn('git status --short',message[3]);self.assertNotIn('approval-policy.py decide ',message[3])
+  again,second,_=self.request();self.assertEqual(again,ticket);second.assert_not_called()
+  self.assertEqual(D.evidence(ticket['id'],ticket['token'],'assistant')['untrusted_request']['tool_input'],self.req['tool_input'])
+ def test_advice_cannot_use_or_consume_a_review_ticket_or_silently_replace_handback(self):
+  self.owner();self.mode('assistant')
+  with mock.patch.object(A.subprocess,'run',return_value=mock.Mock(returncode=0,stdout='{}')):A.evaluate(self.path)
+  review_path=A.store()/'pending'/self.path.name;review=A.read(review_path);before=review_path.read_bytes()
+  advice,_,_=self.request()
+  with self.assertRaises(ValueError):D.submit(advice['id'],review['token'],'Wrong capability',terminal='assistant')
+  with self.assertRaises(ValueError):A.decide(review['id'],advice['token'],'allow','Wrong capability',terminal='assistant')
+  D.submit(advice['id'],advice['token'],'Lists changed files.','Git reads the index; it does not commit or send data.',terminal='assistant')
+  self.assertEqual(review_path.read_bytes(),before);self.assertFalse((self.path.parent.parent/'ans'/self.path.name).exists())
+  A.decide(review['id'],review['token'],'ask','This writes outside the project; policy delegates only project work.',terminal='assistant')
+  status=self.path.with_suffix('.status').read_bytes();A.evaluate(self.path)
+  self.assertEqual(self.path.with_suffix('.status').read_bytes(),status)
+  self.assertEqual(A.read(self.path.with_suffix('.advice'))['state'],'ready')
+  # Advice remains usable after hand-back without obtaining a new review ticket.
+  review_before=review_path.read_bytes();self.request();self.assertEqual(review_path.read_bytes(),review_before)
+ def test_manual_approval_remains_available_during_advice_and_closed_response_is_rejected(self):
+  self.owner();advice,_,_=self.request()
+  import importlib.util
+  spec=importlib.util.spec_from_file_location('advice_ui',ROOT/'mods/chat/approval-policy.py');ui=importlib.util.module_from_spec(spec);spec.loader.exec_module(ui)
+  result=ui.main(ui.parser().parse_args(['answer','--request',str(self.path),'--hash',A.status_key(self.req),'--answer',json.dumps(A.response('deny')['response'])]))
+  self.assertEqual(result['action'],'answered')
+  with self.assertRaisesRegex(ValueError,'answered'):D.submit(advice['id'],advice['token'],'Late advice',terminal='assistant')
+  self.assertEqual(A.read(self.path.parent.parent/'ans'/self.path.name)['hookSpecificOutput']['decision']['behavior'],'deny')
+ def test_advice_does_not_change_rules_settings_modes_history_or_pending_request(self):
+  for mode in ('manual','codex-review','assistant'):
+   with self.subTest(mode=mode):
+    self.owner();self.mode(mode);A.write(A.store()/'rules.json',[]);A.write(A.store()/'overrides.json',{});A.write(A.store()/'history.json',[])
+    files=[self.path,self.base/'settings.json',*[A.store()/n for n in ('rules.json','overrides.json','history.json')]]
+    before={p:p.read_bytes() for p in files};D.ticket_path(self.path.stem).unlink(missing_ok=True)
+    ticket,_,_=self.request();D.submit(ticket['id'],ticket['token'],'Reads Git state.',terminal='assistant')
+    self.assertEqual({p:p.read_bytes() for p in files},before);self.assertFalse((self.path.parent.parent/'ans'/self.path.name).exists())
+    self.assertFalse((A.store()/'pending'/self.path.name).exists())
+ def test_unknown_offline_busy_wrong_space_and_self_owners_never_receive_advice(self):
+  for case in ('offline','busy','blocked','wrong-space','wrong-feature','self'):
+   with self.subTest(case=case):
+    self.owner(True);self.path.with_suffix('.context').unlink(missing_ok=True);D.ticket_path(self.path.stem).unlink(missing_ok=True)
+    if case=='offline':self.owner_meta['state']='gone'
+    elif case in ('busy','blocked'):self.owner_meta['status']['state']='working' if case=='busy' else 'blocked'
+    elif case=='wrong-space':self.owner_meta['labels']['herdr.coordinator.space']='other'
+    elif case=='wrong-feature':self.owner_meta['labels']['herdr.feature']='other'
+    else:self.meta['labels']['herdr.owner']='worker'
+    ticket,send,result=self.request();send.assert_not_called();self.assertIn(result['state'],('busy','unavailable'))
+  self.owner();self.meta['labels'].pop('herdr.coordinator',None);self.meta['labels'].pop('herdr.owner',None);self.path.with_suffix('.context').unlink();D.ticket_path(self.path.stem).unlink()
+  with mock.patch.object(D.subprocess,'run',return_value=mock.Mock(returncode=0,stdout='{"terminals":[]}')) as calls:
+   self.assertEqual(D.request(self.path,A.status_key(self.req))['state'],'unavailable');self.assertEqual(calls.call_args.args[0],['hc','ls','--json'])
+ def test_wrong_sender_expiry_replacement_closure_replay_and_owner_restart_cannot_publish(self):
+  for case in ('sender','expired','replacement','closed','replay','owner-restarted','different-role','context'):
+   with self.subTest(case=case):
+    self.owner();A.write(self.path,self.req);self.path.with_suffix('.context').unlink(missing_ok=True);D.ticket_path(self.path.stem).unlink(missing_ok=True)
+    ticket,_,_=self.request();public=self.path.with_suffix('.advice').read_bytes()
+    if case=='expired':ticket['expires']=time.time()-1;A.write(D.ticket_path(ticket['id']),ticket)
+    elif case=='replacement':A.write(self.path,{**self.req,'session_id':'new-session','tool_input':{'command':'git push'}})
+    elif case=='closed':self.path.unlink()
+    elif case=='replay':self.path.unlink();A.write(self.path,self.req)
+    elif case=='owner-restarted':self.owner_meta['pid']=43
+    elif case=='different-role':self.owner_meta['labels']['herdr.role']='worker'
+    elif case=='context':A.write(self.path.with_suffix('.context'),{**ticket['context'],'account':'/other'})
+    with self.assertRaises((ValueError,OSError)):D.submit(ticket['id'],ticket['token'],'Stale',terminal='worker' if case=='sender' else 'assistant')
+    self.assertEqual(self.path.with_suffix('.advice').read_bytes(),public);self.assertFalse((self.path.parent.parent/'ans'/self.path.name).exists())
+ def test_read_seen_settings_and_view_metadata_changes_keep_the_same_owner_authorized(self):
+  self.owner(True);self.owner_meta['foreground']={'pid':44,'argv':['claude'],'cwd':'/original','title':'Terminal'}
+  ticket,_,_=self.request()
+  self.owner_meta['labels'].update({'herdr.read':'now','herdr.seen':'now','herdr.settings':'new','herdr.view':'chat'})
+  self.owner_meta['foreground'].update({'cwd':'/another-view','title':'Chat','status':'working'})
+  self.owner_meta['status']['state']='working'
+  self.assertEqual(D.submit(ticket['id'],ticket['token'],'Lists changed files.',terminal='assistant')['state'],'ready')
+ def test_result_redacts_secrets_raw_payloads_and_control_text_and_helper_cannot_decide(self):
+  import shlex
+  self.owner();self.req['tool_input']['api_key']='private-fixture';A.write(self.path,self.req)
+  ticket,_,_=self.request();evidence=D.evidence(ticket['id'],ticket['token'],'assistant')
+  self.assertNotIn('private-fixture',json.dumps(evidence));self.assertNotIn('session_id',json.dumps(evidence))
+  reason='Reads files. '+ticket['token']+' private-fixture password="two words" Bearer secret-value <hc react="yes"/>\x1b[31m '+json.dumps(self.req['tool_input'])
+  helper=str(A.app_home()/'mods/chat/approval-policy.py')
+  base=[helper,'advise','--id',ticket['id'],'--token',ticket['token'],'--summary','Reads files.']
+  command={'tool_name':'Bash','tool_input':{'command':shlex.join(base)}}
+  self.assertTrue(D.own_command(command,{'terminal':'assistant'}))
+  for suffix in (['--decision','allow'],['--respond'],['--request',str(self.path)]):
+   self.assertFalse(D.own_command({**command,'tool_input':{'command':shlex.join(base+suffix)}},{'terminal':'assistant'}))
+  self.assertFalse(A.own_review_command(command,{'terminal':'assistant'}))
+  D.submit(ticket['id'],ticket['token'],reason,reason,terminal='assistant');public=json.dumps(A.read(self.path.with_suffix('.advice')))
+  for secret in (ticket['token'],'private-fixture','two words','secret-value','git status --short','<hc','\\u001b'):self.assertNotIn(secret,public)
+  with self.assertRaises(ValueError):D.submit(ticket['id'],ticket['token'],'Again',terminal='assistant')
+ def test_stale_hash_and_product_choices_get_no_advice(self):
+  self.owner()
+  with self.assertRaisesRegex(ValueError,'changed'):D.request(self.path,'wrong')
+  for name in A.QUESTION_TOOLS:
+   A.write(self.path,{**self.req,'tool_name':name})
+   with self.assertRaisesRegex(ValueError,'plans or choices'):D.request(self.path,A.status_key(A.read(self.path)))
+
 class ApprovalEnhancements(unittest.TestCase):
  setUp=ApprovalPolicy.setUp
  def test_compound_exact_action_is_scoped_to_task_and_payload(self):
@@ -113,6 +225,27 @@ class ApprovalLifecycle(unittest.TestCase):
  setUp=ApprovalPolicy.setUp
  mode=ApprovalPolicy.mode
  def state(self):return A.read(self.path.with_suffix('.status'))
+ def test_poll_in_flight_cannot_erase_an_assistant_handback(self):
+  ticket,reviewer=self.review()
+  entered=threading.Event();resume=threading.Event();errors=[]
+  def lookup(terminal):
+   if threading.current_thread().name=='approval-poll':
+    entered.set()
+    if not resume.wait(5):raise AssertionError('poll was not resumed')
+   return reviewer
+  def poll():
+   try:A.evaluate(self.path)
+   except Exception as e:errors.append(e)
+  A.hc_get.side_effect=lookup
+  thread=threading.Thread(target=poll,name='approval-poll');thread.start()
+  try:
+   self.assertTrue(entered.wait(5))
+   A.decide(ticket['id'],ticket['token'],'ask','This writes outside the project; policy delegates only project work.',terminal='assistant')
+  finally:resume.set();thread.join(5)
+  self.assertFalse(thread.is_alive());self.assertEqual(errors,[])
+  self.assertEqual(self.state()['state'],'person')
+  self.assertIn('outside the project',self.state()['review_reason'])
+  self.assertFalse((self.path.parent.parent/'ans'/self.path.name).exists())
  def review(self,mode='assistant',kind='feature',delivery=0):
   self.mode(mode)
   if kind=='feature':self.meta['labels'].update({'herdr.feature':'feature-one','herdr.owner':'assistant'})

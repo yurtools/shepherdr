@@ -38,7 +38,7 @@ test('Ask Assistant button delegates the original request through the explicit h
  const req=ask.req,approval=permissionStatus(req,{version:1,request_hash:requestHash(req),state:'person',reason:'assistant-asked',review_reason:'The script destination is unknown. Please choose.'})!;
  const cards=new AskCards({reply(){}},{}),strips:any[]=cards.strips({...ask,approval});
  expect(strips.find((s:any)=>s.key==='status-detail')?.text).toBe(approval.detail);
- expect(strips.find((s:any)=>s.key==='actions').ctls.map((c:any)=>c.label)).toEqual(['Allow once','Deny']);
+ expect(strips.find((s:any)=>s.key==='actions').ctls.map((c:any)=>c.label)).toEqual(['Allow once','Deny','Advice']);
 });
 
 test('native permission strips keep visible status, distinct icons and manual keyboard actions',()=>{
@@ -49,7 +49,7 @@ test('native permission strips keep visible status, distinct icons and manual ke
   const strips:any[]=cards.strips(ask),status=strips.find((s:any)=>s.kind==='status');expect(status.text).toBe(ask.approval.text);expect(strips[0].neutral).toBe(true);
   built.length=0;strip({muted:'#888'},status,false,false);
   expect(built.some((e:any)=>e.calls.some(([n,a]:any)=>n==='text_color'&&a[0]===(state==='person'?'#f5b544':'#888')))).toBe(true);
-  expect(strips.find((s:any)=>s.key==='actions').ctls.map((c:any)=>c.label)).toEqual(['Allow once','Deny']);
+  expect(strips.find((s:any)=>s.key==='actions').ctls.map((c:any)=>c.label)).toEqual(['Allow once','Deny','Advice']);
  }
  cards.key(ask,{key:'escape'},{stop_propagation(){},notify(){}});expect(JSON.parse(replies[0]).hookSpecificOutput.decision.behavior).toBe('deny');
  const plan={id:'plan',req:{tool_name:'ExitPlanMode'},words:{kind:'plan',title:'Plan',detail:''}};

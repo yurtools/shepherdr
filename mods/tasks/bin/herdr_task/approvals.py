@@ -341,8 +341,9 @@ def matches(rule,req,ctx,words=None,pipeline=False):
  if not rule_context_matches(rule,req,ctx):return False
  if rule.get('match')=='tool':return req.get('tool_name') not in SHELL_TOOLS
  if rule.get('match')=='request':
-  # A legacy whole-chain payload cannot stand in for stage grants.
-  return not pipeline and not pipeline_syntax(shell_value(req)) and rule.get('action_key')==action_key(req)
+  # Existing exact denies retain their full identity for every request shape.
+  # Only a whole-chain ALLOW is prevented from standing in for component grants.
+  return rule.get('action_key')==action_key(req) and (rule.get('decision')=='deny' or not pipeline and not pipeline_syntax(shell_value(req)))
  if words is None:
   parsed=request_analysis(req);stages=parsed['stages']
   words=stages[0]['argv'] if parsed['complete'] and len(stages)==1 else None

@@ -501,5 +501,17 @@ class CommandChains(unittest.TestCase):
    rule=A.grant_history(row['id'],stage=0,match='prefix',prefix='tail')['rule']
   self.assertEqual(rule['pattern'],['tail']);self.assertEqual(rule['account'],ctx['account'])
   self.assertFalse(list((A.app_home()/'data/chat-asks/ans').glob('*')))
+ def test_legacy_whole_request_denies_beat_component_allows_without_broadening_scope(self):
+  self.command('tail file');tail=A.grant(self.path,scope='space',match='prefix',prefix='tail')
+  self.command('curl URL');curl=A.grant(self.path,scope='space',match='prefix',prefix='curl')
+  for operator in ('&&',';','\n','||','|','|&'):
+   req=self.command('tail file '+operator+' curl URL');ctx=A.request_context(self.path)[1]
+   deny={**tail,'id':'legacy-request-deny','match':'request','action_key':A.action_key(req),'pattern':['original summary'],'decision':'deny'}
+   self.assertTrue(A.matches(deny,req,ctx));self.assertEqual(A.matching_decision([tail,curl,deny],req,ctx)[0]['action'],'deny')
+   for different in ({**deny,'tool':'other.Bash'},{**deny,'account':'other'},{**deny,'cwd':ctx['cwd']+'-sibling'},
+                     {**deny,'space':'other'},{**deny,'action_key':'different'},{**deny,'expires':time.time()-1}):
+    self.assertEqual(A.matching_decision([tail,curl,different],req,ctx)[0]['action'],'allow')
+   # The same payload identity as an allow never replaces component coverage.
+   self.assertEqual(A.matching_decision([tail,{**deny,'decision':'allow'}],req,ctx)[0],None)
 
 if __name__=='__main__':unittest.main()

@@ -186,8 +186,9 @@ cannot answer the original complex request. Parsing stops at the first unsupport
 boundary and does not guess later actions. Saving a partial rule does not start
 Assistant review. Use Allow once or Ask Assistant to decide the full request.
 
-A whole-chain payload hash, including an older stored hash, cannot bypass
-component checks. Existing fully literal exact argument rules still match when
+A whole-chain allow payload hash, including an older stored hash, cannot bypass
+component checks. Exact whole-request denies keep their original scope, tool and
+action identity and take precedence over component allows. Existing fully literal exact argument rules still match when
 wrapper options prevent offering a reusable prefix, such as `env -u FOO tail file`
 or `timeout -k 2s 5s tail file`. Those options are not stripped into a broad grant.
 Unrelated exact non-chain payload rules (for example a specific test command with

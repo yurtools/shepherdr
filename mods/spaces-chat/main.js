@@ -1,3 +1,4 @@
+import { BoundedWait, TIMEOUT, DISPOSED } from "./bounded-wait.js";
 // Workspace spaces: stable colored avatars, worktrees under their checkout,
 // grouped by machine when more than one is known. After a space's name, the repo
 // its first terminal is in now, only where unusual: its branch. Agent state lives in the agents list, not here. Click to
@@ -125,7 +126,7 @@ export default class Spaces extends View {
     this.busy = {}; // pane -> an agent working or a program in front of its shell
     this.ready = {}; // machine -> its layout was readable at the last look
     this.at = {}; // space -> its where() at the last look
-    this.watching = new Set(); // local repos' git folders
+    this.watching = new Map(); // local repos' git folders
     // Spaces made while this runs wait (at most a moment) for their git, so a
     // worktree appears under its repo instead of jumping there.
     this.shown = new Set(spaces().map((s) => s.id));
@@ -317,7 +318,7 @@ export default class Spaces extends View {
         for (const key of keys) await this.check(key, cx);
       }
       const used = new Set(Object.values(this.git).filter(Boolean).map((g) => JSON.parse(g.repo)).filter(([on]) => !on).map(([, repo]) => repo));
-      for (const repo of this.watching) if (!used.has(repo)) this.watching.delete(repo);
+      for (const [repo, wait] of this.watching) if (!used.has(repo)) { this.watching.delete(repo); wait.dispose(); }
       this.refreshing = false;
       cx.notify();
     });
@@ -354,19 +355,19 @@ export default class Spaces extends View {
 
   watch(repo, cx) {
     if (this.watching.has(repo)) return;
-    this.watching.add(repo);
+    const wait = new BoundedWait();
+    this.watching.set(repo, wait);
     cx.spawn(async (cx) => {
       try {
-        let w = null;
-        while (this.watching.has(repo)) {
-          // At most 5 s per wait, so a reload's old build ends at its next cx use.
-          w ??= watchFolder(repo).then(() => true);
-          if (!(await Promise.race([w, cx.sleep(5000)]))) continue;
-          w = null;
+        while (this.watching.get(repo) === wait) {
+          const got = await wait.next(cx, repo, () => watchFolder(repo), 5000);
+          if (got === DISPOSED) return;
+          if (got === TIMEOUT) continue;
           const mine = JSON.stringify([null, repo]);
           if (this.watching.has(repo)) this.refreshGit(Object.keys(this.git).filter((k) => this.git[k]?.repo === mine), cx);
         }
-      } catch { this.watching.delete(repo); }
+      } catch { if (this.watching.get(repo) === wait) this.watching.delete(repo); }
+      finally { wait.dispose(); }
     });
   }
 
@@ -811,7 +812,7 @@ export default class Spaces extends View {
       .child(div().text_color(tone(t, w.status)).child(glyph(w.status)));
   }
 
-  close() { this.popup?.close?.(); }
+  close() { for (const wait of this.watching?.values() ?? []) wait.dispose(); this.watching?.clear(); this.popup?.close?.(); }
 
   // One copy of Herdr's live lists for the whole render (live.js): past ~50 ms Herdr stops it.
   render(cx) {

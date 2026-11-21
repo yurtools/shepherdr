@@ -52,7 +52,7 @@ export default class Tabs extends View {
     // Tasks' queue and merge watcher (mods/tasks owns it): left to the service while it runs.
     startTick(cx);
     // What needs the person, for Tasks' "Needs you" and the red counts (inbox.js).
-    startInbox(cx);
+    this.inboxWait = startInbox(cx);
     // Usage insights (lib/usage.js, the insights add-on): the space and tab shown, and the time on each.
     watchViews(cx);
     // The add-ons switched off (lib/addons.js): Everywhere's "off" in ~/.config/shepherdr/settings.json, as
@@ -63,15 +63,10 @@ export default class Tabs extends View {
       if (JSON.stringify(want) !== JSON.stringify(shared("addons.off") ?? [])) setShared("addons.off", want);
     }).catch(() => {});
     // Ctrl+Shift+W comes here so a coordinator with live workers asks first, like its x.
-    // At most 5 s per wait (one pending nextCommand), so a reload's old build ends at its next
-    // cx use instead of staying in memory.
+    // The host cancels the pending receive when this copy closes or reloads.
     cx.spawn(async (cx) => {
-      let cmd = null;
       for (;;) {
-        cmd ??= nextCommand();
-        const c = await Promise.race([cmd, cx.sleep(5000)]);
-        if (c === undefined) continue;
-        cmd = null;
+        const c = await nextCommand();
         const tab = spaces().find(s => s.active)?.tabs.find(t => t.active);
         if (c === "sessions") openHistory();
         if (c === "feature") startFeature();
@@ -140,6 +135,8 @@ export default class Tabs extends View {
   }
 
   // One copy of Herdr's live lists for the whole render (live.js): past ~50 ms Herdr stops it.
+  close() { this.inboxWait?.dispose(); }
+
   render(cx) {
     return inRender(() => this.draw(cx));
   }

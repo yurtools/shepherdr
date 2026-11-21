@@ -35,6 +35,8 @@ How to run, build and lay out the code: [docs/develop.md](docs/develop.md).
   scheduler on another home can overwrite every machine's spaces.
 - `herdr-app check <mod folder>` runs a mod's `init()` for real: never for `shepherdr-settings` (its init pushes
   settings to other machines).
+- `workspace-approvals` runs the rule-list helper from `init()`, which can prune live rules. Native checks need a
+  scratch form with `load()` overridden and an `approvalCall` stub that throws.
 - Window-mod methods (e.g. chat's `refocus()`) can be tested by extracting the method text from `mods/chat/main.js`
   and running it in node with stubs (see `test/test_chat_refocus.py`).
 - For native Chat/Terminal proof, focus the verified target terminal, use `herdr-app do pane-chat.toggle`, and

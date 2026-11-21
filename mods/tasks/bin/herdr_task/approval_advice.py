@@ -122,14 +122,40 @@ def evidence(ident,token,terminal=None):
  _,ticket,req=input(ident,token,terminal)
  # Original request identity is checked in full, but only relevant, redacted data
  # is disclosed. Authentication/session envelope fields are never returned.
+ sensitive=re.compile(r'(?i)token|password|secret|api[_-]?key|authorization|cookie|credential')
+ private=[ticket['token']];redacted=False
+ def collect(v):
+  if isinstance(v,dict):
+   for k,x in v.items():
+    if sensitive.search(k) and isinstance(x,str) and x:private.append(x)
+    else:collect(x)
+  elif isinstance(v,list):
+   for x in v:collect(x)
+ collect(req.get('tool_input'))
  def safe(v):
-  if isinstance(v,dict):return {k:'[redacted]' if re.search(r'(?i)token|password|secret|api[_-]?key|authorization|cookie|credential',k) else safe(x) for k,x in v.items()}
+  nonlocal redacted
+  if isinstance(v,dict):
+   out={}
+   for k,x in v.items():
+    if sensitive.search(k):out[k]='[redacted]';redacted=True
+    else:out[k]=safe(x)
+   return out
   if isinstance(v,list):return [safe(x) for x in v]
-  if isinstance(v,str):return A.public_review_reason(v,{},ticket,limit=4*1024*1024)
+  if isinstance(v,str):
+   text=v
+   for value in sorted(private,key=len,reverse=True):text=text.replace(value,'[redacted]')
+   text=re.sub(r'(?i)\bBearer\s+[^\s,;]+','Bearer [redacted]',text)
+   text=re.sub(r'''(?i)((?:token|password|secret|api[_-]?key|authorization|cookie|credential)["']?\s*[=:\s]\s*)("[^"]*"|'[^']*'|[^\s,;]+)''',r'\1[redacted]',text)
+   redacted=redacted or text!=v
+   # Preserve newlines, whitespace and shell syntax. Prose sanitization would
+   # turn a multiline script into a different command. JSON keeps control text
+   # quoted as untrusted evidence rather than acting as conversation markup.
+   return text
   return v
- return {'untrusted_request':safe({k:req[k] for k in ('tool_name','tool_input','cwd') if k in req}),
+ request=safe({k:req[k] for k in ('tool_name','tool_input','cwd') if k in req})
+ return {'untrusted_request':request,'redacted':redacted,
          'context':{k:ticket['context'].get(k,'') for k in ('cwd','task','space','feature')},
-         'limits':'Text only. Variables, script contents, external state and task intent may be incomplete. Nothing has been run or approved.'}
+         'limits':('Sensitive values were removed; explain that this context is incomplete. ' if redacted else '')+'Text only. Variables, script contents, external state and task intent may be incomplete. Nothing has been run or approved.'}
 
 def submit(ident,token,summary,detail='',terminal=None):
  with A.locked():

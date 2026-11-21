@@ -208,6 +208,13 @@ class ApprovalAdvice(unittest.TestCase):
   for name in A.QUESTION_TOOLS:
    A.write(self.path,{**self.req,'tool_name':name})
    with self.assertRaisesRegex(ValueError,'plans or choices'):D.request(self.path,A.status_key(A.read(self.path)))
+ def test_advice_input_preserves_multiline_shell_semantics_and_names_redacted_context(self):
+  self.owner();command="printf '%s\\n' 'one  two'\nprintf '%s' '$TARGET'"
+  self.req['tool_input']={'command':command,'api_key':'fixture-private'};A.write(self.path,self.req)
+  ticket,_,_=self.request();evidence=D.evidence(ticket['id'],ticket['token'],'assistant')
+  self.assertEqual(evidence['untrusted_request']['tool_input']['command'],command)
+  self.assertEqual(evidence['untrusted_request']['tool_input']['api_key'],'[redacted]')
+  self.assertTrue(evidence['redacted']);self.assertIn('context is incomplete',evidence['limits'])
  def test_click_during_owner_lookup_is_deduped_and_expired_advice_can_be_retried(self):
   self.owner();A.request_context(self.path,'worker');observed=[]
   def lookup(terminal):

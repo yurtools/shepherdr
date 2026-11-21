@@ -1,3 +1,4 @@
+import { BoundedWait, DISPOSED } from "./bounded-wait.js";
 import { openWorkerView } from './task-view.js';
 // What needs the person, from every space and machine: the Tasks panel's "Needs you" (mods/tasks;
 // there is no Inbox panel). Items are derived
@@ -75,37 +76,47 @@ function threadShown(address) {
 
 // ---- the engine (the tab bar runs it) --------------------------------------------------------
 
-let started = false;
+// Weak ownership: an old module can survive hot reload. It must not keep the
+// retired view's wait/continuation alive after the host cancels its tasks.
+let started = null;
 const alerted = new Set(), seenAt = new Map();
 
 export function startInbox(cx) {
-  if (started) return;
-  started = true;
+  if (started?.deref()) return;
+  const wait = new BoundedWait();
+  const timers = [];
+  const engine = { dispose() {
+    if (started?.deref() === engine) started = null;
+    wait.dispose();
+    for (const timer of timers) timer.cancel();
+    timers.length = 0;
+  } };
+  started = new WeakRef(engine);
   cx.spawn(async (cx) => {
     await exec("sh", ["-c", 'mkdir -p "$1/open" "$1/req" "$1/ans"', "x", ASKS()]).catch(() => {});
-    let watch = null;
-    for (;;) {
+    try { for (;;) {
       await flags().catch(() => {});
       await readAsks().catch(() => {});
-      watch ??= watchFolder(`${ASKS()}/req`).catch(() => null).finally(() => { watch = null; });
-      await Promise.race([watch, cx.sleep(4000)]);
-    }
+      const got = await wait.next(cx, `${ASKS()}/req`, () => watchFolder(`${ASKS()}/req`), 4000, () => null);
+      if (got === DISPOSED) return;
+    } } finally { engine.dispose(); }
   });
   cx.spawn(async () => { await readTasks().catch(() => {}); });
   // Agents' alerts (herdr-task alert): labels, so no program to run; a look each second.
-  cx.timer.every(1000, () => agentAlerts());
-  cx.timer.every(20000, (cx) => cx.spawn(async () => { await readTasks().catch(() => {}); }));
+  timers.push(cx.timer.every(1000, () => agentAlerts()));
+  timers.push(cx.timer.every(20000, (cx) => cx.spawn(async () => { await readTasks().catch(() => {}); })));
   // A thread asked for (shared "chat.threadreq") that no coordinator chat took within 1.5 s
   // (none open in that space, or it shows its terminal): go to the worker itself instead.
   let fellBack = null;
-  cx.timer.every(500, () => {
+  timers.push(cx.timer.every(500, () => {
     const q = shared("chat.threadreq");
     if (!q?.terminal || q.at === fellBack || shared("chat.threadack") === q.at) return;
     const age = Date.now() - q.at;
     if (age < 1500 || age > 6000) return;
     fellBack = q.at;
     toAgent(q.terminal);
-  });
+  }));
+  return engine;
 }
 
 // Touches the hook's flag for every Claude agent here that isn't on screen as a terminal.

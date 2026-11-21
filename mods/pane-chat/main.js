@@ -95,15 +95,10 @@ export default class Pane extends View {
     // it would swap straight back. Toggles go to copies at least 2 s old, one swap per 3 s.
     this.born = Date.now();
     // "pane-chat.toggle" (a key, or `herdr-app do`): the focused pane switches.
-    // At most 5 s per wait (one pending nextCommand), so a reload's old build ends at its next
-    // cx use instead of staying in memory.
+    // The host cancels the pending receive when this copy closes or reloads.
     cx.spawn(async (cx) => {
-      let cmd = null;
       for (;;) {
-        cmd ??= nextCommand();
-        const c = await Promise.race([cmd, cx.sleep(5000)]);
-        if (c === undefined) continue;
-        cmd = null;
+        const c = await nextCommand();
         const self = this.me();
         if (!self?.focused) continue;
         if (c === "close-view") { if (companionFor(self.pane)) closeCompanion(self.pane); continue; }

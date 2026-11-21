@@ -1,3 +1,4 @@
+import { BoundedWait, DISPOSED } from "./bounded-wait.js";
 import { Preparation, PreparedHistory, RecentIndex, sortPlan, equal } from "./core/chat-preparation.js";
 import { inReviewScope } from "./core/review.js";
 import {projectFolder} from './project-folder.js';
@@ -265,14 +266,10 @@ export default class Chat extends View {
     if (props()?.panel === true && !_props?.inner) {
       this.host = new PanelHost(Chat, props()?.head === true);
       // pane.go (mod.json "focusable") can land on the header too: it hands the keyboard on to the chat below it (the
-      // body's nested Chat takes "focus" in its own loop). At most 5 s per wait, as the loop below.
+      // body's nested Chat takes "focus" in its own loop).
       if (this.host.head) cx.spawn(async (cx) => {
-        let cmd = null;
         for (;;) {
-          cmd ??= nextCommand();
-          const c = await Promise.race([cmd, cx.sleep(5000)]);
-          if (c === undefined) continue;
-          cmd = null;
+          const c = await nextCommand();
           if (c === "focus") run("pane.go", { direction: "down" });
         }
       });
@@ -546,15 +543,10 @@ export default class Chat extends View {
     });
     if (this.addr) cx.spawn(async (cx) => this.watchAsks(cx));
     // Keys (keys.json "mod:chat") and the header's buttons (pane-chat) for this chat.
-    // At most 5 s per wait (one pending nextCommand), so a reload's old build ends at its next
-    // cx use instead of staying in memory.
+    // The host cancels the pending receive when this copy closes or reloads.
     cx.spawn(async (cx) => {
-      let cmd = null;
       for (;;) {
-        cmd ??= nextCommand();
-        const c = await Promise.race([cmd, cx.sleep(5000)]);
-        if (c === undefined) continue;
-        cmd = null;
+        const c = await nextCommand();
         // From the shell: data/chat-sendreq.json = { pane, text, files? }, then `herdr-app do
         // chat.send` (with fill: true, the words go into the box instead; with thread:
         // { terminal, task, title }, that worker's thread opens beside this chat).
@@ -634,6 +626,7 @@ export default class Chat extends View {
   // asks are released (Codex waits on the hook), so it asks in its terminal instead. Claude's stay
   // on the web's cards: its terminal shows its own prompt meanwhile. A call or a recording ends with it.
   async close(cx) {
+    this.askWait?.dispose(); this.logWait?.dispose(); this.voiceWait?.dispose();
     if (this.host) return this.host.close(cx);
     this.clearHistory(true);
     const cleanup = this.clearLinkedMarkdown(true, cx);
@@ -710,19 +703,22 @@ export default class Chat extends View {
   async watchAsks(cx) {
     if (this.askLoop) return;
     this.askLoop = true;
+    const wait = this.askWait = new BoundedWait();
+    try {
     await exec("sh", ["-c", 'mkdir -p "$1/open" "$1/req" "$1/ans"', "x", this.askDir]).catch(() => {});
     for (;;) {
-      if (!this.addr) { await cx.sleep(3000); continue; }
+      if (!this.addr) { wait.clear(); await cx.sleep(3000); continue; }
       if (this.machine) {
+        wait.clear();
         await this.readRemoteAsks(cx).catch(() => {});
         await cx.sleep(3000);
         continue;
       }
       await this.readAsks(cx);
       // One watch at a time, as for the log.
-      this.askWatch ??= watchFolder(`${this.askDir}/req`).finally(() => { this.askWatch = null; });
-      await Promise.race([this.askWatch, cx.sleep(5000)]);
+      if (await wait.next(cx, this.askDir, () => watchFolder(`${this.askDir}/req`), 5000) === DISPOSED) return;
     }
+    } finally { wait.dispose(); }
   }
 
   // Another machine's agent (SHEP-139): its requests there that still wait (their hook alive),
@@ -1461,8 +1457,9 @@ export default class Chat extends View {
   }
 
   async follow(cx) {
+    const wait = this.logWait = new BoundedWait();
     let last = 0;
-    for (;;) {
+    try { for (;;) {
       try {
         if (!this.path || Date.now() - last > 4000) { last = Date.now(); await this.locate(cx); }
         if (this.phase === "ended" && !this.swapping) {
@@ -1516,12 +1513,12 @@ export default class Chat extends View {
         // Here: wake on the log's folder changing, and look again now and then anyway.
         const dir = this.path.slice(0, this.path.lastIndexOf("/"));
         // One watch at a time: the folder may stay quiet for hours.
-        if (this.watching?.dir !== dir) this.watching = { dir, next: watchFolder(dir).finally(() => { this.watching = null; }) };
-        await Promise.race([this.watching.next, cx.sleep(4000)]);
+        if (await wait.next(cx, dir, () => watchFolder(dir), 4000) === DISPOSED) return;
       } else {
+        wait.clear();
         await cx.sleep(working ? 1500 : 4000);
       }
-    }
+    } } finally { wait.dispose(); }
   }
 
   // ---- sending ------------------------------------------------------------------------------
@@ -2736,10 +2733,12 @@ export default class Chat extends View {
   }
 
   async followCall(cx) {
+    this.voiceWait?.dispose();
+    const wait = this.voiceWait = new BoundedWait();
     const dir = this.callDir;
     const call = this.call;
     let touched = 0, lastStatus = null, seen = new Set((this.conv?.items ?? []).map((x) => x.id));
-    while (this.call === call) {
+    try { while (this.call === call) {
       const s = await readTextFile(`${dir}/state.json`).catch(() => null);
       let st = null;
       try { st = JSON.parse(s ?? "null"); } catch {}
@@ -2779,17 +2778,12 @@ export default class Chat extends View {
         if (fresh.length) { this.callSay({ type: "reply", text: fresh.slice(-2).map((x) => x.text).join("\n\n") }); fresh.forEach((x) => seen.add(x.id)); }
       }
       // One watch at a time (a new one each second would pile up while the folder is quiet).
-      if (this.callWatch?.dir !== dir) {
-        const w = { dir, next: watchFolder(dir).catch(() => null).finally(() => { if (this.callWatch === w) this.callWatch = null; }) };
-        this.callWatch = w;
-      }
-      // What the window shows, for the call's "here"; what the voice agent asked to show.
-      // (the watch kept before awaiting: one that fires meanwhile clears this.callWatch)
-      const woke = this.callWatch.next;
+      // Start watching before callNav: an event arriving during navigation is kept.
+      wait.prepare(dir, () => watchFolder(dir));
       this.callWhere();
       await this.callNav();
-      await Promise.race([woke, cx.sleep(1000)]);
-    }
+      if (await wait.next(cx, dir, () => watchFolder(dir), 1000, () => null) === DISPOSED) return;
+    } } finally { wait.dispose(); }
   }
 
   // What the window shows now, for the voice agent's "here", "this task" (voice.ts reads where.json): the space
@@ -2928,6 +2922,7 @@ export default class Chat extends View {
   }
 
   async hangup() {
+    this.voiceWait?.dispose();
     const call = this.call;
     this.call = null;
     this.callShared();

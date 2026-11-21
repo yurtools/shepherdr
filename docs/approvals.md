@@ -53,9 +53,9 @@ a running Codex process.
 Execution permission cards provide:
 
 - **Allow once / Deny**: answer just this request.
-- **Allow for this task**: remember the exact command (each stage of a supported
-  pipeline) for this task/session for 24 hours and answer when covered.
-- **Create rule…**: choose a command/stage or a named tool, match, scope, lifetime,
+- **Allow for this task**: remember each component of a supported command
+  chain for this task/session for 24 hours and answer when covered.
+- **Create rule…**: choose a component command or a named tool, match, scope, lifetime,
   and allow or deny. **Forever** follows **1 year** in the lifetime choices.
 - **Ask Assistant**: delegate this request once, without changing global defaults.
 - **Advice**: ask the owning Assistant for an explanation while keeping the
@@ -75,11 +75,32 @@ reported**; they do not claim Codex allowed or denied the action.
 Prefixes match parsed argument tokens. For example, `git status` matches
 `git status --short`, not `git statusx`. Literal assignments stay part of the
 prefix: `GIT_TERMINAL_PROMPT=0 git` does not match a different value or bare `git`.
-Suggestions retain the executable/subcommand behind assignments and literal
-timeouts, such as `timeout 50s hc wait`. A timeout-only prefix, or a prefix that
-grants arbitrary shell/interpreter execution behind a wrapper, is refused.
+You can edit the suggestion down to one literal executable, including `tail`,
+`jq`, `rg`, `herdr-browser` or another ordinary command. Its arguments, options
+and targets may vary; executable-only rules do not promise read-only behavior.
+`tail` does not match `tailx`, `/other/tail` or a different tool namespace.
+The editor previews coverage, explains invalid input, and keeps scope and lifetime
+visible before saving. Exact command and exact task-payload choices stay separate.
+
+Suggestions retain the executable/subcommand behind literal assignments,
+`env` assignments (with optional `--`) and literal timeouts, such as
+`timeout 50s hc wait`. These wrappers and their literal values stay in the rule.
+A wrapper-only prefix, or a prefix that grants arbitrary shell/interpreter
+execution behind a wrapper, is refused. Other wrapper options require an exact
+action or a new request with a supported shape; they are not silently stripped.
 Matching deny rules take precedence over allow rules. Plans and product-choice
 questions never receive execution grants and still need their own answer.
+
+Simple `$NAME` and `${NAME}` references in later arguments do not hide a known
+literal executable. For example, `tail "$LOG"` can suggest a `tail` prefix and
+`herdr-browser open "$URL"` can suggest `herdr-browser open`. Parsing never runs
+or expands the input. Quoted filters, scripts, URLs and escaped or single-quoted
+dollar and pipe characters remain literal arguments. A dynamic executable,
+dynamic leading assignment or unresolved wrapper has its own rejection reason.
+If unknown arguments could match a relevant saved deny, automatic approval and
+Assistant delegation stop with an explanation. Unquoted variables may change
+argument count, so matching those denies is conservative. A deny for a provably
+different executable or outside the original scope does not block the request.
 
 | Scope | Boundary |
 | --- | --- |
@@ -129,28 +150,51 @@ files intact; expired records still cannot match. An unreadable rule/settings
 store leaves the request with the person and a policy-error explanation, rather
 than delegating around potentially unseen denies.
 
-## Pipelines
+## Command chains and pipelines
 
-For an ordinary `|` pipeline, every stage needs an applicable allow before the
-request can be approved automatically. A deny on any stage wins, even when an
-earlier stage has no match. Otherwise unmatched stages use the configured
-manual, Assistant or native-review fallback. The card identifies the first
-unmatched stage; **Create rule…** selects a stage and saves only its command or
-prefix. Saving one stage leaves the request waiting if another is uncovered.
-Allow once and explicit Assistant decisions can answer the complete request.
-History records stage creation as **Rule saved**. The complete request gets an
+Literal `|` and stderr `|&` pipelines, conditional `&&` and `||` chains,
+sequential `;` commands and newline-separated commands are supported. Operators
+inside quotes or escaped with a backslash remain argument characters. Blank
+lines, a trailing `;` or newline, and a newline between `&&`, `||`, `|` or `|&`
+and its next command are valid. A trailing binary operator, empty component or
+malformed chain cannot be covered.
+
+Every component command needs an applicable allow before the complete request
+can be approved automatically. A deny on any command or conditional branch wins,
+even when shell short-circuiting might skip it, or an earlier command has no match.
+The parser retains operator order; approval checks every branch rather than
+predicting execution or evaluating precedence. Otherwise unmatched commands use
+the configured manual, Assistant or native-review fallback. The card identifies
+the first unmatched command. **Create rule…** selects a component and saves only
+its exact command or prefix. Saving `tail` leaves `curl` uncovered in every chain
+form. Allow once and explicit Assistant decisions still concern the whole request.
+
+History records rule creation as **Rule saved**. The complete request gets an
 allow/deny entry only after that answer wins the exclusive claim. A task grant
 that encounters a matching deny reports the denial rather than an allowed toast.
+History-created future rules retain the original command components and operator
+order; they never replay the old chain.
 
-Quoted and escaped pipes inside arguments are literal. Supported `sh`, `bash`
-and `zsh` `-c`/`-lc` wrappers are parsed without running them. Empty/malformed
-stages, `||`, `&&`, `;`, substitutions, redirections, expansions and other
-unsupported syntax cannot become stage-prefix grants. Pipelines containing
-such syntax require Allow once or review. A legacy exact payload for a whole
-pipeline cannot bypass stage checks. Unrelated exact non-pipeline payload rules
-(for example a specific test command with output redirection) retain their
-narrow match. Derived arguments are used only for matching; request payloads,
-keys, review tickets and the exclusive answer claim retain the original request.
+Supported literal `sh`, `bash` and `zsh` `-c`/`-lc` wrappers are parsed without
+running them. Grouping/subshells, control flow, background `&`, substitutions,
+redirections, complex parameter expansion, globs, CR and escaped line
+continuations remain explicit unsupported boundaries. Nested multi-command shell
+wrappers within an outer chain remain unsupported because they change grouping.
+When a complete literal prefix precedes such a boundary, **Save rule for future
+requests** can remember it. The editor explains the boundary; that prefix alone
+cannot answer the original complex request. Parsing stops at the first unsupported
+boundary and does not guess later actions. Saving a partial rule does not start
+Assistant review. Use Allow once or Ask Assistant to decide the full request.
+
+A whole-chain allow payload hash, including an older stored hash, cannot bypass
+component checks. Exact whole-request denies keep their original scope, tool and
+action identity and take precedence over component allows. Existing fully literal exact argument rules still match when
+wrapper options prevent offering a reusable prefix, such as `env -u FOO tail file`
+or `timeout -k 2s 5s tail file`. Those options are not stripped into a broad grant.
+Unrelated exact non-chain payload rules (for example a specific test command with
+output redirection) retain their narrow match. Derived arguments are used only
+for matching; request payloads, keys, review tickets and the exclusive answer claim
+retain the original request.
 
 ## Named tools
 
@@ -160,7 +204,12 @@ explicitly to allow or deny every input variant of that exact tool identity,
 then select any scope and lifetime, including Global and Forever. The form shows
 both its readable name and full namespace-qualified identity. Other names and
 namespaces do not match. A non-shell tool's `input.command` field is never treated
-as Bash. Shell tools cannot receive a tool-wide grant.
+as Bash. Browser CLI invocations through shell tools keep that shell tool's
+identity and parsed CLI prefix. A named browser tool keeps its own namespace;
+its command field is displayed as tool data, and its exact payload remains the
+default narrow choice. Only an explicit **This tool · any arguments** selection
+grants every command/input variant of that named tool. Shell tools cannot receive
+a tool-wide grant.
 
 **Exact payload for this task** remains the separate narrow choice: it hashes the
 tool and complete input, retains the original task/session/account/folder, and
@@ -260,10 +309,12 @@ Allow for this task remembers a simple command as before. For a script, compound
 command or non-shell execution request it can instead remember a hash of the exact
 tool and complete input payload, scoped to the original task/session, account and
 folder. A different payload is a new request. This does not grant arbitrary scripts.
-Create rule offers the exact task payload for non-pipeline scripts and the
-explicit named-tool option for non-shell tools. Prefix rules never broaden to
-shell scripts. Unsupported pipeline syntax disables saving a rule; decide once
-or ask for review instead.
+Create rule offers the exact task payload for non-chain scripts and the
+explicit named-tool option for non-shell tools. A prefix covers only its literal
+tokens and permitted argument variants, never an uncovered shell action. For
+unsupported syntax, a known literal prefix can still be saved for future matches;
+the complete action needs its own decision. Dynamic command components cannot use a
+whole-chain exact payload to bypass component checks.
 
 Ask Assistant reviews the complete request independently of whether it can become
 a command-prefix rule. Workers belonging to a named feature route that review to
@@ -278,7 +329,7 @@ shown as **Sent for review**, with **final result not reported**; it is not reco
 as an allow or deny because Codex owns that final decision.
 
 Use **Create rule…** beside a history entry to review its command, original account
-and folder, then choose a command/stage or named-tool match, scope, lifetime and
+and folder, then choose a component command or named-tool match, scope, lifetime and
 allow/deny decision.
 **Save rule for future requests** creates only a future rule. It never replays or
 answers the old request. Exact script/payload matches keep the original
@@ -294,7 +345,7 @@ The policy helper, task package, native controls and shared status readers must
 be installed together from a compatible build. Old scoped records and dated
 expiries remain readable. Older builds do not understand the new Global and
 tool-wide match kinds; do not apply them with a mixed-version installation.
-The web chat reads stage status but rule creation/management remains in the
+The web chat reads command coverage status but rule creation/management remains in the
 native Approvals dialog. Linked machines keep their own local rules and hooks.
 
 An explicit inventory migration is separate from installation. Before running

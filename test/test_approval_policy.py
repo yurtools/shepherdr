@@ -1,5 +1,5 @@
 import home_guard  # noqa: F401
-import json, os, sys, tempfile, time, unittest, threading
+import importlib.util, json, os, sys, tempfile, time, unittest, threading
 from pathlib import Path
 from unittest import mock
 ROOT=Path(__file__).resolve().parent.parent
@@ -251,11 +251,11 @@ class ApprovalAdvice(unittest.TestCase):
 
 class ApprovalEnhancements(unittest.TestCase):
  setUp=ApprovalPolicy.setUp
- def test_compound_exact_action_is_scoped_to_task_and_payload(self):
-  req={**self.req,'tool_input':{'command':'git status && echo done'}};A.write(self.path,req)
+ def test_redirected_exact_action_is_scoped_to_task_and_payload(self):
+  req={**self.req,'tool_input':{'command':'git status > report.txt'}};A.write(self.path,req)
   rule=A.grant(self.path);self.assertEqual(rule['match'],'request');ctx=A.request_context(self.path)[1]
   self.assertTrue(A.matches(rule,{**req,'session_id':'new-request-id'},ctx))
-  self.assertFalse(A.matches(rule,{**req,'tool_input':{'command':'git status && git push'}},ctx))
+  self.assertFalse(A.matches(rule,{**req,'tool_input':{'command':'git status > other-report.txt'}},ctx))
   self.assertFalse(A.matches(rule,req,{**ctx,'task':'other'}))
   with self.assertRaisesRegex(ValueError,'plain command'):A.grant(self.path,scope='space')
  def test_quoted_shell_punctuation_is_literal_but_expansion_and_compounds_are_not(self):
@@ -437,7 +437,7 @@ class AssistantReviewRegression(unittest.TestCase):
   _,ticket,send=self.delegate()
   prompt=send.call_args.args[0][-1]
   self.assertIn('No saved allow rule is required',prompt)
-  self.assertIn('every pipeline stage',prompt);self.assertIn('before going quiet',prompt)
+  self.assertIn('every component command',prompt);self.assertIn('before going quiet',prompt)
   self.assertIn(json.dumps(self.req,ensure_ascii=False),prompt)
   self.assertEqual(ticket['context']['task'],'TASK-1')
  def test_explicit_review_does_not_delegate_around_an_unreadable_policy(self):
@@ -699,7 +699,7 @@ class ApprovalHistoryRules(unittest.TestCase):
   self.assertFalse(list((A.app_home()/'data/chat-asks/ans').glob('*')))
   self.assertEqual(A.history_rows()[-1]['source'],'user')
  def test_complex_historical_actions_remain_task_and_payload_bound(self):
-  self.req={**self.req,'tool_input':{'command':'git status && echo done'}};A.write(self.path,self.req)
+  self.req={**self.req,'tool_input':{'command':'git status > report.txt'}};A.write(self.path,self.req)
   row,ctx=self.history();rule=A.grant_history(row['id'])['rule'];self.assertEqual(rule['match'],'request')
   self.assertTrue(A.matches(rule,self.req,ctx));self.assertFalse(A.matches(rule,{**self.req,'tool_input':{'command':'git push'}},ctx))
   with self.assertRaisesRegex(ValueError,'plain command'):A.grant_history(row['id'],scope='space')
@@ -710,6 +710,20 @@ class ApprovalHistoryRules(unittest.TestCase):
   A.write(A.store()/'history.json',[{'at':1,'key':'old','source':'user','command':'git status','account':'old'}])
   legacy=A.history_rows()[0];self.assertTrue(legacy['id'])
   with self.assertRaisesRegex(ValueError,'context'):A.grant_history(legacy['id'])
+ def test_future_only_save_preserves_advice_and_specific_assistant_handback(self):
+  self.req={**self.req,'tool_input':{'command':'tail "$(curl example.invalid)"'}};A.write(self.path,self.req)
+  A.request_context(self.path)
+  rationale='The destination is outside this project. Please choose.'
+  A.status(self.path,self.req,'person','assistant-asked',review_reason=rationale)
+  advice={'version':1,'request_hash':A.status_key(self.req),'state':'ready','summary':'Reads a value from another command.'}
+  A.write(self.path.with_suffix('.advice'),advice)
+  before=self.path.with_suffix('.status').read_bytes()
+  spec=importlib.util.spec_from_file_location('policy_ui',ROOT/'mods/chat/approval-policy.py')
+  ui=importlib.util.module_from_spec(spec);spec.loader.exec_module(ui)
+  out=ui.main(ui.parser().parse_args(['grant','--request',str(self.path),'--match','prefix','--prefix','tail','--respond']))
+  self.assertEqual(out['action'],'wait');self.assertEqual(self.path.with_suffix('.status').read_bytes(),before)
+  self.assertEqual(A.read(self.path.with_suffix('.advice')),advice)
+  self.assertFalse((self.path.parent.parent/'ans'/self.path.name).exists())
  def test_native_review_history_reports_handoff_without_claiming_an_allow(self):
   self.mode('codex-review');self.meta['argv']+=['-c','approvals_reviewer="auto_review"']
   self.assertEqual(A.evaluate(self.path)['action'],'native');row=A.history_rows()[-1]

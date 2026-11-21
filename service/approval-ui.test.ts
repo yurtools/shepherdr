@@ -59,6 +59,15 @@ test('native permission strips keep visible status, distinct icons and manual ke
   expect(cards.strips({id:'product-choice',req,words:words(req)}).flatMap((s:any)=>s.ctls??[]).some((c:any)=>c.label==='Advice')).toBe(false);
  }
 });
+test('native cards show partial coverage and unresolved deny reasons with ordinary decisions available',()=>{
+ const req={tool_name:'Bash',tool_input:{command:'tail "$FILE"'}},cards=new AskCards({reply(){}},{});
+ for(const reason of ['rule-partial','deny-uncertain']){
+  const approval=permissionStatus(req,{version:1,request_hash:requestHash(req),state:'person',reason});
+  const strips:any[]=cards.strips({id:'fixture',req,words:words(req),approval});
+  expect(strips.find(s=>s.key==='status-detail').text).toContain(reason==='rule-partial'?'future matches':'may match a saved deny');
+  expect(strips.find(s=>s.key==='actions').ctls.filter((c:any)=>['Allow once','Deny'].includes(c.label)).every((c:any)=>!c.disabled)).toBe(true);
+ }
+});
 test('Advice binds the original hash and keeps Allow Deny and Ask Assistant available while pending',async()=>{
  const req={session_id:'original',tool_name:'Bash',tool_input:{command:'cp report /tmp/report'}},id='worker.123.4',hash=requestHash(req),replies:any[]=[];
  const metadata={version:1,request_hash:hash,state:'person',reason:'assistant-asked',review_reason:'This writes outside the project.'};

@@ -1,3 +1,4 @@
+import { openWorkerView } from './task-view.js';
 // What needs the person, from every space and machine: the Tasks panel's "Needs you" (mods/tasks;
 // there is no Inbox panel). Items are derived
 // each time from what is there now and never stored, so they go once handled:
@@ -194,10 +195,7 @@ export function toAlert(args) {
   if (!terminal) return;
   const k = terminals().find((x) => x.address === terminal);
   if (k?.labels?.["herdr.task"] && hasNode(layout(), "tasks-thread")) {
-    setShared("tasks.thread", { terminal, task: null, title: agentInfo(terminal)?.title ?? null, at: Date.now() });
-    run("layout.select", { stack: "panel-body", child: "tasks" });
-    run("layout.select", { stack: "tasks", child: "tasks-thread" });
-    run("layout.show", { id: "panel" });
+    openWorkerView({ terminal, task: null, title: agentInfo(terminal)?.title ?? null });
     return;
   }
   toAgent(terminal);
@@ -403,11 +401,7 @@ export function toAgent(address) {
 const hasNode = (n, id) => Boolean(n && typeof n === "object") && (n.id === id || (n.children ?? []).some((c) => hasNode(c, id)));
 export function peekTerminal(terminal, task = null, title = null) {
   if (!hasNode(layout(), "tasks-thread")) { run("terminal.peek", { terminal }); return; }
-  setShared("tasks.thread", { terminal, task, title: title ?? agentInfo(terminal)?.title ?? null, at: Date.now() });
-  run("layout.select", { stack: "panel-body", child: "tasks" });
-  run("layout.select", { stack: "tasks", child: "tasks-thread" });
-  run("layout.show", { id: "panel" });
-  setShared("tasks.thread.termreq", { terminal, at: Date.now() });
+  openWorkerView({ terminal, task, title: title ?? agentInfo(terminal)?.title ?? null }, { mode: 'terminal' });
 }
 
 function selectTab(tab) {

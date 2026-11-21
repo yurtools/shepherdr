@@ -75,11 +75,32 @@ reported**; they do not claim Codex allowed or denied the action.
 Prefixes match parsed argument tokens. For example, `git status` matches
 `git status --short`, not `git statusx`. Literal assignments stay part of the
 prefix: `GIT_TERMINAL_PROMPT=0 git` does not match a different value or bare `git`.
-Suggestions retain the executable/subcommand behind assignments and literal
-timeouts, such as `timeout 50s hc wait`. A timeout-only prefix, or a prefix that
-grants arbitrary shell/interpreter execution behind a wrapper, is refused.
+You can edit the suggestion down to one literal executable, including `tail`,
+`jq`, `rg`, `herdr-browser` or another ordinary command. Its arguments, options
+and targets may vary; executable-only rules do not promise read-only behavior.
+`tail` does not match `tailx`, `/other/tail` or a different tool namespace.
+The editor previews coverage, explains invalid input, and keeps scope and lifetime
+visible before saving. Exact command and exact task-payload choices stay separate.
+
+Suggestions retain the executable/subcommand behind literal assignments,
+`env` assignments (with optional `--`) and literal timeouts, such as
+`timeout 50s hc wait`. These wrappers and their literal values stay in the rule.
+A wrapper-only prefix, or a prefix that grants arbitrary shell/interpreter
+execution behind a wrapper, is refused. Other wrapper options require an exact
+action or a new request with a supported shape; they are not silently stripped.
 Matching deny rules take precedence over allow rules. Plans and product-choice
 questions never receive execution grants and still need their own answer.
+
+Simple `$NAME` and `${NAME}` references in later arguments do not hide a known
+literal executable. For example, `tail "$LOG"` can suggest a `tail` prefix and
+`herdr-browser open "$URL"` can suggest `herdr-browser open`. Parsing never runs
+or expands the input. Quoted filters, scripts, URLs and escaped or single-quoted
+dollar and pipe characters remain literal arguments. A dynamic executable,
+dynamic leading assignment or unresolved wrapper has its own rejection reason.
+If unknown arguments could match a relevant saved deny, automatic approval and
+Assistant delegation stop with an explanation. Unquoted variables may change
+argument count, so matching those denies is conservative. A deny for a provably
+different executable or outside the original scope does not block the request.
 
 | Scope | Boundary |
 | --- | --- |
@@ -144,9 +165,15 @@ that encounters a matching deny reports the denial rather than an allowed toast.
 
 Quoted and escaped pipes inside arguments are literal. Supported `sh`, `bash`
 and `zsh` `-c`/`-lc` wrappers are parsed without running them. Empty/malformed
-stages, `||`, `&&`, `;`, substitutions, redirections, expansions and other
-unsupported syntax cannot become stage-prefix grants. Pipelines containing
-such syntax require Allow once or review. A legacy exact payload for a whole
+stages, `||`, `&&`, `;`, substitutions, redirections, complex parameter expansion,
+globs and other unsupported syntax cannot be approved by matching their visible
+command heads. When a complete literal prefix precedes that boundary, **Save rule
+for future requests** can remember it. The editor explains the boundary, and the
+original request stays waiting unless its complete action is independently
+covered or a saved deny answers it. Parsing stops at the first unsupported
+boundary; later commands are not guessed. Saving a partial rule does not start
+Assistant review. Use Allow once or Ask Assistant to decide the full request.
+A legacy exact payload for a whole
 pipeline cannot bypass stage checks. Unrelated exact non-pipeline payload rules
 (for example a specific test command with output redirection) retain their
 narrow match. Derived arguments are used only for matching; request payloads,
@@ -160,7 +187,12 @@ explicitly to allow or deny every input variant of that exact tool identity,
 then select any scope and lifetime, including Global and Forever. The form shows
 both its readable name and full namespace-qualified identity. Other names and
 namespaces do not match. A non-shell tool's `input.command` field is never treated
-as Bash. Shell tools cannot receive a tool-wide grant.
+as Bash. Browser CLI invocations through shell tools keep that shell tool's
+identity and parsed CLI prefix. A named browser tool keeps its own namespace;
+its command field is displayed as tool data, and its exact payload remains the
+default narrow choice. Only an explicit **This tool · any arguments** selection
+grants every command/input variant of that named tool. Shell tools cannot receive
+a tool-wide grant.
 
 **Exact payload for this task** remains the separate narrow choice: it hashes the
 tool and complete input, retains the original task/session/account/folder, and
@@ -261,9 +293,11 @@ command or non-shell execution request it can instead remember a hash of the exa
 tool and complete input payload, scoped to the original task/session, account and
 folder. A different payload is a new request. This does not grant arbitrary scripts.
 Create rule offers the exact task payload for non-pipeline scripts and the
-explicit named-tool option for non-shell tools. Prefix rules never broaden to
-shell scripts. Unsupported pipeline syntax disables saving a rule; decide once
-or ask for review instead.
+explicit named-tool option for non-shell tools. A prefix covers only its literal
+tokens and permitted argument variants, never an uncovered shell action. For
+unsupported syntax, a known literal prefix can still be saved for future matches;
+the complete action needs its own decision. Dynamic pipeline stages cannot use a
+whole-pipeline exact payload to bypass the stage checks.
 
 Ask Assistant reviews the complete request independently of whether it can become
 a command-prefix rule. Workers belonging to a named feature route that review to

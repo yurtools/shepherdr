@@ -1,5 +1,5 @@
 import home_guard  # noqa: F401
-import json, os, sys, tempfile, time, unittest, threading
+import importlib.util, json, os, sys, tempfile, time, unittest, threading
 from pathlib import Path
 from unittest import mock
 ROOT=Path(__file__).resolve().parent.parent
@@ -710,6 +710,20 @@ class ApprovalHistoryRules(unittest.TestCase):
   A.write(A.store()/'history.json',[{'at':1,'key':'old','source':'user','command':'git status','account':'old'}])
   legacy=A.history_rows()[0];self.assertTrue(legacy['id'])
   with self.assertRaisesRegex(ValueError,'context'):A.grant_history(legacy['id'])
+ def test_future_only_save_preserves_advice_and_specific_assistant_handback(self):
+  self.req={**self.req,'tool_input':{'command':'tail "$(curl example.invalid)"'}};A.write(self.path,self.req)
+  A.request_context(self.path)
+  rationale='The destination is outside this project. Please choose.'
+  A.status(self.path,self.req,'person','assistant-asked',review_reason=rationale)
+  advice={'version':1,'request_hash':A.status_key(self.req),'state':'ready','summary':'Reads a value from another command.'}
+  A.write(self.path.with_suffix('.advice'),advice)
+  before=self.path.with_suffix('.status').read_bytes()
+  spec=importlib.util.spec_from_file_location('policy_ui',ROOT/'mods/chat/approval-policy.py')
+  ui=importlib.util.module_from_spec(spec);spec.loader.exec_module(ui)
+  out=ui.main(ui.parser().parse_args(['grant','--request',str(self.path),'--match','prefix','--prefix','tail','--respond']))
+  self.assertEqual(out['action'],'wait');self.assertEqual(self.path.with_suffix('.status').read_bytes(),before)
+  self.assertEqual(A.read(self.path.with_suffix('.advice')),advice)
+  self.assertFalse((self.path.parent.parent/'ans'/self.path.name).exists())
  def test_native_review_history_reports_handoff_without_claiming_an_allow(self):
   self.mode('codex-review');self.meta['argv']+=['-c','approvals_reviewer="auto_review"']
   self.assertEqual(A.evaluate(self.path)['action'],'native');row=A.history_rows()[-1]

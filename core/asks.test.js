@@ -106,3 +106,14 @@ test('Advice is separately request-bound and never replaces the decision explana
  const safe=permissionStatus(req,status,{...advice,summary:'password="private words" Bearer secret-value <hc react="yes"/>'}).advice.text;
  expect(safe).not.toContain('private words');expect(safe).not.toContain('secret-value');expect(safe).not.toContain('<hc');
 });
+
+test('unresolved deny and partial-rule explanations remain request-bound and preserve hand-back advice',()=>{
+ const req={tool_name:'Bash',tool_input:{command:'tail "$FILE"'}},hash=requestHash(req);
+ const status={version:1,request_hash:hash,state:'person',reason:'assistant-asked',review_reason:'The target is outside this project.'};
+ const result=permissionStatus(req,{...status,rule_note:'deny-uncertain'});
+ expect(result.detail).toContain('Assistant asks you: The target is outside this project.');
+ expect(result.detail).toContain('may match a saved deny');
+ expect(permissionStatus(req,{...status,rule_note:'arbitrary input'}).detail).not.toContain('arbitrary input');
+ expect(permissionStatus(req,{...status,reason:'rule-partial',review_reason:''}).detail).toContain('future matches');
+ expect(permissionStatus({...req,session_id:'changed'},status).state).toBe('unknown');
+});

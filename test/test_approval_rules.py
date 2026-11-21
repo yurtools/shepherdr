@@ -218,8 +218,9 @@ class PipelineRules(unittest.TestCase):
    self.assertTrue(A.matches(rule,self.command(f'timeout {duration} hc wait other'),ctx))
    self.assertFalse(A.matches(rule,self.command(f'timeout {duration} hc kill other'),ctx))
    self.command(command)
-   for prefix in (f'timeout {duration}',f'timeout {duration} hc'):
+   for prefix in (f'timeout {duration}',):
     with self.assertRaisesRegex(ValueError,'arbitrary'):A.grant(self.path,match='prefix',prefix=prefix)
+   self.assertEqual(A.grant(self.path,match='prefix',prefix=f'timeout {duration} hc')['pattern'],['timeout',duration,'hc'])
   self.command('GIT_TERMINAL_PROMPT=0 git status')
   self.assertEqual(self.cli('inspect','--request',str(self.path))['suggested_prefix'],'GIT_TERMINAL_PROMPT=0 git status')
   for command,prefix in [('timeout 50s bash -c true','timeout 50s bash'),('X=1 timeout 50s python3 -c pass','X=1 timeout 50s python3 -c'),("bash -lc 'timeout 50s node -e 0'",'timeout 50s node -e'),('timeout 50s sudo sh -c true','timeout 50s sudo sh'),('X=1 python3.12 -c pass','X=1 python3.12 -c')]:
@@ -402,5 +403,26 @@ class FlexiblePrefixes(unittest.TestCase):
   (self.path.parent.parent/'ans'/self.path.name).unlink();self.command('tail other-file')
   with self.assertRaisesRegex(ValueError,'changed'):self.cli('grant','--request',str(self.path),'--match','prefix','--prefix','tail','--hash',key)
   self.assertFalse((A.store()/'rules.json').exists())
+ def test_unresolved_arguments_cannot_bypass_a_relevant_scoped_deny(self):
+  self.command('tail /restricted/file');ctx=A.request_context(self.path)[1]
+  allow=A.grant(self.path,scope='global',match='prefix',prefix='tail')
+  for match in ('exact','prefix'):
+   self.command('tail /restricted/file')
+   deny=A.grant(self.path,scope='space',match=match,prefix='tail /restricted/file',decision='deny')
+   for command in ('tail "$FILE"','tail $ARGS','tail $ARGS /restricted/file'):
+    self.command(command);out=A.evaluate(self.path)
+    self.assertEqual(out['action'],'wait',command)
+    self.assertIn('deny',out['reason'].lower())
+    self.assertEqual(A.read(self.path.with_suffix('.status'))['reason'],'deny-uncertain')
+    with mock.patch.object(A,'review_ticket',side_effect=AssertionError('must not delegate around deny')):
+     self.mode('assistant');self.assertEqual(A.evaluate(self.path)['action'],'wait')
+   self.command('tail /public/file');self.assertEqual(A.evaluate(self.path)['action'],'allow')
+   # A different command identity, account or folder cannot make this deny relevant.
+   self.command('jq "$FILTER"');A.grant(self.path,match='prefix',prefix='jq')
+   self.assertEqual(A.evaluate(self.path)['action'],'allow')
+   self.command('tail "$FILE"')
+   for other in ({**deny,'account':'other'},{**deny,'cwd':ctx['cwd']+'-sibling'},{**deny,'tool':'other.Bash'}):
+    self.assertEqual(A.matching_decision([allow,other],A.read(self.path),ctx)[0]['action'],'allow')
+   A.write(A.store()/'rules.json',[allow])
 
 if __name__=='__main__':unittest.main()

@@ -11,7 +11,7 @@ except ImportError:
  sys.path.insert(0,os.path.realpath(entry));from herdr_task import approvals as A
 
 def parser():
- p=argparse.ArgumentParser();p.add_argument('command',choices=['advice','advice-input','advise','evaluate','answer','status-error','inspect','grant','history-inspect','history-grant','list','history','revoke','clear-history','review','review-input','decide','launch','override','record'])
+ p=argparse.ArgumentParser();p.add_argument('command',choices=['advice','advice-input','advise','evaluate','answer','status-error','inspect','preview','grant','history-inspect','history-preview','history-grant','list','history','revoke','clear-history','review','review-input','decide','launch','override','record'])
  p.add_argument('--summary',default='');p.add_argument('--detail',default='')
  p.add_argument('--request');p.add_argument('--terminal');p.add_argument('--space',default='');p.add_argument('--role',default='agent');p.add_argument('--cwd',default='')
  p.add_argument('--scope',choices=['task','space','account','global'],default='task');p.add_argument('--match',choices=['exact','prefix','tool'],default='exact');p.add_argument('--prefix');p.add_argument('--hours',type=float,default=1);p.add_argument('--stage',type=int)
@@ -25,6 +25,7 @@ def main(a):
   if a.command=='advice-input':return advice.evidence(a.id,a.token)
   return advice.submit(a.id,a.token,a.summary,a.detail)
  if a.command=='history-inspect':return A.history_inspect(a.id)
+ if a.command=='history-preview':return A.preview_rule(A.history_inspect(a.id),a.match,a.prefix,a.stage)
  if a.command=='history-grant':return A.grant_history(a.id,a.scope,a.match,a.prefix,a.hours,a.decision,a.stage)
  if a.command=='status-error':
   req=A.read(a.request)
@@ -52,39 +53,39 @@ def main(a):
     except (ValueError,OSError):pass
    return {'action':'answered'}
   return out
- if a.command=='inspect':
-  req,ctx=A.request_context(a.request,a.terminal)
-  return {**A.inspect_request(req,ctx),'settings':A.settings(ctx)}
+ if a.command in ('inspect','preview'):
+  req,ctx=A.pending_request(a.request,a.terminal,a.hash)
+  info=A.inspect_request(req,ctx)
+  return A.preview_rule(info,a.match,a.prefix,a.stage) if a.command=='preview' else {**info,'settings':A.settings(ctx)}
  if a.command=='grant':
-  req,ctx=A.request_context(a.request,a.terminal)
-  stages=A.request_stages(req)
-  if a.task_grant:
-   rule=A.grant_task(a.request,a.terminal)
-  else:rule=A.grant(a.request,a.terminal,a.scope,a.match,a.prefix,a.hours,a.decision,a.stage)
-  pipeline=bool(stages and len(stages)>1)
-  result,_=A.matching_decision(A.rules() or [],req,ctx) if pipeline else (None,None)
-  answered=False
-  # Saving one stage never answers for an unmatched stage, including legacy
-  # whole-request rules. The original payload/hash and answer claim stay intact.
+  req,ctx=A.pending_request(a.request,a.terminal,a.hash)
+  if a.task_grant:rule=A.grant_task(a.request,a.terminal)
+  else:rule=A.grant(a.request,a.terminal,a.scope,a.match,a.prefix,a.hours,a.decision,a.stage,a.hash)
+  # Saving is distinct from answering. Evaluate every action and deny without
+  # delegating the newly saved, potentially partial rule to an Assistant.
+  saved=A.rules()
+  if saved is None:raise ValueError('Approval rules could not be read. The request is still waiting.')
+  result,_=A.matching_decision(saved,req,ctx)
+  covered=result and result['action'] in ('allow','deny');answered=False
   if a.respond:
    fresh=A.read(a.request)
    if not fresh or A.request_key(fresh)!=A.request_key(req):raise ValueError('The request closed or changed before it could be answered.')
-   if not pipeline or result:
-    answer=A.app_home()/'data/chat-asks/ans'/(Path(a.request).stem+'.json')
-    A.answer_once(answer,result['response'] if pipeline else A.response(a.decision,'Saved '+a.scope+' '+a.match+' rule','user-rule')['response'])
-    answered=True
-    if pipeline:
-     # A saved stage is not an answer. Record the complete request's actual
-     # outcome only after winning the same exclusive claim as the hook/person.
-     try:A.audit_result(req,ctx,result)
-     except (OSError,ValueError):pass
+   A.pending_request(a.request,a.terminal,A.status_key(req))
+   if covered:
+    answer=Path(a.request).parent.parent/'ans'/Path(a.request).name
+    A.answer_once(answer,result['response']);answered=True
+    try:A.audit_result(req,ctx,result)
+    except (OSError,ValueError):pass
    else:
-    A.evaluate(a.request,a.terminal,audit_decision=False)
-  if pipeline:
-   action=result['action'] if answered else 'wait' if not result else 'saved'
-   reason='Stage rule saved. Other stages still need approval.' if not result else 'Rules saved. This request was denied by a matching rule.' if answered and action=='deny' else 'All pipeline stages are allowed for this request.' if answered else 'Stage rule saved for future requests.'
-   return {'rule':rule,'action':action,'pending_stages':not result,'reason':reason}
-  return {**rule,'pending_stages':False,'reason':''}
+    old=A.read(Path(a.request).with_suffix('.status')) or {}
+    # A partial save is not a new review outcome. Retain the exact request's
+    # specific hand-back explanation; Advice lives in its separate sidecar.
+    if result or old.get('request_hash')!=A.status_key(req) or old.get('state')!='person':
+     A.waiting(a.request,req,'deny-uncertain' if result else 'rule-partial','Rule saved for future matches. This request still needs your decision.')
+  pending=not covered
+  action=result['action'] if answered else 'wait' if pending else 'saved'
+  reason='Rule saved for future matches. This request is still waiting: '+(result['reason'] if result else A.request_analysis(req)['boundary'] or 'Other stages need approval.') if pending else 'Request denied by a matching saved rule.' if answered and action=='deny' else 'Every action in this request is covered by saved rules.' if answered else 'Rule saved for future requests.'
+  return {**rule,'rule':rule,'action':action,'pending_stages':pending,'reason':reason}
  if a.command=='record':
   req,ctx=A.request_context(a.request,a.terminal);A.audit(req,ctx,a.decision,a.reason,'user');return {'ok':True}
  if a.command=='review':

@@ -299,4 +299,108 @@ class PipelineRules(unittest.TestCase):
   rows=[r for r in A.history_rows() if r['key']==A.request_key(A.read(self.path))]
   self.assertEqual([r['decision'] for r in rows],['saved'])
 
+class FlexiblePrefixes(unittest.TestCase):
+ setUp=fixtures.ApprovalPolicy.setUp
+ mode=fixtures.ApprovalPolicy.mode
+ cli=ExecutionRules.cli
+ command=ExecutionRules.command
+ def test_single_executables_are_deliberate_token_prefixes_with_varying_arguments(self):
+  for executable in ('tail','jq','rg','herdr-browser','agent-browser','custom-program'):
+   with self.subTest(executable=executable):
+    req=self.command(executable+' --version');ctx=A.request_context(self.path)[1]
+    rule=A.grant(self.path,match='prefix',prefix=executable)
+    self.assertEqual(rule['pattern'],[executable])
+    self.assertTrue(A.matches(rule,self.command(executable+' other arguments'),ctx))
+    for other in (executable+'x','/other/'+executable,'unrelated'):
+     self.assertFalse(A.matches(rule,self.command(other+' --version'),ctx))
+    self.assertFalse(A.matches(rule,{**req,'tool_name':'other.Bash'},ctx))
+ def test_later_variables_keep_a_literal_prefix_but_dynamic_executables_do_not(self):
+  for command,prefix in [('tail -n 5 "$LOG"','tail'),('jq "$FILTER" "$FILE"','jq'),
+                         ('herdr-browser open "$URL"','herdr-browser open'),('rg "${QUERY}" src','rg')]:
+   self.command(command);info=self.cli('inspect','--request',str(self.path))
+   self.assertTrue(info['words'],command)
+   out=self.cli('grant','--request',str(self.path),'--match','prefix','--prefix',prefix,'--respond')
+   self.assertEqual(out['action'],'allow',command)
+   (self.path.parent.parent/'ans'/self.path.name).unlink()
+  for command in ('$CMD file','"${BIN}" file','X="$VALUE" tail file','env X="$VALUE" tail file'):
+   self.command(command);info=self.cli('inspect','--request',str(self.path))
+   self.assertFalse(info['words'],command)
+   self.assertRegex(info['boundary'],r'[Dd]ynamic|assignment')
+   with self.assertRaises(ValueError):A.grant(self.path,match='prefix',prefix='tail')
+ def test_literal_quotes_dollars_and_pipes_are_arguments_without_expansion(self):
+  for command,words in [("jq '.x | .y' '$FILE'",['jq','.x | .y','$FILE']),
+                         (r'tail \$FILE', ['tail','$FILE']),('rg "a|b" file',['rg','a|b','file']),
+                         (r'rg "a\qb" file',['rg',r'a\qb','file'])]:
+   self.assertEqual(A.plain_command(command),words)
+   self.command(command);self.assertEqual(A.grant(self.path)['pattern'],words)
+ def test_assignments_and_supported_wrappers_stay_in_the_rule(self):
+  for command,prefix in [('X=1 tail "$FILE"','X=1 tail'),('env X=1 tail "$FILE"','env X=1 tail'),
+                         ('timeout 5s tail "$FILE"','timeout 5s tail')]:
+   self.command(command);rule=A.grant(self.path,match='prefix',prefix=prefix);ctx=A.request_context(self.path)[1]
+   self.assertEqual(rule['pattern'],prefix.split())
+   for other in ('tail file',command.replace('X=1','X=2').replace('5s','6s')):
+    if other!=command:self.assertFalse(A.matches(rule,self.command(other),ctx))
+  for command,prefix in [('timeout 5s sh -c true','timeout 5s sh'),('env X=1 node -e 0','env X=1 node'),
+                         ('python3 -c pass','python3'),('sudo tail file','sudo')]:
+   self.command(command)
+   with self.assertRaisesRegex(ValueError,'arbitrary|wrapper'):A.grant(self.path,match='prefix',prefix=prefix)
+ def test_future_prefix_saves_do_not_answer_substitutions_redirection_or_extra_commands(self):
+  for suffix in ('"$(curl example.invalid)"','`curl example.invalid`','file > output','file && curl example.invalid',
+                 'file; sh script','file || curl example.invalid','file <(curl example.invalid)', '"${LOG:=default}"'):
+   with self.subTest(suffix=suffix):
+    req=self.command('tail '+suffix);info=self.cli('inspect','--request',str(self.path))
+    self.assertEqual(info['words'],['tail'] if suffix[0] in ('"','`') else ['tail','file'])
+    self.assertTrue(info['future_only']);self.assertTrue(info['boundary'])
+    out=self.cli('grant','--request',str(self.path),'--match','prefix','--prefix','tail','--respond')
+    self.assertEqual(out['action'],'wait');self.assertTrue(out['pending_stages'])
+    self.assertFalse((self.path.parent.parent/'ans'/self.path.name).exists())
+    self.assertEqual(A.read(self.path),req)
+    self.assertEqual(A.history_rows()[-1]['decision'],'saved')
+    self.assertEqual(A.evaluate(self.path)['action'],'wait')
+    self.command('tail other-file');self.assertEqual(A.evaluate(self.path)['action'],'allow')
+ def test_variable_pipeline_requires_each_stage_and_deny_still_wins(self):
+  req=self.command('tail "$LOG" | curl "$URL"');ctx=A.request_context(self.path)[1]
+  out=self.cli('grant','--request',str(self.path),'--stage','0','--match','prefix','--prefix','tail','--respond')
+  self.assertEqual(out['action'],'wait');self.assertFalse((self.path.parent.parent/'ans'/self.path.name).exists())
+  self.assertFalse(A.matches(out['rule'],req,ctx))
+  out=self.cli('grant','--request',str(self.path),'--stage','1','--match','prefix','--prefix','curl','--decision','deny','--respond')
+  self.assertEqual(out['action'],'deny')
+ def test_browser_tool_command_data_is_not_bash_and_exact_never_becomes_any_tool(self):
+  for tool,input in [('functions.exec_command',{'cmd':'herdr-browser open "$URL"'}),
+                     ('container.exec',{'cmd':['agent-browser','open','https://example.invalid']})]:
+   req={**self.req,'tool_name':tool,'tool_input':input};A.write(self.path,req)
+   rule=A.grant(self.path,match='prefix',prefix='herdr-browser' if 'functions' in tool else 'agent-browser')
+   self.assertEqual(rule['tool'],tool);self.assertEqual(rule['match'],'prefix')
+  req={**self.req,'tool_name':'mcp__browser__run','tool_input':{'command':'open https://example.invalid'}};A.write(self.path,req)
+  info=self.cli('inspect','--request',str(self.path));self.assertFalse(info['words']);self.assertTrue(info['tool_wide'])
+  self.assertIn('open https://example.invalid',info['command'])
+  rule=A.grant(self.path);ctx=A.request_context(self.path)[1]
+  self.assertEqual(rule['match'],'request');self.assertEqual(rule['tool'],req['tool_name'])
+  self.assertFalse(A.matches(rule,{**req,'tool_name':'mcp__other__run'},ctx))
+  self.assertFalse(A.matches(rule,{**req,'tool_input':{'command':'close'}},ctx))
+ def test_preview_validates_shorter_input_and_explains_coverage(self):
+  self.command('tail -n 5 "$FILE"');args=['--request',str(self.path),'--match','prefix','--prefix']
+  preview=self.cli('preview',*args,'tail')
+  self.assertTrue(preview['valid']);self.assertIn('arguments may vary',preview['coverage'])
+  self.assertNotIn('read-only',preview['coverage'])
+  self.assertFalse(self.cli('preview',*args,'tailx')['valid'])
+  self.assertFalse(self.cli('preview',*args,'tail -n 5 "$FILE"')['valid'])
+  self.assertFalse((A.store()/'rules.json').exists())
+ def test_history_future_prefix_uses_original_context_and_does_not_replay(self):
+  req=self.command('tail "$(curl example.invalid)"');ctx=A.request_context(self.path)[1]
+  A.audit(req,ctx,'ask','Waiting','user');row=A.history_rows()[-1];self.path.unlink()
+  with mock.patch.object(A.subprocess,'run',side_effect=AssertionError('must not execute')):
+   out=A.grant_history(row['id'],match='prefix',prefix='tail',scope='space')
+  rule=out['rule'];self.assertEqual(rule['pattern'],['tail']);self.assertEqual(rule['account'],ctx['account'])
+  with A.locked():raw=A.read(A.store()/'rules.json')
+  self.assertEqual(raw,[rule]);self.assertNotIn('inherited',rule)
+  self.assertFalse(list((A.app_home()/'data/chat-asks/ans').glob('*')))
+ def test_closed_or_replaced_request_cannot_save_from_a_stale_editor(self):
+  req=self.command('tail file');key=A.status_key(req)
+  A.answer_once(self.path.parent.parent/'ans'/self.path.name,A.response('deny')['response'])
+  with self.assertRaisesRegex(ValueError,'answered|closed'):self.cli('grant','--request',str(self.path),'--match','prefix','--prefix','tail','--hash',key)
+  (self.path.parent.parent/'ans'/self.path.name).unlink();self.command('tail other-file')
+  with self.assertRaisesRegex(ValueError,'changed'):self.cli('grant','--request',str(self.path),'--match','prefix','--prefix','tail','--hash',key)
+  self.assertFalse((A.store()/'rules.json').exists())
+
 if __name__=='__main__':unittest.main()

@@ -282,13 +282,13 @@ def public_review_reason(reason, req, ticket, limit=400):
  """
  text=re.sub(r'\x1b\[[0-?]*[ -/]*[@-~]|</?hc\b[^>]*>', '[omitted]', str(reason))
  private=[ticket.get('token',''),json.dumps(req,ensure_ascii=False),json.dumps(req.get('tool_input'),ensure_ascii=False)]
- def sensitive(value):
+ def sensitive(value,hidden=False):
   if isinstance(value,dict):
    for key,item in value.items():
-    if re.search(r'(?i)token|password|secret|api[_-]?key|authorization|cookie|credential',key) and isinstance(item,str):private.append(item)
-    else:sensitive(item)
+    sensitive(item,hidden or bool(re.search(r'(?i)token|password|secret|api[_-]?key|authorization|cookie|credential',key)))
   elif isinstance(value,list):
-   for item in value:sensitive(item)
+   for item in value:sensitive(item,hidden)
+  elif hidden and isinstance(value,str):private.append(value)
  sensitive(req.get('tool_input'))
  for value in sorted(filter(None,private),key=len,reverse=True):text=text.replace(value,'[redacted]')
  text=re.sub(r'(?i)\bBearer\s+[^\s,;]+','Bearer [redacted]',text)

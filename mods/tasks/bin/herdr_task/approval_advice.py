@@ -124,13 +124,13 @@ def evidence(ident,token,terminal=None):
  # is disclosed. Authentication/session envelope fields are never returned.
  sensitive=re.compile(r'(?i)token|password|secret|api[_-]?key|authorization|cookie|credential')
  private=[ticket['token']];redacted=False
- def collect(v):
+ def collect(v,hidden=False):
   if isinstance(v,dict):
    for k,x in v.items():
-    if sensitive.search(k) and isinstance(x,str) and x:private.append(x)
-    else:collect(x)
+    collect(x,hidden or bool(sensitive.search(k)))
   elif isinstance(v,list):
-   for x in v:collect(x)
+   for x in v:collect(x,hidden)
+  elif hidden and isinstance(v,str) and v:private.append(v)
  collect(req.get('tool_input'))
  def safe(v):
   nonlocal redacted

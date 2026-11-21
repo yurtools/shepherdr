@@ -215,6 +215,11 @@ class ApprovalAdvice(unittest.TestCase):
   self.assertEqual(evidence['untrusted_request']['tool_input']['command'],command)
   self.assertEqual(evidence['untrusted_request']['tool_input']['api_key'],'[redacted]')
   self.assertTrue(evidence['redacted']);self.assertIn('context is incomplete',evidence['limits'])
+ def test_nested_auth_values_cannot_leak_into_advice_evidence_or_public_results(self):
+  self.owner();self.req['tool_input']={'command':'echo private-array-fixture','credentials':{'values':['private-array-fixture']}};A.write(self.path,self.req)
+  ticket,_,_=self.request();self.assertNotIn('private-array-fixture',json.dumps(D.evidence(ticket['id'],ticket['token'],'assistant')))
+  D.submit(ticket['id'],ticket['token'],'Unknown value private-array-fixture',terminal='assistant')
+  self.assertNotIn('private-array-fixture',json.dumps(A.read(self.path.with_suffix('.advice'))))
  def test_click_during_owner_lookup_is_deduped_and_expired_advice_can_be_retried(self):
   self.owner();A.request_context(self.path,'worker');observed=[]
   def lookup(terminal):

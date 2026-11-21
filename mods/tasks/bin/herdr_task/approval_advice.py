@@ -17,20 +17,29 @@ def pending(path,req,identity=None):
  if A.read(path)!=req or (path.parent.parent/'ans'/path.name).exists():raise ValueError('This request changed, closed or was answered. Advice cannot replay it.')
  if identity is not None and stamp(path)!=identity:raise ValueError('This request was replaced. Ask for advice on the new request.')
 
-def owner_kind(meta,ctx):
- kind=A.reviewer_type(meta,ctx)
+def owner_binding(meta):
  labels=meta.get('labels') or {}
- space=labels.get('herdr.coordinator.space') or labels.get('herdr.space') or labels.get('herdr.task.space')
- return kind if space==ctx.get('space') else ''
+ return {'role':labels.get('herdr.role'),'feature':labels.get('herdr.feature'),
+         'space':labels.get('herdr.coordinator.space') or labels.get('herdr.space') or labels.get('herdr.task.space')}
+
+def owner_kind(meta,ctx):
+ binding=owner_binding(meta)
+ if meta.get('state')!='live' or binding['space']!=ctx.get('space'):return ''
+ foreground=meta.get('foreground') or {};state=meta.get('status') or {}
+ programs={str(x).split('/')[-1] for x in [*(meta.get('argv') or []),*(foreground.get('argv') or [])]}
+ if not ({'codex','claude'} & programs or isinstance(state,dict) and state.get('app') in ('codex','claude-code','claude')):return ''
+ if not (meta.get('pid') or foreground.get('pid')):return ''
+ if ctx.get('feature'):return 'feature' if binding['role']=='feature' and binding['feature']==ctx['feature'] else ''
+ return 'space' if ctx.get('space') and binding['role']=='coordinator' else ''
 
 def owner_identity(meta):
  # A restarted conversation in the same terminal must not inherit a capability.
  # View/read markers and foreground presentation metadata are mutable while the
  # same process is replying. Keep only process and ownership security fields.
- labels=meta.get('labels') or {};foreground=meta.get('foreground') or {}
+ foreground=meta.get('foreground') or {}
  return {'pid':meta.get('pid'),'started':meta.get('started'),'argv':meta.get('argv'),
          'foreground_pid':foreground.get('pid'),'foreground_argv':foreground.get('argv'),
-         'ownership':{k:labels.get(k) for k in ('herdr.role','herdr.feature','herdr.owner','herdr.coordinator','herdr.space','herdr.task.space','herdr.coordinator.space')}}
+         'ownership':owner_binding(meta)}
 
 def public(path,req,ticket):
  pending(path,req,ticket['identity'])
@@ -71,6 +80,7 @@ def request(path,expected_hash,terminal=None):
  if not kind:return stop('unavailable')
  state=meta.get('status');state=state.get('state') if isinstance(state,dict) else state
  if state in ('working','blocked'):return stop('busy')
+ if state not in ('idle','done'):return stop('unavailable')
  with A.locked():
   pending(path,req,identity)
   current=A.read(file)

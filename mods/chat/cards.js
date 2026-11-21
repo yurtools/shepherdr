@@ -80,6 +80,7 @@ export class AskCards {
         fn: (cx) => this.host.reply(ask,w.kind === "plan" ? deny("The person didn't approve this plan yet. Ask them what to change.") : deny(),cx) });
       if(w.kind==='permission'&&!w.unread)ctls.push(adviceControl(ask,this.host));
       out.push({ key: "actions", kind: "controls", align: "start", ctls });
+      if(w.kind==='permission'&&(ask.machine??this.host.machine?.()))out.push({key:'advice-remote',kind:'text',tone:'muted',text:'Advice and Assistant review require the original machine’s compatible permission card.'});
       const remembered=rememberedControls(ask,this.host);
       if(remembered.length){out.push({key:"rule-actions",kind:"controls",align:"start",ctls:remembered.slice(0,2)});out.push({key:"review-action",kind:"controls",align:"start",ctls:remembered.slice(2)});}
     }

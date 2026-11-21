@@ -147,20 +147,23 @@ class ApprovalAdvice(unittest.TestCase):
     self.assertEqual({p:p.read_bytes() for p in files},before);self.assertFalse((self.path.parent.parent/'ans'/self.path.name).exists())
     self.assertFalse((A.store()/'pending'/self.path.name).exists())
  def test_unknown_offline_busy_wrong_space_and_self_owners_never_receive_advice(self):
-  for case in ('offline','busy','blocked','wrong-space','wrong-feature','self'):
+  for case in ('offline','busy','blocked','wrong-space','wrong-feature','self','shell','unknown-state','no-process'):
    with self.subTest(case=case):
     self.owner(True);self.path.with_suffix('.context').unlink(missing_ok=True);D.ticket_path(self.path.stem).unlink(missing_ok=True)
     if case=='offline':self.owner_meta['state']='gone'
     elif case in ('busy','blocked'):self.owner_meta['status']['state']='working' if case=='busy' else 'blocked'
     elif case=='wrong-space':self.owner_meta['labels']['herdr.coordinator.space']='other'
     elif case=='wrong-feature':self.owner_meta['labels']['herdr.feature']='other'
+    elif case=='shell':self.owner_meta['argv']=['bash']
+    elif case=='unknown-state':self.owner_meta.pop('status')
+    elif case=='no-process':self.owner_meta.pop('pid')
     else:self.meta['labels']['herdr.owner']='worker'
     ticket,send,result=self.request();send.assert_not_called();self.assertIn(result['state'],('busy','unavailable'))
   self.owner();self.meta['labels'].pop('herdr.coordinator',None);self.meta['labels'].pop('herdr.owner',None);self.path.with_suffix('.context').unlink();D.ticket_path(self.path.stem).unlink()
   with mock.patch.object(D.subprocess,'run',return_value=mock.Mock(returncode=0,stdout='{"terminals":[]}')) as calls:
    self.assertEqual(D.request(self.path,A.status_key(self.req))['state'],'unavailable');self.assertEqual(calls.call_args.args[0],['hc','ls','--json'])
  def test_wrong_sender_expiry_replacement_closure_replay_and_owner_restart_cannot_publish(self):
-  for case in ('sender','expired','replacement','closed','replay','owner-restarted','different-role','context'):
+  for case in ('sender','expired','replacement','closed','replay','owner-restarted','different-role','different-space','different-feature','context'):
    with self.subTest(case=case):
     self.owner();A.write(self.path,self.req);self.path.with_suffix('.context').unlink(missing_ok=True);D.ticket_path(self.path.stem).unlink(missing_ok=True)
     ticket,_,_=self.request();public=self.path.with_suffix('.advice').read_bytes()
@@ -170,13 +173,16 @@ class ApprovalAdvice(unittest.TestCase):
     elif case=='replay':self.path.unlink();A.write(self.path,self.req)
     elif case=='owner-restarted':self.owner_meta['pid']=43
     elif case=='different-role':self.owner_meta['labels']['herdr.role']='worker'
+    elif case=='different-space':self.owner_meta['labels']['herdr.coordinator.space']='other'
+    elif case=='different-feature':self.owner_meta['labels']['herdr.feature']='another-feature'
     elif case=='context':A.write(self.path.with_suffix('.context'),{**ticket['context'],'account':'/other'})
     with self.assertRaises((ValueError,OSError)):D.submit(ticket['id'],ticket['token'],'Stale',terminal='worker' if case=='sender' else 'assistant')
     self.assertEqual(self.path.with_suffix('.advice').read_bytes(),public);self.assertFalse((self.path.parent.parent/'ans'/self.path.name).exists())
  def test_read_seen_settings_and_view_metadata_changes_keep_the_same_owner_authorized(self):
   self.owner(True);self.owner_meta['foreground']={'pid':44,'argv':['claude'],'cwd':'/original','title':'Terminal'}
   ticket,_,_=self.request()
-  self.owner_meta['labels'].update({'herdr.read':'now','herdr.seen':'now','herdr.settings':'new','herdr.view':'chat'})
+  self.owner_meta['labels'].update({'herdr.read':'now','herdr.seen':'now','herdr.settings':'new','herdr.view':'terminal','herdr.space':'space','herdr.tab':'terminal-tab'})
+  self.owner_meta['labels'].pop('herdr.coordinator.space')
   self.owner_meta['foreground'].update({'cwd':'/another-view','title':'Chat','status':'working'})
   self.owner_meta['status']['state']='working'
   self.assertEqual(D.submit(ticket['id'],ticket['token'],'Lists changed files.',terminal='assistant')['state'],'ready')
@@ -202,6 +208,34 @@ class ApprovalAdvice(unittest.TestCase):
   for name in A.QUESTION_TOOLS:
    A.write(self.path,{**self.req,'tool_name':name})
    with self.assertRaisesRegex(ValueError,'plans or choices'):D.request(self.path,A.status_key(A.read(self.path)))
+ def test_click_during_owner_lookup_is_deduped_and_expired_advice_can_be_retried(self):
+  self.owner();A.request_context(self.path,'worker');observed=[]
+  def lookup(terminal):
+   if terminal=='assistant' and not observed:
+    observed.append(D.request(self.path,A.status_key(self.req),'worker')['state'])
+   return self.owner_meta if terminal=='assistant' else self.meta
+  A.hc_get.side_effect=lookup
+  ticket,send,_=self.request();self.assertEqual(observed,['processing']);self.assertEqual(send.call_count,1)
+  ticket['expires']=time.time()-1;A.write(D.ticket_path(ticket['id']),ticket)
+  replacement,send,_=self.request();self.assertNotEqual(replacement['token'],ticket['token']);self.assertEqual(send.call_count,1)
+  with self.assertRaises(ValueError):D.submit(ticket['id'],ticket['token'],'Expired response',terminal='assistant')
+ def test_fast_advice_survives_a_delivery_error_without_creating_a_review(self):
+  self.owner()
+  def deliver(*args,**kwargs):
+   ticket=A.read(D.ticket_path(self.path.stem));D.submit(ticket['id'],ticket['token'],'Reads project files.',terminal='assistant')
+   return mock.Mock(returncode=1,stdout='')
+  with mock.patch.object(D.subprocess,'run',side_effect=deliver):self.assertEqual(D.request(self.path,A.status_key(self.req),'worker')['state'],'ready')
+  self.assertEqual(A.read(self.path.with_suffix('.advice'))['state'],'ready');self.assertFalse((A.store()/'pending'/self.path.name).exists())
+ def test_own_advice_helper_is_informational_without_reading_or_changing_policy(self):
+  import shlex
+  self.owner();self.mode('codex-review');ticket,_,_=self.request()
+  helper=str(A.app_home()/'mods/chat/approval-policy.py')
+  child=A.app_home()/'data/chat-asks/req/assistant.child.json'
+  A.write(child,{'session_id':'owner-session','cwd':self.req['cwd'],'tool_name':'Bash','tool_input':{'command':shlex.join([helper,'advise','--id',ticket['id'],'--token',ticket['token'],'--summary','Reads files.'])}})
+  with mock.patch.object(A,'settings',side_effect=AssertionError('Advice control must not evaluate approval policy')):
+   result=A.evaluate(child,'assistant')
+  self.assertEqual(result['source'],'advice-control');self.assertFalse((self.path.parent.parent/'ans'/self.path.name).exists())
+  self.assertEqual(A.read(D.ticket_path(ticket['id']))['status'],'pending')
 
 class ApprovalEnhancements(unittest.TestCase):
  setUp=ApprovalPolicy.setUp

@@ -1615,7 +1615,6 @@ function OneQuestionCard({ q, chat, msg, from, source, steady }: { q: Question; 
   return (
     <CardShell title={q.title} plan={q.kind === 'Plan'} source={source} neutral={!!q.approval} head={sent ? undefined : askHead(q, chat)}>
       {q.approval && !sent ? <PermissionStatus status={q.approval} /> : null}
-      {q.approval && !sent ? <PermissionInformation q={q} /> : null}
       {q.screen ? <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-words text-xs text-fg2">{q.press ? q.screen.split(/(https?:\/\/\S+)/).map((part, j) => j % 2 ? <a key={j} href={part} target="_blank" rel="noreferrer" className="text-accent">{part}</a> : part) : q.screen}</pre> : null}
       {q.terminal && !sent && has('terminal') ? <button type="button" className="text-left text-accent" onClick={() => openTerminal(chat.key)}>{WORDS.openTerminal}</button> : null}
       {q.evidence ? <Evidence e={q.evidence} open={!sent} /> : null}
@@ -1662,6 +1661,7 @@ function OneQuestionCard({ q, chat, msg, from, source, steady }: { q: Question; 
           </button>
         )
       })}
+      {q.approval && !sent ? <PermissionInformation q={q} /> : null}
       {sent || q.multi ? null : <OptionPreview choices={q.choices} picked={sel} />}
       {q.other && !sent ? (
         <input

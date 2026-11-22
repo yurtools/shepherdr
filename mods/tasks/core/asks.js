@@ -45,6 +45,8 @@ export function requestHash(req) {
 }
 
 const STATUS_DETAILS = {
+  'deny-uncertain': 'Dynamic arguments may match a saved deny rule. Their values are unresolved; choose explicitly.',
+  'rule-partial': 'Rule saved for future matches. Other actions in this request still need your decision.',
   manual: 'Ask me mode is on.', 'no-rule': 'No saved rule matched this request.',
   'assistant-asked': 'Assistant asked you to decide.', 'review-expired': 'Assistant review expired. You can decide or ask again.',
   'review-unavailable': 'Assistant review is unavailable. You can decide here.',
@@ -99,7 +101,11 @@ function decisionStatus(req, metadata) {
     const who = v.reviewer === 'feature' ? 'Feature Assistant' : v.reviewer === 'space' ? 'Space Assistant' : 'Assistant';
     return { state: 'assistant', text: `Waiting for ${who} review`, attention: false };
   }
-  if (v.state === 'person') return { state: 'person', text: 'Waiting for your decision', detail: v.reason === 'assistant-asked' && reviewReason(v.review_reason) ? `Assistant asks you: ${reviewReason(v.review_reason)}` : v.reason === 'pipeline-stage' && Number.isInteger(v.stage) && v.stage >= 0 && v.stage < 1000 ? `Stage ${v.stage+1} needs an allow rule. Every pipeline stage must be allowed.` : STATUS_DETAILS[v.reason] ?? 'You can decide here.', attention: true };
+  if (v.state === 'person') {
+    const detail = v.reason === 'assistant-asked' && reviewReason(v.review_reason) ? `Assistant asks you: ${reviewReason(v.review_reason)}` : v.reason === 'pipeline-stage' && Number.isInteger(v.stage) && v.stage >= 0 && v.stage < 1000 ? `Command ${v.stage+1} needs an allow rule. Every component command must be allowed, including conditional branches.` : STATUS_DETAILS[v.reason] ?? 'You can decide here.';
+    const note = ['deny-uncertain','rule-partial'].includes(v.rule_note) ? STATUS_DETAILS[v.rule_note] : '';
+    return { state: 'person', text: 'Waiting for your decision', detail: note ? `${detail} ${note}` : detail, attention: true };
+  }
   return unknown;
 }
 // A file as the person knows it: from the agent's folder, else from home, else whole; just its

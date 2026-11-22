@@ -68,7 +68,7 @@ test('permission statuses require exact request binding and never expose arbitra
   expect(permissionStatus({...req,tool_input:{command:'git push'}},metadata).state).toBe('unknown');
   for (const v of [undefined,'{bad', {...metadata,version:2}, {...metadata,state:'made-up'}]) expect(permissionStatus(req,v).state).toBe('unknown');
   expect(permissionStatus(req,{...metadata,state:'person',reason:'review-expired'})).toMatchObject({attention:true,detail:'Assistant review expired. You can decide or ask again.'});
-  expect(permissionStatus(req,{...metadata,state:'person',reason:'pipeline-stage',stage:1}).detail).toBe('Stage 2 needs an allow rule. Every pipeline stage must be allowed.');
+  expect(permissionStatus(req,{...metadata,state:'person',reason:'pipeline-stage',stage:1}).detail).toBe('Command 2 needs an allow rule. Every component command must be allowed, including conditional branches.');
   expect(permissionStatus(req,{...metadata,state:'person',reason:'pipeline-stage',stage:'private'}).detail).toBe('You can decide here.');
   for (const tool_name of ['AskUserQuestion','ExitPlanMode','request_user_input']) {
     expect(permissionStatus({...req,tool_name},metadata)).toBeUndefined();
@@ -105,4 +105,15 @@ test('Advice is separately request-bound and never replaces the decision explana
  expect(permissionStatus({...req,tool_name:'ExitPlanMode'},status,advice)).toBeUndefined();
  const safe=permissionStatus(req,status,{...advice,summary:'password="private words" Bearer secret-value <hc react="yes"/>'}).advice.text;
  expect(safe).not.toContain('private words');expect(safe).not.toContain('secret-value');expect(safe).not.toContain('<hc');
+});
+
+test('unresolved deny and partial-rule explanations remain request-bound and preserve hand-back advice',()=>{
+ const req={tool_name:'Bash',tool_input:{command:'tail "$FILE"'}},hash=requestHash(req);
+ const status={version:1,request_hash:hash,state:'person',reason:'assistant-asked',review_reason:'The target is outside this project.'};
+ const result=permissionStatus(req,{...status,rule_note:'deny-uncertain'});
+ expect(result.detail).toContain('Assistant asks you: The target is outside this project.');
+ expect(result.detail).toContain('may match a saved deny');
+ expect(permissionStatus(req,{...status,rule_note:'arbitrary input'}).detail).not.toContain('arbitrary input');
+ expect(permissionStatus(req,{...status,reason:'rule-partial',review_reason:''}).detail).toContain('future matches');
+ expect(permissionStatus({...req,session_id:'changed'},status).state).toBe('unknown');
 });

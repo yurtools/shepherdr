@@ -1,3 +1,4 @@
+import { BoundedWait, TIMEOUT, DISPOSED } from "./bounded-wait.js";
 import { openWorkerView } from './task-view.js';
 // Tasks: named pieces of work with a prompt, one list per folder (the repo root in git, worktrees
 // included). Each folder's list is ~/.herdr/tasks/<slug>.json on the machine the folder is on,
@@ -121,15 +122,10 @@ export default class Tasks extends View {
     // Keys: tasks.you, tasks.space, tasks.status group the list that way (tasks.machine and
     // tasks.machine-space, of old: For you);
     // tasks.filter-<status>; tasks.search goes to the search field.
-    // At most 5 s per wait (one pending nextCommand), so a reload's old build ends at its next
-    // cx use instead of staying in memory.
+    // The host cancels the pending receive when this copy closes or reloads.
     cx.spawn(async (cx) => {
-      let cmd = null;
       for (;;) {
-        cmd ??= nextCommand();
-        const c = await Promise.race([cmd, cx.sleep(5000)]);
-        if (c === undefined) continue;
-        cmd = null;
+        const c = await nextCommand();
         if (c === "search") this.query.focus();
         // pane.go landed on this panel (mod.json "focusable"): the list takes the keyboard (F: the search field).
         else if (c === "focus") { holdKeys("tasks"); this.listFocus.focus(); }
@@ -157,20 +153,23 @@ export default class Tasks extends View {
   watch(cx) {
     if (this.watching) return;
     this.watching = true;
+    const failed = Symbol('watch failed');
     // A failed watch is tried again after 5 s (it used to end here for good: no live updates until the panel reopened).
     cx.spawn(async (cx) => {
-      let w = null;
-      for (;;) {
-        // At most 5 s per wait, as the commands above.
-        w ??= watchFolder(dirs().tasks).then(() => true, () => false);
-        const got = await Promise.race([w, cx.sleep(5000).then(() => "wait")]);
-        if (got === "wait") continue;
-        w = null;
-        if (got) await this.load(cx, null);
-        else await cx.sleep(5000);
-      }
+      const wait = this.taskWait = new BoundedWait();
+      try {
+        for (;;) {
+          const got = await wait.next(cx, dirs().tasks, () => watchFolder(dirs().tasks), 5000, () => failed);
+          if (got === DISPOSED) return;
+          if (got === TIMEOUT) continue;
+          if (got.value !== failed) await this.load(cx, null);
+          else await cx.sleep(5000);
+        }
+      } finally { wait.dispose(); }
     });
   }
+
+  close() { this.taskWait?.dispose(); }
 
   // Every connected machine's lists (not one Herdr can't reach now: its last lists stay). A machine
   // no longer in machines() takes its lists with it.

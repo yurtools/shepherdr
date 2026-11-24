@@ -39,7 +39,7 @@ previous records and read offsets intact for retry.
 ## Invalidation and lifetimes
 
 Conversation identity and presentation have different lifetimes. Changing the
-agent, log, route or project context discards the snapshot. Width/zoom, Find,
+agent, log, route or task binding discards the snapshot. Width/zoom, Find,
 task/news/mention inputs, fold/open/result revisions and request-bound approval
 changes cancel obsolete preparation but retain the last complete timeline until
 its replacement commits. Cold conversation opens still show the opening notice.

@@ -68,6 +68,17 @@ test('a deferred old frame cannot change scroll state, and genuine session chang
   h.v.path = 'fixture'; h.v.clearHistory(); expect(render({ start: 1, end: 4 })).toEqual([]);
 });
 
+test('updated project metadata preserves the same conversation; actual agent and pane changes discard it', () => {
+  const h=historyHost(items());h.request();h.drain();const plan=h.v.history.snapshot;
+  h.v.t={...h.v.t,cwd:'/other-project'};
+  expect(h.v.historyCurrent(plan)).toBe(false);expect(h.request()===plan).toBe(true);h.drain();
+  for(const mutate of [(v:any)=>v.addr='another-agent',(v:any)=>v.pickKey=()=> 'another-pane',(v:any)=>v.kind='claude']){
+    const fresh=historyHost(items());fresh.request();fresh.drain();const old=fresh.v.history.snapshot;
+    mutate(fresh.v);expect(fresh.v.historyVisible(old)).toBe(false);expect(fresh.request()).toBeNull();fresh.drain();
+    expect(fresh.v.historyCurrent(fresh.v.history.snapshot)).toBe(true);
+  }
+});
+
 function polling() {
   const method = (name: string) => {
     const at = source.indexOf(`  async ${name}(`);

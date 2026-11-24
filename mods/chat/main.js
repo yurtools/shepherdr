@@ -3191,7 +3191,7 @@ export default class Chat extends View {
   // conversation/route change may replace it with the Opening notice.
   historyIdentity() {
     return [this.addr,this.path,this.kind,this.role,this.feature,this.pickKey()??this.areaKey(),
-      this.machine,this.firstTask,this.taskRef,this.t?.template,this.t?.cwd,this.t?.foreground?.cwd,
+      this.machine,this.taskRef,
       this.t?.labels?.["herdr.task"],this.t?.labels?.["herdr.role"],this.t?.labels?.["herdr.space"],this.t?.labels?.["herdr.coordinator.space"]];
   }
 

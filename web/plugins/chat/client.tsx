@@ -1661,6 +1661,7 @@ function OneQuestionCard({ q, chat, msg, from, source, steady }: { q: Question; 
           </button>
         )
       })}
+      {q.approval && !sent ? <PermissionInformation q={q} /> : null}
       {sent || q.multi ? null : <OptionPreview choices={q.choices} picked={sel} />}
       {q.other && !sent ? (
         <input
@@ -1734,6 +1735,35 @@ export function PermissionStatus({ status }: { status: NonNullable<Question['app
       <span>{status.text}</span>
     </div>
     {status.detail ? <p className="text-pretty">{status.detail}</p> : null}
+    {status.advice ? <div className="mt-2 flex flex-col gap-1 border-t border-line2 pt-2">
+      <p className="whitespace-pre-wrap text-pretty"><strong>Advice: </strong>{status.advice.text}</p>
+      {status.advice.detail ? <details><summary className="cursor-pointer text-accent">More advice</summary><p className="mt-1 whitespace-pre-wrap text-pretty">{status.advice.detail}</p></details> : null}
+      <p className="text-fg3">{status.advice.note}</p>
+    </div> : null}
+  </div>
+}
+
+export function PermissionInformation({ q }: { q: Question }) {
+  const [busy, setBusy] = useState(false), [error, setError] = useState('')
+  const sending = useRef(false)
+  const request = async (command: 'advice' | 'review') => {
+    if (sending.current || !q.requestHash) return
+    sending.current = true; setBusy(true); setError('')
+    try {
+      const result = await act({type:'permission-info',question:q.id,hash:q.requestHash,command})
+      if (result?.ok === false) setError(result.error ?? 'The Assistant could not receive this request.')
+    } catch { setError('The request may have changed or closed. Refresh the card and try again.') }
+    finally { sending.current = false; setBusy(false) }
+  }
+  if (!q.approval) return null
+  const local = q.permissionLocal === true && !!q.requestHash
+  return <div className="flex flex-col gap-1">
+    <div className="flex flex-wrap gap-2">
+      <button type="button" className="press rounded-row border border-line2 px-3 py-2 text-accent disabled:opacity-40" disabled={!local || busy || ['processing','pending','ready'].includes(q.approval.advice?.state ?? '')} onClick={() => void request('advice')}>Advice</button>
+      <button type="button" className="press rounded-row border border-line2 px-3 py-2 text-accent disabled:opacity-40" disabled={!local || busy || ['processing','assistant'].includes(q.approval.state)} onClick={() => void request('review')}>Ask Assistant</button>
+    </div>
+    {!local ? <p className="text-xs text-fg3">Advice and Assistant review require the original machine’s compatible permission card.</p> : null}
+    {error ? <p role="alert" className="text-xs text-need">{error}</p> : null}
   </div>
 }
 

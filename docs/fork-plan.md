@@ -10,7 +10,7 @@ is Yurherdr; the repository remains `yurtools/shepherdr` and the runtime's
 
 | Priority | Area | Implemented behavior | Remaining boundary |
 | --- | --- | --- | --- |
-| 1 | Agent workspace | Same-session Chat / Terminal; collapsible activity; wide chat; extra views beside existing agents | Codex/Claude Code Chat and space roles; other CLI launchers are Terminal only |
+| 1 | Agent workspace | Terminal-first native openings; same-session Chat / Terminal; collapsible activity; wide chat; extra views beside existing agents | Codex/Claude Code Chat and space roles; other CLI launchers are Terminal only |
 | 2 | Features and coordination | Named Feature Assistants alongside the space Assistant; own task ownership; shared Worker / Reviewer settings; sidebar activity includes workers | Local spaces; integration checkout is not created automatically; worker/task worktree settings control code isolation |
 | 3 | Accounts and agent controls | Named Codex profiles retained through launch/resume/fork/restart; model/thinking/permissions; Feature role override; skills picker and `/status` | Named profiles are Codex-only; authentication remains in each CLI's account home |
 | 4 | Project files and documents | Persistent space-rooted tree; separate text editing and preview panes; Markdown/CSV modes; lexical highlighting; DOCX/Excel content; file references and links; multi-repository native Changes | Bounded Office content and repository discovery; multi-repository Changes is native-only |

@@ -14,7 +14,7 @@ function method(name: string) {
 }
 const names = ['rows', 'rowPlan', 'spaced', 'spacedPlan', 'foldOf', 'key', 'guess', 'guessBare', 'findMatches', 'findRow',
   'newsLines', 'newsPlan', 'resolveArts', 'resolveArtsPlan', 'timelineCards', 'timelinePlan',
-  'historyCurrent', 'historyEvent', 'historyContext', 'historyStamp', 'historyPlan', 'prepareHistory', 'scheduleHistory', 'clearHistory'];
+  'historyVisible', 'historyIdentity', 'historyCurrent', 'historyEvent', 'historyContext', 'historyStamp', 'historyPlan', 'prepareHistory', 'scheduleHistory', 'clearHistory'];
 export function historyHost(items: any[], sharedRead: (key: string) => any = () => null) {
   const jobs: any[] = [], stats = { items: 0, keys: 0, guesses: 0, lookups: 0, notifies: 0 };
   const dependencies: any = { ...view, ...geometry, ...preparation,

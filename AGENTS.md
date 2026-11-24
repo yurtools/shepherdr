@@ -47,6 +47,8 @@ How to run, build and lay out the code: [docs/develop.md](docs/develop.md).
   re-resolve pane IDs after each switch.
 - `herdr-app ls` exposes pane IDs at `spaces[].tabs[].terminals[].pane`; route to a recorded owner's pane
   explicitly instead of relying on whichever pane currently has focus.
+- After reboot, a kept Feature terminal can retain `state=live` and its role/chat labels while its foreground is Bash;
+  inspect bounded core metadata and the saved Feature session before treating it as an available Assistant.
 - Mark up (`mods/artifacts/markup.js`) imports must be listed in `MARKUP_HELPERS` in `mods/artifacts/bin/herdr-artifact`
   so each published artifact carries them; `test_every_installed_import_resolves` checks the imports.
 - Header layout checks: the web app keeps its pinned-lists and sidebar state across page loads, so a stub page can

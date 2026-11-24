@@ -311,6 +311,13 @@ def cmd_start(args):
             raise Fail(f"{s.ref(t)} is done. Reopen it first.")
         q = t.get("queue") or {}
         space = bare(args.space) if args.space else (q.get("space") or t.get("space") or default_space())
+        # Bind a first dispatch before it can queue. The scheduler has no caller, and
+        # must not discover a different owner when it eventually launches the worker.
+        caller = caller_labels()
+        if not t.get("feature") and not t.get("started") and not t.get("agents") and \
+                caller.get("herdr.role") == "feature" and caller.get("herdr.feature") and \
+                space in (caller.get("herdr.coordinator.space"), caller.get("herdr.space")):
+            t["feature"] = caller["herdr.feature"]
         if args.here:
             t["mode"] = "here"
         elif args.worktree and worktrees_on(s, space):
@@ -328,10 +335,12 @@ def cmd_start(args):
             schedule(s, t, at, plan)
             v = view(s, t)
             reason = "scheduled"
-        # A queued task started again goes now; otherwise it waits its turn. A scheduled one
-        # started now waits only for the queue (start --now: not even that).
-        elif (reason := None if (t["state"] == "queued" or args.now) else queue_reason(s, t)):
-            t["state"], t["queued_at"] = "queued", now()
+        # Retrying a dispatch is not permission to exceed the queue. Only --now skips it.
+        # Keep its original position when the Assistant checks or repeats a start.
+        elif (reason := None if args.now else queue_reason(s, t)):
+            if t["state"] != "queued":
+                t["queued_at"] = now()
+            t["state"] = "queued"
             t.pop("scheduled_for", None)
             t["queue"] = plan
             s.dirty = True

@@ -15,7 +15,7 @@ function cards() {
   } };
   const div = () => { let el: any; el = new Proxy({}, { get: (_t, key) => key === 'on_key_down' ? (fn: any) => { handlers.push(fn); return el; } : () => el }); return el; };
   const strip = (file: string) => readFileSync(new URL(`../mods/chat/${file}`, import.meta.url), 'utf8').replace(/^import .*\n/gm, '').replace(/^export /gm, '');
-  const deps: any = { ...asks, InputState, div, rememberedControls: () => [] };
+  const deps: any = { ...asks, InputState, div, rememberedControls: () => [], adviceControl: () => ({id:'advice',label:'Advice'}) };
   const { AskCards, headStrip } = new Function(...Object.keys(deps), strip('cards.js') + '\nreturn {AskCards,headStrip};')(...Object.values(deps));
   const secrets = { asksOf: () => [], levels: () => [{ scope: 'space', label: 'This space' }, { scope: 'machine', label: 'This machine' }],
     scopeKey: (level: any) => level.scope, keep: async () => {}, decline: async () => {} };

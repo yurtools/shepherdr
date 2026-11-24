@@ -51,6 +51,7 @@ test('ordinary manual names, terminal addresses and automatic program naming kee
 });
 test('Chat/Terminal swaps retain feature slot and props so a recreated chat remains resumable',async()=>{
  state.set('coordinator.slots',{[`feature-${rec.id}`]:{...rec,feature:rec.id,tab:'tab',pane:'chat'}});
+ const original=structuredClone(ts[0]);state.set('pending-approval',{terminal:original.address,id:'still-open'});
  const v:any=Object.create(Pane.prototype);v.toTerminal('chat',cx);await Promise.all(work);
  expect(state.get('coordinator.slots')[`feature-${rec.id}`]).toMatchObject({pane:'replacement-terminal',tab:'tab',feature:rec.id});
  viewProps={pane:'replacement-terminal'};expect(text(v.render(cx))).toContain(rec.name);expect(drawTabs()).toContain(rec.name);
@@ -58,6 +59,9 @@ test('Chat/Terminal swaps retain feature slot and props so a recreated chat rema
  const split=actions.find(a=>a[0]==='pane.split');const props=JSON.parse(split[1][split[1].indexOf('--props')+1]);
  expect(props).toMatchObject({feature:rec.id,role:'feature',slot:`feature-${rec.id}`,featureRecord:rec});
  expect(state.get('coordinator.slots')[`feature-${rec.id}`]).toMatchObject({pane:'replacement-chat',tab:'tab'});
+ expect(ts[0].address).toBe(original.address);expect(ts[0].labels['herdr.feature']).toBe(original.labels['herdr.feature']);
+ expect(state.get('pending-approval')).toEqual({terminal:original.address,id:'still-open'});
+ expect(actions.some(a=>a[0]==='terminal.kill'||(a[0]==='hc'&&a[1][0]==='run'))).toBe(false);
  ts=[];viewProps={pane:'replacement-chat'};expect(text(v.render(cx))).toContain(rec.name);expect(drawTabs()).toContain(rec.name);
 });
 test('Rename edits the durable feature while an ordinary tab still uses the host rename command',()=>{

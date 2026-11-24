@@ -243,6 +243,7 @@ def public_review_reason(reason, req, ticket, limit=400):
  return text[:limit]
 
 def hc_get(terminal):
+ if not isinstance(terminal,str) or not terminal:return {}
  try:
   r=subprocess.run(['hc','get',terminal,'--json'],capture_output=True,text=True,timeout=3)
   return json.loads(r.stdout) if r.returncode==0 else {}
@@ -546,20 +547,51 @@ def review_guard(req,ctx):
 
 def reviewer_type(meta,ctx):
  if meta.get('state')!='live':return ''
- labels=meta.get('labels') or {}
- if not ctx.get('space') or labels.get('herdr.coordinator.space')!=ctx['space']:return ''
+ labels=meta.get('labels') or {};foreground=meta.get('foreground') or {};status=meta.get('status') or {}
+ space=labels.get('herdr.coordinator.space') or labels.get('herdr.space') or labels.get('herdr.task.space')
+ if not ctx.get('space') or space!=ctx['space'] or labels.get('herdr.task'):return ''
+ # Core can restore a kept terminal as a shell while preserving its role labels.
+ # The foreground program, when known, outranks the original launch argv.
+ apps={'codex','claude','claude-code'}
+ programs={str(x).split('/')[-1] for x in (foreground.get('argv') or meta.get('argv') or [])}
+ if foreground.get('name'):
+  if foreground['name'] not in apps:return ''
+ elif not (apps & programs or isinstance(status,dict) and status.get('app') in apps):return ''
+ if not (foreground.get('pid') or meta.get('pid')):return ''
  if ctx.get('feature'):
   return 'feature' if labels.get('herdr.feature')==ctx['feature'] and labels.get('herdr.role')=='feature' else ''
  return 'space' if not labels.get('herdr.feature') and labels.get('herdr.role')=='coordinator' else ''
 
+def resolve_reviewer(ctx,space_fallback=True):
+ """Find the current owner of the original request, without starting anyone."""
+ owner=ctx.get('reviewer');meta=hc_get(owner) if owner else {};kind=reviewer_type(meta,ctx)
+ if kind and owner!=ctx.get('terminal'):return owner,meta,kind
+ # A Feature's durable ID allows recovery of its exact owner after a restart.
+ # Advice without a Feature ID retains its explicitly bound space owner.
+ if not ctx.get('feature') and owner and not space_fallback:return '',{},''
+ matches={}
+ try:
+  args=['hc','ls','--json']
+  if ctx.get('feature'):args+=['--label','herdr.feature='+ctx['feature']]
+  r=subprocess.run(args,capture_output=True,text=True,timeout=3)
+  for row in json.loads(r.stdout).get('terminals',[]) if r.returncode==0 else []:
+   candidate=row.get('address','')
+   if not candidate or '/' in candidate or candidate in (owner,ctx.get('terminal')):continue
+   info=hc_get(candidate);kind=reviewer_type(info,ctx)
+   if kind:matches[candidate]=(candidate,info,kind)
+ except (OSError,ValueError,subprocess.TimeoutExpired):pass
+ return next(iter(matches.values())) if len(matches)==1 else ('',{},'')
+
 def review_ticket(path, req, ctx, force=False):
  ticket_path=store()/'pending'/(Path(path).stem+'.json')
+ previous=read(ticket_path) if force and ctx.get('feature') else None
+ stale=previous and previous.get('status')=='pending' and not reviewer_type(hc_get(previous.get('reviewer')),previous['context'])
  # Claim processing before doing any reviewer lookup. Rule polling and repeated
  # clicks can now see the delegation, including before a reviewer is selected.
  with locked():
   if read(path)!=req or (Path(path).parent.parent/'ans'/Path(path).name).exists():raise ValueError('This request has changed, closed or already been answered.')
   old=read(ticket_path)
-  reuse=old and old.get('key')==request_key(req) and (not force and old.get('status')!='unavailable' or old.get('status') in ('processing','pending') and old.get('expires',0)>time.time())
+  reuse=old and old.get('key')==request_key(req) and not (stale and old==previous) and (not force and old.get('status')!='unavailable' or old.get('status') in ('processing','pending') and old.get('expires',0)>time.time())
   if not reuse:
    ticket={'id':Path(path).stem,'token':secrets.token_hex(24),'key':request_key(req),'request':str(path),'context':ctx,'expires':time.time()+600,'status':'processing'}
    write(ticket_path,ticket)
@@ -573,16 +605,7 @@ def review_ticket(path, req, ctx, force=False):
     ticket.update(status=state,reason_code=code,reason=reason);write(ticket_path,ticket)
   return review_status(path,req) or {'action':'wait','reason':'Assistant review already answered or closed.'}
  if blocked:return stop(*blocked)
- reviewer=ctx.get('reviewer');kind=reviewer_type(hc_get(reviewer),ctx) if reviewer else ''
- if not kind or reviewer==ctx.get('terminal'):reviewer=None
- if not reviewer:
-  # Regular agents may belong to a space with an Assistant. Inspect the model, never start an agent.
-  try:
-   r=subprocess.run(['hc','ls','--json'],capture_output=True,text=True,timeout=3);all=json.loads(r.stdout).get('terminals',[])
-   for row in all:
-    candidate=row.get('address','');kind=reviewer_type(hc_get(candidate),ctx)
-    if kind and candidate!=ctx.get('terminal'):reviewer=candidate;break
-  except (OSError,ValueError,subprocess.TimeoutExpired):pass
+ reviewer,_,kind=resolve_reviewer(ctx)
  if not reviewer:return stop('review-unavailable','No other running Assistant is available to review this request.','unavailable')
  token=ticket['token'];ident=ticket['id']
  with locked():

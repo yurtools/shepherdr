@@ -22,6 +22,8 @@ How to run, build and lay out the code: [docs/develop.md](docs/develop.md).
 - Installer tests run from `test/`: `cd test && python3 -m unittest test_install`. To run an older installer copy for a
   before-check, export `SHEPHERDR_HANDED_OVER=1` (else it hands over to the source's `bin/shepherdr`), and use a full
   `git archive` of the tree, since `herdr_task` lives beside `bin/`.
+- Run full Python installer discovery after the web build finishes: it copies `web/dist`, and Vite replaces
+  that directory during builds, so running both at once can break the copy.
 - herdr-browser's library check: `test/test_herdr_browser_libs.py` fakes ldd and agent-browser; a real missing-library
   Chrome needs gcc, linking a library built with `-Wl,-soname` and then deleted.
 - herdr-browser's AppArmor case: test with `HERDR_BROWSER_USERNS_SYSCTL` and `HERDR_BROWSER_APPARMOR_D` stand-ins; a real

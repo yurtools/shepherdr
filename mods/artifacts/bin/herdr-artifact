@@ -953,7 +953,12 @@ def ownership_tasks():
                 d = json.load(f)
         except (OSError, ValueError):
             continue
-        for t in d.get("tasks") or []:
+        # The directory also holds auxiliary JSON such as the news log (a list).
+        if not isinstance(d, dict) or not isinstance(d.get("tasks"), list):
+            continue
+        for t in d["tasks"]:
+            if not isinstance(t, dict):
+                continue
             ref = f"{d.get('prefix')}-{t.get('id')}" if d.get("prefix") else f"#{t.get('id')}"
             proof = t.get("proof")
             out.append(dict(key=f"{name[:-5]}#{t.get('id')}", ref=ref, folder=d.get("folder"),

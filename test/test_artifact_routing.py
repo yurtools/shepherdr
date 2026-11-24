@@ -6,6 +6,7 @@ import importlib.util
 import io
 import json
 import os
+from pathlib import Path
 import tempfile
 import types
 import unittest
@@ -43,6 +44,97 @@ class Ownership(unittest.TestCase):
 
     def opts(self, **kw):
         return types.SimpleNamespace(**{**dict(id=self.a['id'], machine=None, tab=False, direction='right', beside=None), **kw})
+
+    def command_json(self, *args):
+        out = io.StringIO()
+        with mock.patch('sys.argv', ['herdr-artifact', *args, '--json']), contextlib.redirect_stdout(out):
+            self.assertEqual(A.main(), 0)
+        return json.loads(out.getvalue())
+
+    def snapshot(self, folder):
+        return {str(p.relative_to(folder)): p.read_bytes() for p in Path(folder).rglob('*') if p.is_file()}
+
+    def ownership_views(self):
+        return [A.public(self.a),
+                A.public({**self.a, 'folder': '/worktree', 'taskKey': 'a#4'}),
+                A.public({**self.a, 'folder': '/worktree', 'task': None}),
+                self.command_json('show', self.a['id']),
+                self.command_json('list', '--all')]
+
+    def test_auxiliary_json_values_preserve_task_and_proof_ownership(self):
+        self.write_task('a', '/a', 'A', {'id': self.a['id']})
+        Path(self.tasks, 'legacy.json').write_text(json.dumps(dict(folder='/legacy', tasks=[dict(id=8, space='C', proof='old-proof')])))
+        tasks, views = A.ownership_tasks(), self.ownership_views()
+        self.assertTrue(all(v['space'] == 'A' for v in views[:-1]))
+        self.assertEqual(views[-1]['artifacts'][0]['space'], 'A')
+        for value in ([], [{'news': 'synthetic entry'}], None, 'auxiliary', 7, True):
+            with self.subTest(value=value):
+                Path(self.tasks, '.newslog.json').write_text(json.dumps(value))
+                before = self.snapshot(self.root)
+                self.assertEqual(A.ownership_tasks(), tasks)
+                self.assertEqual(self.ownership_views(), views)
+                self.assertEqual(A.public(dict(id='old-proof', folder='/legacy', task='#8'))['space'], 'C')
+                self.assertEqual(self.snapshot(self.root), before)
+
+    def test_absent_and_invalid_tasks_collections_preserve_valid_lists(self):
+        tasks, views = A.ownership_tasks(), self.ownership_views()
+        for value in ({}, {'tasks': None}, {'tasks': []}, {'tasks': False}, {'tasks': 0},
+                      {'tasks': 7}, {'tasks': True}, {'tasks': 'invalid'}, {'tasks': {}},
+                      {'tasks': {'id': 4, 'space': 'wrong'}}):
+            with self.subTest(value=value):
+                Path(self.tasks, 'auxiliary.json').write_text(json.dumps(value))
+                before = self.snapshot(self.root)
+                self.assertEqual(A.ownership_tasks(), tasks)
+                self.assertEqual(self.ownership_views(), views)
+                self.assertEqual(self.snapshot(self.root), before)
+
+    def test_non_object_rows_preserve_all_valid_associations_and_ambiguity(self):
+        path = Path(self.tasks, 'a.json')
+        data = json.loads(path.read_text())
+        data['tasks'].append(dict(id=5, space='A', proof=self.a['id']))
+        path.write_text(json.dumps(data))
+        tasks, views = A.ownership_tasks(), self.ownership_views()
+        data['tasks'] = [None, [], 'invalid', 7, False, data['tasks'][0], ['nested'], data['tasks'][1], True]
+        path.write_text(json.dumps(data))
+        before = self.snapshot(self.root)
+        self.assertEqual(A.ownership_tasks(), tasks)
+        self.assertEqual(self.ownership_views(), views)
+        self.assertEqual(self.snapshot(self.root), before)
+        Path(self.tasks, '.newslog.json').write_text('[{"news":"synthetic entry"}]')
+        self.write_task('b', '/b', 'B', {'id': self.a['id']})
+        before = self.snapshot(self.root)
+        self.assertTrue(all(v['space'] is None for v in self.ownership_views()[:-1]))
+        self.assertIsNone(self.command_json('list', '--all')['artifacts'][0]['space'])
+        self.assertEqual(self.snapshot(self.root), before)
+
+    def test_publish_and_update_keep_durable_owner_beside_news_log(self):
+        Path(self.tasks, '.newslog.json').write_text('[{"news":"synthetic entry"}]')
+        source = Path(self.root, 'recipe')
+        source.mkdir()
+        (source / 'recipe.json').write_text('{"recipe":1,"blocks":[{"type":"text","md":"Synthetic proof"}]}')
+        folder = Path(self.root, 'project')
+        folder.mkdir()
+        self.write_task('a', str(folder), 'A')
+        before = self.snapshot(self.tasks)
+        opts = dict(id=None, title='SHOP-4: Synthetic proof', folder=str(folder), task=None, note=None, json=True,
+                    custom=False, dir=str(source), no_install=True)
+        # Only native drawing and terminal identity are inert; publishing and ownership use the real helper/store.
+        with mock.patch.object(A, 'APP', os.path.join(self.root, 'app')), \
+                mock.patch.object(A, 'check', return_value=(None, [], None)), \
+                mock.patch.object(A, 'me', return_value=dict(terminal='t1', task='SHOP-4', taskKey='a#4', space='A')):
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                self.assertEqual(A.cmd_publish(types.SimpleNamespace(**opts)), 0)
+            published = json.loads(out.getvalue())
+            self.assertEqual((published['task'], published['taskKey'], published['space']), ('SHOP-4', 'a#4', 'A'))
+            with mock.patch.object(A, 'me', return_value=dict(terminal='t2', task='SHOP-4', taskKey='b#4', space='B')):
+                with contextlib.redirect_stdout(io.StringIO()):
+                    self.assertEqual(A.cmd_publish(types.SimpleNamespace(**{**opts, 'id': published['id']})), 0)
+        shown = self.command_json('show', published['id'])
+        self.assertEqual((shown['version'], shown['task'], shown['taskKey'], shown['space']), (2, 'SHOP-4', 'a#4', 'A'))
+        listed = self.command_json('list', '--folder', str(folder))['artifacts']
+        self.assertEqual(listed, [shown])
+        self.assertEqual(self.snapshot(self.tasks), before)
 
     def test_cli_selects_owner_before_opening(self):
         calls = []

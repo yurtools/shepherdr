@@ -22,6 +22,10 @@ How to run, build and lay out the code: [docs/develop.md](docs/develop.md).
 - Installer tests run from `test/`: `cd test && python3 -m unittest test_install`. To run an older installer copy for a
   before-check, export `SHEPHERDR_HANDED_OVER=1` (else it hands over to the source's `bin/shepherdr`), and use a full
   `git archive` of the tree, since `herdr_task` lives beside `bin/`.
+- Run full Python installer discovery after the web build finishes: it copies `web/dist`, and Vite replaces
+  that directory during builds, so running both at once can break the copy.
+- If sandbox-injected `.agents`/`.codex`/`.aws` entries break installer source copies, test a clean `git archive`
+  of the tested commit without `node_modules`; do not copy injected entries or weaken home guards.
 - herdr-browser's library check: `test/test_herdr_browser_libs.py` fakes ldd and agent-browser; a real missing-library
   Chrome needs gcc, linking a library built with `-Wl,-soname` and then deleted.
 - herdr-browser's AppArmor case: test with `HERDR_BROWSER_USERNS_SYSCTL` and `HERDR_BROWSER_APPARMOR_D` stand-ins; a real
@@ -41,6 +45,8 @@ How to run, build and lay out the code: [docs/develop.md](docs/develop.md).
   and running it in node with stubs (see `test/test_chat_refocus.py`).
 - For native Chat/Terminal proof, focus the verified target terminal, use `herdr-app do pane-chat.toggle`, and
   re-resolve pane IDs after each switch.
+- `herdr-app ls` exposes pane IDs at `spaces[].tabs[].terminals[].pane`; route to a recorded owner's pane
+  explicitly instead of relying on whichever pane currently has focus.
 - Mark up (`mods/artifacts/markup.js`) imports must be listed in `MARKUP_HELPERS` in `mods/artifacts/bin/herdr-artifact`
   so each published artifact carries them; `test_every_installed_import_resolves` checks the imports.
 - Header layout checks: the web app keeps its pinned-lists and sidebar state across page loads, so a stub page can
@@ -89,6 +95,8 @@ How to run, build and lay out the code: [docs/develop.md](docs/develop.md).
   `navigator.mediaDevices.getUserMedia` with an oscillator `MediaStreamDestination` via eval.
 - Headless clipboard checks: agent-browser's `clipboard read` is blocked; focus a textarea and `press Control+v` to
   read what was copied. Phone long-press: CDP `Emulation.setTouchEmulationEnabled` + `Input.dispatchTouchEvent`.
+- For native Chat clipboard proof, verify the OS reader is installed (`wl-paste` on Wayland, `xclip` on X11);
+  byte-backed clipboard fixtures do not prove real OS paste gestures or native previews.
 - Another machine in herdr-task tests: run herdr-task as a subprocess with `HERDR_TASK_STORE=<tmp>` and a fake hc first on
   PATH (see AutomationFromAnotherMachine).
 - Python tests: each `test/test_*.py` imports `home_guard` first (a throwaway HOME for the run; touching the real home
@@ -96,6 +104,8 @@ How to run, build and lay out the code: [docs/develop.md](docs/develop.md).
   `cd test && python3 -m unittest test_herdr_task.ClassName` (from the repo root the module import fails).
 - If full Python discovery prints `OK` but its tool session exits 143, run the suite through
   `subprocess.run(..., start_new_session=True)` and record its actual return code; `OK` alone does not verify a clean exit.
+- If a restricted Codex sandbox blocks isolated loopback or Unix socket test fixtures, request access for the
+  guarded rerun; keep `home_guard` enabled rather than weakening fixture isolation.
 - herdr-task tests that need a real task list on disk plus a faked `begin()`: reuse Scheduled's setUp/run_cmd/tick_at as class
   attributes (see DoubleStart) instead of subclassing, which reruns Scheduled's tests.
 - Before-checks against main: `git archive origin/main | tar -x -C <scratch>`, copy the branch's new tests in, run there

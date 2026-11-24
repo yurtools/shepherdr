@@ -214,6 +214,11 @@ export async function act(hub: Hub, b: any, compat: Compat): Promise<unknown> {
     if (!a) throw new Error("That chat isn't here any more.");
     return a;
   };
+  if (b?.type === 'permission-info') {
+    if (!compat.asks?.information || !['advice','review'].includes(b.command)) throw new Error('Choose Advice or Ask Assistant on a permission card.');
+    await compat.asks.information(str(b.question,200),str(b.hash,64),b.command,argv=>exec(hub,argv,null,20));
+    return {ok:true};
+  }
   if (b?.type === "answer" && typeof b.question === "string" && b.question.startsWith("scr-")) {
     // a CLI's start screen (service/watch.ts): a tap presses that choice, only on the screen the card was drawn from;
     // "Answer in terminal" just shows the terminal

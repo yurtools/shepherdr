@@ -4,6 +4,7 @@
 //   a space's chat (its Assistant):  p:<space id, "/" as ":">     a task's chat:  <task id>/worker
 // A task id is its ref ("SHEP-7"), "<machine>:<ref>" on another machine, as 2.1 wrote them.
 import { failedOf } from "./send-once.ts";
+import type { Asks } from './asks.ts';
 import type { Snapshot, Place, Task, Need, Section, Machine, Chat, Message, Status, TaskStatus, StepKind, ActivityAnswer, Question, Artifact, SettingSection, Job } from "../web/shared/types.ts";
 import * as T from "../core/tasks.js";
 import * as SPc from "../core/spaces.js";
@@ -16,7 +17,7 @@ const { senderName, briefLabel, firstUser, firstKeys, newsTimeline, resolveArtif
 import { mentionedIn } from "../core/send.js";
 import * as MEc from "../core/mentions.js";
 import * as SCc from "../core/screens.js";
-import { codexChoice, permissionStatus } from "../core/asks.js";
+import { codexChoice, permissionStatus, requestHash } from "../core/asks.js";
 const { SCREEN } = SCc as any;
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -260,7 +261,7 @@ export class Compat {
   artifacts: { say(id: string, v: number, text: string, spot?: string): Promise<unknown> } | null = null;
 
   /** Open hook asks (service/asks.ts), set by main: they show as cards in their chat and in Needs you. */
-  asks: { of(terminal: string): any[]; open: Map<string, any> } | null = null;
+  asks: { of(terminal: string): any[]; open: Map<string, any>; information?: Asks['information'] } | null = null;
 
   /** A hook ask as 2.1's question card (core/asks.js words: a permission, a plan, or a question). */
   question(a: any, key: string): Question {
@@ -282,7 +283,7 @@ export class Compat {
     const detail = w.detail ? `${fence}text\n${w.detail}\n${fence}${w.cut ? cut : ""}` : undefined;
     return w.kind === "plan"
       ? { id: a.id, title: w.title, kind: "Plan", to: key, plan: `${w.detail ?? ""}${w.cut ? cut : ""}`, choices: [{ label: "Approve" }, { label: "Keep planning" }], noteRequiredFor: 1 }
-      : { id: a.id, title: w.title, kind: "Question", to: key, approval: a.approval ?? permissionStatus(a.req, undefined), ...(detail ? { plan: detail } : {}), choices: [{ label: "Allow" }, { label: "Deny" }] };
+      : { id: a.id, title: w.title, kind: "Question", to: key, approval: a.approval ?? permissionStatus(a.req, undefined), requestHash: requestHash(a.req), permissionLocal: !a.machine, ...(detail ? { plan: detail } : {}), choices: [{ label: "Allow" }, { label: "Deny" }] };
   }
   last: Snapshot | null = null;
   /** chat key -> the files its messages show (a chat's images): the only ones /api/file serves for it */

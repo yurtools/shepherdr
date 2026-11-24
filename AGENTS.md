@@ -89,6 +89,8 @@ How to run, build and lay out the code: [docs/develop.md](docs/develop.md).
   `navigator.mediaDevices.getUserMedia` with an oscillator `MediaStreamDestination` via eval.
 - Headless clipboard checks: agent-browser's `clipboard read` is blocked; focus a textarea and `press Control+v` to
   read what was copied. Phone long-press: CDP `Emulation.setTouchEmulationEnabled` + `Input.dispatchTouchEvent`.
+- For native Chat clipboard proof, verify the OS reader is installed (`wl-paste` on Wayland, `xclip` on X11);
+  byte-backed clipboard fixtures do not prove real OS paste gestures or native previews.
 - Another machine in herdr-task tests: run herdr-task as a subprocess with `HERDR_TASK_STORE=<tmp>` and a fake hc first on
   PATH (see AutomationFromAnotherMachine).
 - Python tests: each `test/test_*.py` imports `home_guard` first (a throwaway HOME for the run; touching the real home

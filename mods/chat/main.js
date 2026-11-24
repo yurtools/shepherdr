@@ -2072,12 +2072,17 @@ export default class Chat extends View {
   // The spaces the agent's machine reaches, from its herdr-task reach map (what tell-assistant
   // follows); none there yet: the spaces on its own machine.
   async loadReach() {
-    const r = await exec("sh", ["-c", mentions.REACH_FILE], { on: this.machine }).catch(() => null);
+    const address=this.addr,machine=this.machine,pid=this.t?.foreground?.pid;
+    const r = await exec("sh", ["-c", mentions.REACH_FILE], { on: machine }).catch(() => null);
+    if(this.historyClosed||address!==this.addr||machine!==this.machine||pid!==this.t?.foreground?.pid)return;
     let graph = null;
     try { graph = JSON.parse(r?.stdout || "null")?.graph ?? null; } catch {}
     const here = graph ? null : (spaces() ?? []).filter((x) => (x.machine ?? null) === (this.machine ?? null))
       .map((x) => ({ id: String(x.id).split("/").pop(), name: x.name, route: "", machine: this.machine ?? "", target: String(x.id).split("/").pop(), assistant: false }));
-    this.reach = { from: graph?.core?.name ?? this.machine, spaces: graph ? mentions.reachable(graph) : here };
+    const next = { from: graph?.core?.name ?? this.machine, spaces: graph ? mentions.reachable(graph) : here };
+    // Polls marshal new objects even when nothing changed. Compare outside
+    // render so neither history nor retained Markdown is invalidated by them.
+    if(JSON.stringify(next)!==JSON.stringify(this.reach))this.reach=next;
   }
 
   // A message's words with each #-mention in plain markdown: its name and machine, and "out of
@@ -2124,11 +2129,19 @@ export default class Chat extends View {
   async loadTasks() {
     const folder = this.t?.foreground?.cwd ?? this.t?.cwd;
     if (!folder) return;
-    const args = [...(this.machine ? ["--on", this.machine] : []), "list", "--json", "--folder", folder];
+    const address=this.addr,machine=this.machine,pid=this.t?.foreground?.pid;
+    const args = [...(machine ? ["--on", machine] : []), "list", "--json", "--folder", folder];
     const [r, old] = await Promise.all([args, [...args, "--archived"]].map((a) => exec("herdr-task", a).catch(() => null)));
+    if(this.historyClosed||address!==this.addr||machine!==this.machine||pid!==this.t?.foreground?.pid||folder!==(this.t?.foreground?.cwd??this.t?.cwd))return;
     const tasks = (out) => { try { const d = JSON.parse(out?.stdout ?? "{}"); return (d.tasks ?? []).map((x) => ({ ...x, folder: d.folder })); } catch { return null; } };
     const now = tasks(r);
-    if (now) this.tasks = [...now, ...(tasks(old) ?? [])];
+    if (now) {
+      const next=[...now,...(tasks(old)??[])];
+      if(JSON.stringify(next)!==JSON.stringify(this.tasks)){
+        this.tasks=next;
+        this.taskMentionStamp=JSON.stringify(next.map(x=>[x.ref,x.folder,x.title,x.archived]));
+      }
+    }
   }
 
   // The tasks a message mentions: by their id (HAT-1, from herdr-task's `ref`) or as #4.
@@ -2167,7 +2180,9 @@ export default class Chat extends View {
   // Every folder's tasks on its machine (herdr-task list --all): a space's tasks can be in any
   // folder, not only where its Assistant runs.
   async loadSpaceTasks() {
-    const r = await exec("herdr-task", [...(this.machine ? ["--on", this.machine] : []), "list", "--all", "--read-only", "--json"]).catch(() => null);
+    const address=this.addr,machine=this.machine,pid=this.t?.foreground?.pid,feature=this.feature;
+    const r = await exec("herdr-task", [...(machine ? ["--on", machine] : []), "list", "--all", "--read-only", "--json"]).catch(() => null);
+    if(this.historyClosed||address!==this.addr||machine!==this.machine||pid!==this.t?.foreground?.pid||feature!==this.feature)return;
     try {
       const d = JSON.parse(r?.stdout ?? "null");
       if (Array.isArray(d)) {
@@ -2175,7 +2190,10 @@ export default class Chat extends View {
         const signature = JSON.stringify(next);
         // This runs outside render. An unchanged eight-second response must not
         // invalidate news, mentions and every retained Markdown row on a repaint.
-        if (signature !== this.spaceTasksPayload) { this.spaceTasksPayload = signature; this.spaceTasks = next; }
+        if (signature !== this.spaceTasksPayload) {
+          this.spaceTasksPayload = signature; this.spaceTasks = next;
+          this.spaceTaskMentionStamp=JSON.stringify(next.map(x=>[x.ref,x.folder,x.title,x.archived]));
+        }
       }
     } catch {}
   }
@@ -3208,6 +3226,14 @@ export default class Chat extends View {
 
   rows() { return this.history?.snapshot?.rows ?? []; }
 
+  // A layout/status refresh belongs to the same timeline. Only an actual
+  // conversation/route change may replace it with the Opening notice.
+  historyIdentity() {
+    return [this.addr,this.path,this.kind,this.role,this.feature,this.pickKey()??this.areaKey(),
+      this.machine,this.taskRef,
+      this.t?.labels?.["herdr.task"],this.t?.labels?.["herdr.role"],this.t?.labels?.["herdr.space"],this.t?.labels?.["herdr.coordinator.space"]];
+  }
+
   historyContext() {
     const screens=shared("chat.screens")??{},by=this.workerTasks();
     const screenSig=JSON.stringify([this.addr,...by.keys()].map(addr=>screens[addr]??null));
@@ -3218,7 +3244,7 @@ export default class Chat extends View {
       this.t?.labels?.["herdr.task"],this.t?.labels?.["herdr.role"],this.t?.labels?.["herdr.space"],this.t?.labels?.["herdr.coordinator.space"],
       screenSig,machineSig,this.asks,
       (this.wasks??[]).map(a=>`${a.id}:${a.secret?.kept??""}:${a.requestHash??""}:${JSON.stringify(a.approval)}`).join("|"),
-      (this.sasks??[]).map(a=>`${a.name}:${a.kept}`).join("|")];
+      (this.sasks??[]).map(a=>`${a.name}:${a.kept}`).join("|"),this.measureGen??0];
   }
 
   historyStamp() {
@@ -3229,7 +3255,11 @@ export default class Chat extends View {
   }
 
   historyCurrent(plan) {
-    return !this.historyClosed&&this.history?.snapshot===plan&&equal(plan.context,this.historyContext());
+    return this.historyVisible(plan)&&this.history.snapshot===plan&&equal(plan.context,this.historyContext());
+  }
+
+  historyVisible(plan) {
+    return !!plan?.owner&&!this.historyClosed&&this.history===plan.owner&&!plan.owner.closed&&equal(plan.scope,this.historyIdentity());
   }
 
   historyEvent(plan,fn) {
@@ -3245,7 +3275,7 @@ export default class Chat extends View {
   prepareHistory(t,cx) {
     if(this.historyClosed)return null;
     const work=this.history??=new Preparation();
-    work.request(this.historyContext(),this.historyStamp(),()=>this.historyPlan());
+    work.request(this.historyContext(),this.historyStamp(),()=>this.historyPlan(),this.historyIdentity());
     this.scheduleHistory(cx);
     return work.snapshot;
   }
@@ -3258,9 +3288,9 @@ export default class Chat extends View {
       if(this.history!==work||work.closed)return;
       // UI inputs can change between draw and a timer. Invalidate before doing
       // even the first unit of work or exposing any row's controls.
-      work.request(this.historyContext(),this.historyStamp(),()=>this.historyPlan());
+      work.request(this.historyContext(),this.historyStamp(),()=>this.historyPlan(),this.historyIdentity());
       const result=work.step(32);
-      if(!equal(work.context,this.historyContext())){work.request(this.historyContext(),this.historyStamp(),()=>this.historyPlan());cx.notify();}
+      if(!equal(work.context,this.historyContext())){work.request(this.historyContext(),this.historyStamp(),()=>this.historyPlan(),this.historyIdentity());cx.notify();}
       if(result.error){this.preparingHistory=null;this.error=String(result.error.message??result.error);cx.notify();return;}
       if(result.changed&&work.snapshot){
         this.rowRevisions=work.snapshot.revisions;
@@ -3284,7 +3314,8 @@ export default class Chat extends View {
     for(const p of this.pending??[]){yield;host.pending.push({...p});}
     for(const p of this.replied??[]){yield;host.replied.push({...p});}
     for(const [id,state] of this.rowRevisions??[]){yield;host.rowRevisions.set(id,{...state});}
-    const plan=new PreparedHistory();plan.context=this.history.context;this.preparingHistory=plan;
+    const plan=new PreparedHistory();plan.owner=this.history;plan.context=this.history.context;plan.scope=this.history.scope;
+    plan.generation=this.measureGen??0;this.preparingHistory=plan;
     const rows=yield* host.rowPlan();
     plan.rows=rows;plan.recent=new RecentIndex(rows.length);
     for(let i=0;i<rows.length;i++){
@@ -3716,7 +3747,10 @@ export default class Chat extends View {
   // Presentation inputs can change before the next draw. Conversation objects are
   // only a callback validity guard: rebuild() replaces them during ordinary loads.
   linkedMarkdownStamp() {
-    return [this.measureGen,this.width,this.column(),zoomOf(),this.findQuery(),this.pickKey()??this.areaKey(),this.reach,this.tasks,this.spaceTasks];
+    // Progress/status changes update cards/news, not the text of task links.
+    // These signatures are calculated by the loaders, never by a paint pass.
+    return [this.measureGen,this.width,this.column(),zoomOf(),this.findQuery(),this.pickKey()??this.areaKey(),this.reach,
+      this.taskMentionStamp??this.tasks,this.spaceTaskMentionStamp??this.spaceTasks];
   }
 
   linkedMarkdownInputs() {
@@ -5259,6 +5293,9 @@ export default class Chat extends View {
       .child(this.notice(t, WORDS.opening, this.error??null)).child(this.composer(t,st));
     const {rows,keys,sizes,index:rowIndex}=prepared;
     const event=fn=>this.historyEvent(prepared,fn);
+    // Scrolling/hover remain available while replacement rows are prepared.
+    // Actions and measurements still require the exact current presentation.
+    const viewport=fn=>(...args)=>{if(this.history?.snapshot===prepared&&this.historyVisible(prepared))return fn(...args);};
     // First-seen times this render found (seenAt()), shared once it's done; the newest 60 kept.
     if (this.seenNew && !this.seenFlush) {
       this.seenFlush = true;
@@ -5303,7 +5340,7 @@ export default class Chat extends View {
       ? this.notice(t, "No messages", "Write to the agent below.")
       : v_flex().relative().flex_1().min_h(0).pt(8)
         .id("chat-body")
-        .on_size_change(event((size, cx) => {
+        .on_size_change(viewport((size, cx) => {
           const was = this.listH, h = unzoom(size.height);
           this.listH = h;
           if (was && Math.abs(was - h) > 0.5 && this.pinned) { this.stick = true; cx.notify(); }
@@ -5311,13 +5348,13 @@ export default class Chat extends View {
         // How far down the list a press was, for the action bands (rows take no handlers).
         .on_mouse_down("left", event((e) => { this.bodyPress = unzoom(e.local_position?.y); }))
         // Hover repaint follows message boundaries; moving within a long reply does not remeasure it.
-        .on_mouse_move(event((e, cx) => {
+        .on_mouse_move(viewport((e, cx) => {
           const row=rows[prepared.geometry.at((this.scrollTop??0)+unzoom(e.local_position?.y??0))];
           const b=row?.bar?.of??row?.blk??row?.of??row?.id??null;
           if (b !== this.hoverBand) { this.hoverBand = b; cx.notify(); }
         }))
         .on_hover((hovered, cx) => { if (!hovered) { this.hoverBand = null; cx.notify(); } })
-        .on_scroll_wheel(event((e, cx) => {
+        .on_scroll_wheel(viewport((e, cx) => {
           const y = e.delta?.y ?? 0;
           // Where the list is scrolled to, as near as known (the list doesn't say): wheel moves it.
           const movement = viewportScroll(this.scrollTop, y, prepared.total, Math.max(0, (this.listH ?? 0) - 8));
@@ -5328,12 +5365,16 @@ export default class Chat extends View {
           if (y > 0 && (this.range?.start ?? 9) <= 1) this.loadEarlier(cx);
         }))
         .child(v_virtual_list("chat-rows", rows.length, sizes, (i) => rows[i].id, (range) => {
-          if(!this.historyCurrent(prepared))return [];
-          this.range = range;
-          if (rows.length && !(range.end > range.start)) this.blank = true;
-          // The first row on screen bounds the scroll position: keep the estimate inside it.
-          const top = prepared.geometry.sum(range.start);
-          if ((this.scrollTop ?? 0) < top || (this.scrollTop ?? 0) >= top + (sizes[range.start] ?? 0)) this.scrollTop = top;
+          // A deferred frame owes the host one element per requested row even
+          // after a newer snapshot commits. Painting is not an approval action.
+          if(!this.historyVisible(prepared))return [];
+          if(this.historyCurrent(prepared)){
+            this.range = range;
+            if (rows.length && !(range.end > range.start)) this.blank = true;
+            // Only the current layout may update the scroll estimate.
+            const top = prepared.geometry.sum(range.start);
+            if ((this.scrollTop ?? 0) < top || (this.scrollTop ?? 0) >= top + (sizes[range.start] ?? 0)) this.scrollTop = top;
+          }
           return rows.slice(range.start, range.end).map((x, j) => {
             const flash = this.flash && (x.id === this.flash.id || String(x.id).startsWith(`${this.flash.id}:`));
             return div().relative().w_full().h(sizes[range.start + j]).when(!x.bar || x.kind === "band", (el) => el.overflow_hidden())
@@ -5342,7 +5383,7 @@ export default class Chat extends View {
               // Ids carry the width's generation, as the measurer's do: a reply's words keep the
               // width they were first laid out at, so after a resize (a restart's first narrow
               // frames) they'd stay narrow and tall, spilling under the next row.
-              .child(this.row(x, t, `v${this.measureGen}-${this.rowRevisions?.get(x.id)?.revision??0}-`))
+              .child(this.row(x, t, `v${prepared.generation}-${prepared.revisions?.get(x.id)?.revision??0}-`))
               .when(Boolean(flash), (el) => el.child(div().id(`flash-${x.id}`).absolute().inset_0().rounded(10).bg(t.accent + "26")
                 .opacity(this.flash.on ? 1 : 0).transition("opacity", { duration: 1100, easing: "ease-out" })));
           });

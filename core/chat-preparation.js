@@ -1,21 +1,27 @@
 // Native history preparation is a cooperative transaction, never render work.
 // A new source revision queues a successor without restarting a running pass.
-// Presentation changes cancel it: rows from another context cannot be acted on.
+// Presentation changes cancel work but retain the displayed snapshot. Only a
+// different conversation scope discards it; action freshness is checked by its owner.
 export class Preparation {
   constructor() {
     this.snapshot = null;
     this.context = null;
+    this.scope = null;
     this.source = null;
     this.pending = null;
     this.running = null;
     this.closed = false;
   }
 
-  request(context, source, create) {
+  request(context, source, create, scope = context) {
     if (this.closed) return;
+    if (!equal(scope, this.scope)) {
+      this.scope = scope;
+      this.snapshot = null;
+      this.context = null;
+    }
     if (!equal(context, this.context)) {
       this.context = context;
-      this.snapshot = null;
       this.running = null;
       this.pending = null;
       this.source = null;
@@ -62,7 +68,7 @@ export class Preparation {
 
   close() {
     this.closed = true;
-    this.snapshot = this.running = this.pending = this.source = this.context = null;
+    this.snapshot = this.running = this.pending = this.source = this.context = this.scope = null;
   }
 }
 

@@ -54,7 +54,7 @@ local.js: chat shepherdr-settings tabs-tasks
 machines.js: spaces-chat shepherdr-settings
 ui.js: workspace-approvals workspace-file-search workspace-files workspace-document workspace-file-actions accept-card artifacts chat chat-call chat-image chat-models chat-react coordinator jump toasts menu-tasks new-menu-tasks newspace pane-chat shepherdr-settings spaces-chat tabs-tasks task-browser task-pr tasks tasks-menu workspace-chrome-shepherdr workspace-status-chat confirm-chat prompt-chat machine-add-chat keybinds task-artifacts workspace-agents workspace-sessions workspace-launchers workspace-clipboard
 artview.js: accept-card artifacts chat chat-image jump task-artifacts
-artifact-sidebar.js: chat-image jump
+artifact-sidebar.js: artifacts chat-image jump
 addons.js: chat pane-chat shepherdr-settings tabs-tasks artifacts jump accept-card toasts spaces-chat workspace-chrome-shepherdr
 live.js: workspace-file-search workspace-files workspace-document workspace-file-actions chat coordinator jump menu-tasks new-menu-tasks newspace pane-chat shepherdr-settings spaces-chat tabs-tasks tasks workspace-status-chat workspace-agents workspace-sessions workspace-launchers
 core/bg-jobs.js: chat

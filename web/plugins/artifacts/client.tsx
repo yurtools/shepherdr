@@ -1,3 +1,5 @@
+import { artifactChatMachine, artifactInPlace } from "@client/artifact-route.ts"
+import { artifactKey, findArtifact } from "@core/artifact-owner.js"
 // Artifacts any agent makes (shepherdr artifact): a card in the chat where it was made, in a sealed frame; full screen
 // on a tap, with its versions, Mark up and a box to write to its keeper, so you change it by chatting beside it; and a
 // list per place, and one per chat (its ⋯ → Artifacts). A newer version swaps in live: only its data changed, the page takes the new data without a reload.
@@ -137,8 +139,8 @@ function MarkupLayer({ art, v, onEnd }: { art: Artifact; v: number; onEnd: () =>
     setFailed(false)
     setSaid(MARKUP.sending)
     const r = (await act(spot
-      ? { type: 'artifact-note', place: art.place, artifact: art.id, v, note: t, target: describe(spot, r0 ? { width: r0.width, height: r0.height } : null) }
-      : { type: 'artifact-say', place: art.place, artifact: art.id, v, text: t }).catch((e: Error) => ({ ok: false, error: e?.message }))) as { ok?: boolean; error?: string }
+      ? { type: 'artifact-note', place: art.place, artifact: art.id, machine: art.machine ?? null, v, note: t, target: describe(spot, r0 ? { width: r0.width, height: r0.height } : null) }
+      : { type: 'artifact-say', place: art.place, artifact: art.id, machine: art.machine ?? null, v, text: t }).catch((e: Error) => ({ ok: false, error: e?.message }))) as { ok?: boolean; error?: string }
     setSending(false)
     if (r.ok === false) {
       setFailed(true)
@@ -270,6 +272,7 @@ function setShown(key: string, id: string | null) {
 
 /** the artifact a side panel shows, while it is still kept */
 function useShown(key: string) {
+  const place = useUI((u) => u.place)
   const id = useSyncExternalStore(
     (l) => {
       shownListeners.add(l)
@@ -277,7 +280,7 @@ function useShown(key: string) {
     },
     () => shownIn[key],
   )
-  return useSnap()?.artifacts?.find((a) => a.id === id)
+  return artifactInPlace(useSnap(), id, place)
 }
 
 /** Show an artifact beside the chat: in the Artifacts list on the right (whatever its chips show; a phone's
@@ -286,9 +289,13 @@ function useShown(key: string) {
 export function showInPanel(id: string) {
   const { ui, snap } = getState()
   if (!snap) return
+  const a = findArtifact(snap.artifacts, id)
+  if (!a?.place || !snap.places.some((p) => p.id === a.place)) return openArtifact(id)
+  if (ui.place !== a.place) setUI({ place: a.place, task: null })
   if (ui.viewer) closeArtifact()
-  setShown(`list:${listView(ui, snap).key}`, id)
-  setUI(ui.device === 'phone' ? { task: null, tab: 'artifacts', pick: null, plus: null, menu: false } : { task: ui.task && !taskInMiddle(ui, snap) ? null : ui.task, side: 'artifacts' })
+  const now = getState().ui
+  setShown(`list:${listView(now, snap).key}`, artifactKey(a))
+  setUI(now.device === 'phone' ? { task: null, tab: 'artifacts', pick: null, plus: null, menu: false } : { task: now.task && !taskInMiddle(now, snap) ? null : now.task, side: 'artifacts' })
 }
 
 /** Mark up / Done, one look in the viewer's bar and the panel's (and the window's, mods/artifacts/main.js and
@@ -343,7 +350,7 @@ function PanelArtifact({ art, onBack }: { art: Artifact; onBack: () => void }) {
 
 /** An artifact filling a split view's pane, at its latest */
 function SplitArtifact({ artifactId }: { artifactId: string }) {
-  const art = useSnap()?.artifacts?.find((a) => a.id === artifactId)
+  const art = findArtifact(useSnap()?.artifacts, artifactId)
   return art ? (
     <div className="absolute inset-0">
       <ArtifactFrame art={art} v={art.v} full />
@@ -406,7 +413,7 @@ function RecipeFrame({ art, v, full }: Parameters<typeof PageFrame>[0]) {
   return (
     <div className={clsx('overflow-y-auto p-4 phone:p-5', full ? 'h-full' : 'max-h-[70dvh]')}>
       <Recipe recipe={recipe} asset={(src) => `api/artifacts/${encodeURIComponent(art.id)}/file/${src.split('/').map(encodeURIComponent).join('/')}?v=${v}${on}`}
-        reply={(text) => act({ type: 'artifact-send', place: art.place, artifact: art.id, v, text })} />
+        reply={(text) => act({ type: 'artifact-send', place: art.place, artifact: art.id, machine: art.machine ?? null, v, text })} />
     </div>
   )
 }
@@ -495,7 +502,7 @@ function PageFrame({
       if (d.shepherdr === 'send' && typeof d.text === 'string' && d.text.trim() && touchedNow(ref.current) && Date.now() - last.current > 2000) {
         last.current = Date.now()
         const text = d.text.replace(/\s*[\r\n]+\s*/g, ' ').trim().slice(0, 2000)
-        act({ type: 'artifact-send', place: art.place, artifact: art.id, v, text })
+        act({ type: 'artifact-send', place: art.place, artifact: art.id, machine: art.machine ?? null, v, text })
           .then((r: { to?: string }) => ref.current?.contentWindow?.postMessage({ shepherdr: 'sent', text, to: r?.to }, '*'))
           .catch(() => undefined)
       }
@@ -546,7 +553,8 @@ function ArtifactCard({ msg, chat }: { msg: Message; chat: Chat; from: string })
   const snap = useSnap()!
   const post = msg.artifact
   if (!post) return null
-  const art = snap.artifacts?.find((a) => a.id === post.id)
+  const machine = artifactChatMachine(snap, chat.key)
+  const art = findArtifact(snap.artifacts, post.id, machine)
   const later = chat.messages.slice(chat.messages.indexOf(msg) + 1).some((m) => m.artifact?.id === post.id)
   // under the words it came with (a message of its own, on its own)
   const gap = msg.text && 'mt-2'
@@ -555,7 +563,7 @@ function ArtifactCard({ msg, chat }: { msg: Message; chat: Chat; from: string })
   // an earlier publish of it: a quiet line, as the window's chat ("Published <title> v2"), that opens that version
   if (later)
     return (
-      <button type="button" onClick={() => openArtifact(art.id, post.v)}
+      <button type="button" onClick={() => openArtifact(art.id, post.v, art.machine ?? null)}
         className={clsx(gap, 'press-dim flex max-w-full items-center gap-1.5 rounded-row text-left text-[0.75rem] text-fg3 hover:bg-hover hover:text-fg2 phone:min-h-11 phone:text-[0.8125rem]')}>
         <PageIcon className={ic} />
         <span className="min-w-0 truncate">Published {art.title} v{post.v}</span>
@@ -623,7 +631,7 @@ function PreviewCard({ art, gap }: { art: Artifact; gap?: string }) {
             <span className="text-[0.75rem] text-fg3 tabular-nums phone:text-[0.8125rem]">{artifactLine(art.v)}</span>
           </span>
         </button>
-        <button type="button" onClick={(e) => (splitClick(e) ? openSplit({ kind: 'artifact', id: art.id }) : openArtifact(art.id))}
+        <button type="button" onClick={(e) => (splitClick(e) ? openSplit({ kind: 'artifact', id: artifactKey(art) }) : openArtifact(art.id, undefined, art.machine ?? null))}
           className="press grid h-7 shrink-0 place-items-center rounded-row bg-bg px-2.5 text-[0.8125rem] font-medium shadow-[inset_0_0_0_1px_var(--line2)] hover:bg-hover phone:h-9">
           Open
         </button>
@@ -679,7 +687,7 @@ function Viewer() {
   const v = useUI((u) => u.viewer)
   const device = useUI((u) => u.device)
   const snap = useSnap()
-  const art = v && snap?.artifacts?.find((a) => a.id === v.artifact)
+  const art = v && findArtifact(snap?.artifacts, v.artifact)
   const [markup, setMarkup] = useState(false)
   // a version no longer kept (the last 20 are) shows the latest
   const shown = art && v?.v && art.versions.some((x) => x.n === v.v) ? v.v : art?.v
@@ -687,10 +695,10 @@ function Viewer() {
   useEffect(() => setMarkup(false), [v?.artifact, shown])
   if (!v) return null
   const phone = device === 'phone'
-  if (!art || !shown)
+  if (!art || !shown || v.error || (v.owner && v.owner !== art.place) || !art.place || !snap?.places.some((p) => p.id === art.place))
     return (
       <div role="dialog" aria-modal="true" aria-label="Artifact" className="fixed inset-0 z-40 grid place-items-center bg-black/35 p-6" onClick={closeArtifact}>
-        <div className="rounded-box bg-bg px-5 py-4 shadow-dialog">{snap ? 'This artifact was deleted.' : 'Opening…'}</div>
+        <div className="rounded-box bg-bg px-5 py-4 shadow-dialog">{v.error || (snap ? 'This artifact or its owning space is unavailable.' : 'Opening…')}</div>
       </div>
     )
   // round, like every header's buttons; grey circles on a phone
@@ -702,11 +710,11 @@ function Viewer() {
         <div className="flex shrink-0 items-center gap-1.5 border-b border-line pt-[calc(env(safe-area-inset-top)+--spacing(1))] pr-2 [[data-topbar]~*_&]:pt-1 pb-1 pl-4 phone:gap-2 phone:px-3">
           <PageIcon className={clsx(ic, 'shrink-0 text-fg2 phone:hidden')} />
           <div className="min-w-0 flex-1 truncate font-medium">{art.title || 'Artifact'}</div>
-          <Stepper art={art} shown={shown} bar="viewer" onStep={(n) => openArtifact(art.id, n)} />
+          <Stepper art={art} shown={shown} bar="viewer" onStep={(n) => openArtifact(art.id, n, art.machine ?? null)} />
           <MarkUpButton on={markup} onClick={() => setMarkup(!markup)} round />
           {/* beside the chat, in the Artifacts panel */}
           {phone ? null : (
-            <IconButton label="Open in sidebar" onClick={() => showInPanel(art.id)} className="rounded-full!">
+            <IconButton label="Open in sidebar" onClick={() => showInPanel(artifactKey(art))} className="rounded-full!">
               <PanelIcon className={ic} />
             </IconButton>
           )}
@@ -785,7 +793,7 @@ function ArtifactList(_: { placeId: string }) {
     .sort((a, b) => b.at - a.at)
   // by its title, the task that made it, who made it, and (with All) its folder
   const list = q ? items.filter((a) => matches(q, a.title, a.task, a.by, all ? a.folderName : undefined, all ? a.folder : undefined)) : items
-  const isOpen = (a: Artifact) => panes.some((p) => p.kind === 'artifact' && p.id === a.id)
+  const isOpen = (a: Artifact) => panes.some((p) => p.kind === 'artifact' && p.id === artifactKey(a))
   if (shown) return <PanelArtifact art={shown} onBack={() => setShown(key, null)} />
   return (
     <>
@@ -814,9 +822,9 @@ function ArtifactList(_: { placeId: string }) {
       ) : list.length ? (
         <List className="pt-1">
           {list.map((a) => {
-            const sel = lastShown[key] === a.id
+            const sel = lastShown[key] === artifactKey(a)
             return (
-              <Row key={a.id} two sel={sel} onActivate={() => setShown(key, a.id)} className="gap-3! py-2!">
+              <Row key={a.id} two sel={sel} onActivate={() => showInPanel(artifactKey(a))} className="gap-3! py-2!">
                 <PageIcon className={clsx(ic, 'mt-0.5 shrink-0 self-start', sel || isOpen(a) ? 'text-focus' : 'text-fg3')} />
                 <RowText sub={<>{isOpen(a) ? 'Open · ' : ''}{detailOf(a)}</>}>
                   <span className="block truncate">{a.title}</span>
@@ -846,7 +854,7 @@ function TaskArtifacts({ task }: { task: Task; chatKey: string }) {
   }, [])
   const ref = task.id.slice(task.id.lastIndexOf(':') + 1)
   const all = snap.artifacts ?? []
-  const list = (task.artifacts ?? []).map((id) => all.find((a) => a.id === id)).filter((a): a is Artifact => !!a)
+  const list = (task.artifacts ?? []).map((id) => findArtifact(all, id, task.reviewMachine ?? null)).filter((a): a is Artifact => !!a)
   if (!list.length)
     return (
       <div className="flex flex-col items-center gap-1.5 px-5 pt-10 pb-4 text-center">
@@ -860,7 +868,7 @@ function TaskArtifacts({ task }: { task: Task; chatKey: string }) {
       {list.map((a) => {
         const proof = a.id === task.proof
         return (
-          <Row key={a.id} two onActivate={() => openArtifact(a.id)} data-task-artifact={a.id} className="gap-3! py-2!">
+          <Row key={a.id} two onActivate={() => openArtifact(a.id, undefined, a.machine ?? null)} data-task-artifact={a.id} className="gap-3! py-2!">
             <PageIcon className={clsx(ic, 'mt-0.5 shrink-0 self-start', proof ? 'text-focus' : 'text-fg3')} />
             <RowText sub={[`${a.v} ${a.v === 1 ? 'version' : 'versions'}`, a.at ? ago(a.at) : null].filter(Boolean).join(' · ')}>
               <span className="flex min-w-0 items-center gap-2">

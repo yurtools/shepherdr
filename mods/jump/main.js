@@ -280,8 +280,8 @@ export default class Jump extends View {
   // Over the chat the keyboard was in, as its card opens it; else in the Artifacts sidebar.
   openArtifact(a) {
     const area = chatArea(this.openedAt);
-    const show = area || !hasSidebarView() ? showViewer : (v) => showInSidebar(v) || showViewer(v);
-    openViewer({ id: a.id, title: a.title, version: a.version, machine: a.machine ?? null }, area, show);
+    const show = area || !hasSidebarView() ? showViewer : async (v) => { if (!await showInSidebar(v)) await showViewer(v); };
+    openViewer({ id: a.id, title: a.title, machine: a.machine ?? null }, area, show);
   }
 
   mark(r, t) {

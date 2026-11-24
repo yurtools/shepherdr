@@ -52,7 +52,7 @@ function step(view, a, v, cx) {
       const latest = latestOf(a, view.art.versions);
       if (shared(MARKUP)?.mod === a.mod) setShared(MARKUP, null);
       closeOverlay(props().overlay);
-      showViewer({ ...a, mod: out.mod, base: a.base ?? a.mod, version: v ?? latest, latest });
+      await showViewer({ ...a, mod: out.mod, base: a.base ?? a.mod, version: v ?? latest, latest });
     } catch (e) {
       toast({ title: "That version didn't open", body: plainError(e), level: "error" });
       view.art.busy = false;
@@ -131,7 +131,7 @@ export function artifactBar(view, a, handle) {
       .child(iconBtn("sidebar", "mods/chat-image/panel-right.svg", () => {
         if (marking) setShared(MARKUP, null);
         const done = showInSidebar({ ...a, latest });
-        if (done) done.then(() => closeOverlay(props()?.overlay));
+        if (done) done.then((ok) => { if (ok) closeOverlay(props()?.overlay); });
       }, t))
       .child(rule(t)))
     .child(iconBtn("close", "mods/chat-image/x.svg", () => closeOverlay(props()?.overlay), t));

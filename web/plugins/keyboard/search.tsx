@@ -1,3 +1,4 @@
+import { artifactKey } from "@core/artifact-owner.js"
 // Jump (Ctrl+K), as the window's: one box over spaces, tasks and artifacts (and machines, once there are others), each
 // group with its count, newest first, eight rows and then "Show N more". Every word typed is in the row somewhere.
 import clsx from 'clsx'
@@ -70,7 +71,7 @@ function itemsOf(snap: Snapshot, q: string, ui: UI, fromChat: boolean): Item[] {
     out.push({
       kind: 'artifact', key: `a:${a.machine ?? ''}:${a.id}`, label: a.title || a.id, sub: [a.task, place, remote ? machineName(on) : null, `v${a.v}`, ago(a.at)].filter(Boolean).join(' · '), at: a.at ?? 0,
       // over the chat the keyboard was in, as its card opens it; else in the Artifacts list beside it
-      go: () => (fromChat ? openArtifact(a.id) : showInPanel(a.id)),
+      go: () => (fromChat ? openArtifact(a.id, undefined, a.machine ?? null) : showInPanel(artifactKey(a))),
     })
   }
   if (remote)

@@ -120,6 +120,8 @@ How to run, build and lay out the code: [docs/develop.md](docs/develop.md).
 - Window-mod render tests: `bun test` in service/ with `mock.module` for gpui-kit/gpui-base and herdr via
   service/fake-herdr.ts (bun's mocks are per process, so every herdr stand-in needs every name); see
   service/spaces-sidebar.test.ts.
+- Native render fixtures that import tabs-tasks should run in a separate Bun process: dirs/local/bridge cache fake
+  paths across test suites under the CI-pinned Bun version (see service/feature-titles.test.ts).
 - Check `herdr-app status` before deciding native UI proof is unavailable; `herdr-app shot <absolute path>` captures an
   existing window. Never start another window for a test. No ImageMagick here: crop proof screenshots with python3 PIL.
   Stop a background stub with `kill $(lsof -t -i:<port>)`, never

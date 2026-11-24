@@ -99,20 +99,23 @@ export function watchSessionHistory(cx, onError) {
 // Capture ownership while the exact process/log/account are known, so later folder renames
 // cannot lose the association. Folder scanning also recovers sessions closed before installation.
 export function rememberChatSession(chat, cx) {
-  if(chat.feature && !chat.companion && !chat.thread && chat.path && chat.argv) {
-    const session=sessionOf(chat.kind,chat.path), sig=JSON.stringify([session,chat.argv]);
+  const feature=chat.role==='feature' ? chat.feature : null;
+  if(feature && !chat.companion && !chat.thread && chat.path && chat.argv && (chat.kind!=='codex'||chat.dflt?.home&&chat.dfltFor===`${chat.kind}|${chat.t?.foreground?.pid}`)) {
+    const session=sessionOf(chat.kind,chat.path);
+    const record={id:feature,kind:chat.kind,session,home:chat.dflt?.home,argv:chat.argv,terminal:chat.addr};
+    const sig=JSON.stringify(record);
     if(session && chat.featureSaved!==sig && !chat.featureSaving){
       chat.featureSaving=true;
-      cx.spawn(async()=>{try{await workspaceCall('feature-update',{id:chat.feature,kind:chat.kind,session,home:chat.dflt?.home,argv:chat.argv,terminal:chat.addr});chat.featureSaved=sig;}finally{chat.featureSaving=false;}});
+      cx.spawn(async()=>{try{if(chat.addr===record.terminal&&sessionOf(chat.kind,chat.path)===session){await workspaceCall('feature-update',record);chat.featureSaved=sig;}}finally{chat.featureSaving=false;}});
     }
   }
-  if (chat.kind !== "codex" || chat.companion || chat.thread || !chat.dflt?.home || !chat.path) return;
+  if (chat.kind !== "codex" || chat.companion || chat.thread || !chat.dflt?.home || !chat.path || chat.dfltFor!==`${chat.kind}|${chat.t?.foreground?.pid}`) return;
   const session = /([0-9a-fA-F-]{36})\.jsonl$/.exec(chat.path)?.[1];
   const pane = panes().find(p => p.pane === chat.myPane());
   const space = spaces().find(s => s.tabs.some(t => t.id === pane?.tab));
   if (!session || !space || space.machine) return;
   const tab = space.tabs.find(t => t.id === pane.tab);
-  const row = { ...(chat.feature ? { feature: chat.feature } : {}), kind: "codex", home: chat.dflt.home, session, space: space.id, title: tab?.name, argv: resumeArgv("codex", chat.argv ?? ["codex"], session) };
+  const row = { ...(feature ? { feature } : {}), kind: "codex", home: chat.dflt.home, session, space: space.id, title: tab?.name, argv: resumeArgv("codex", chat.argv ?? ["codex"], session) };
   const signature = JSON.stringify(row);
   if (signature === chat.historySaved || chat.historySaving) return;
   chat.historySaving = true;
@@ -121,7 +124,6 @@ export function rememberChatSession(chat, cx) {
       const r = await exec("python3", [helper(), "capture", signature]);
       if (r.code === 0) {
         chat.historySaved = signature;
-        if(chat.feature) await workspaceCall('feature-update',{id:chat.feature,session,home:chat.dflt.home,argv:row.argv,terminal:chat.addr});
       }
     } finally { chat.historySaving = false; }
   });

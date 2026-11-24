@@ -86,7 +86,7 @@ def main(command,p):
    if command=='feature-name' and not row.get('autoName'):return row
    if command!='feature-get':
     if p.get('name'):row['autoName']=False
-    allowed=('name',) if command=='feature-name' else ('name','status','tab','pane','session','home','argv','terminal','model','effort','sandbox','approval','kind')
+    allowed=('name',) if command=='feature-name' else ('name','status','tab','pane','session','home','argv','terminal','model','effort','sandbox','approval','kind','view')
     for k in allowed:
      if k in p:row[k]=str(p[k]).strip()[:80] if k=='name' else p[k]
     if not row['name']:raise ValueError('Enter a name.')

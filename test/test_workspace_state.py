@@ -35,6 +35,8 @@ class WorkspaceState(unittest.TestCase):
   self.assertNotEqual(a['id'],b['id'])
   self.call('feature-update',{'id':a['id'],'session':'saved-session','argv':['env','CODEX_HOME=/second','codex'],'home':'/second'})
   rec=self.call('feature-get',{'id':a['id']});self.assertEqual(rec['session'],'saved-session');self.assertEqual(rec['settings']['profile'],'secondary')
+  self.call('feature-update',{'id':a['id'],'terminal':'recovered','pane':'chat-pane','tab':'feature-tab','view':'chat'})
+  rec=self.call('feature-get',{'id':a['id']});self.assertEqual((rec['session'],rec['home'],rec['terminal'],rec['view']),('saved-session','/second','recovered','chat'))
   self.assertEqual(len(self.call('features')['features']),2)
  def test_ai_title_never_overwrites_manual_rename(self):
   a=self.call('feature-create',{'space':'one','autoName':True})

@@ -6,7 +6,8 @@
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex, TextView, InputState, Input } from "gpui-base";
 import { image } from "gpui-kit";
-import { theme } from "herdr";
+import { appHome, theme } from "herdr";
+import { PdfPreview, pdfView } from './pdf-view.js';
 import { asset, reply } from "./artifact.js";
 import data from "./recipe-data.js";
 import { chartShapes, choiceReply, formReply, isLink, mdParts, mediaKind, withIds } from "./recipe.js";
@@ -14,7 +15,8 @@ import { chartShapes, choiceReply, formReply, isLink, mdParts, mediaKind, withId
 const TONE = { info: "surface", good: "done", warn: "working", bad: "blocked" };
 
 export default class RecipeView extends View {
-  init() {
+  init(_props, cx) {
+    this.pdfs = new Map();
     this.recipe = null;
     this.error = null;
     this.tab = new Map();      // a tabs block's picked tab
@@ -27,12 +29,25 @@ export default class RecipeView extends View {
     // every form field's InputState now: GPUI refuses InputState.new during render (#1026)
     const walk = (bs) => (Array.isArray(bs) ? bs : []).forEach((b) => {
       if (b?.type === "form") (b.fields ?? []).forEach((f) => f.kind !== "checkbox" && this.input(b, f));
+      else if (b?.type === 'pdf') {
+        const absolute = name => { const path = asset(name); return path.startsWith('/') ? path : `${appHome()}/${path}`; };
+        const pdf = new PdfPreview(absolute(b.src), { helper: absolute('pdf-render.py') });
+        this.pdfs.set(b.id, pdf); pdf.load(cx);
+      }
       else if (b?.type === "columns") (b.columns ?? []).forEach(walk);
       else if (b?.type === "tabs") (b.tabs ?? []).forEach((x) => walk(x?.blocks));
       else if (b?.type === "details") walk(b.blocks);
     });
     walk(this.recipe?.blocks);
   }
+
+  pdf(b, t, cx) {
+    const pdf = this.pdfs.get(b.id);
+    return v_flex().w_full().min_w(0).gap(4).child(pdfView(pdf, t, `pdf-${b.id}`, true))
+      .when(Boolean(b.caption), e => e.child(div().text_size(12).text_color(t.muted).child(b.caption)));
+  }
+
+  async close() { for (const pdf of this.pdfs.values()) pdf.closed = true; for (const pdf of this.pdfs.values()) await pdf.dispose(); for (const input of this.inputs.values()) input.release(); }
 
   // Markdown words; each fenced code block in them gets its own code box with a Copy button (core/recipe.js mdParts).
   md(id, text, t) {
@@ -137,7 +152,7 @@ export default class RecipeView extends View {
         .when(!!x.note, (e) => e.child(div().text_size(12).text_color(t.dim).child(String(x.note))))));
       case "video": return this.media(b, t, "▶", "Video", b.poster ? b.poster : null);
       case "audio": return this.media(b, t, "♪", "Sound", null);
-      case "pdf": return this.media(b, t, "PDF", "PDF", null);
+      case "pdf": return this.pdf(b, t, cx);
       case "image": return v_flex().gap(4)
         .child(image(asset(b.src)).w_full().when(!!b.w && !!b.h, (e) => e.max_w(b.w)).rounded(6).border_1().border_color(t.border))
         .when(!!b.caption, (e) => e.child(div().text_size(12).text_color(t.muted).whitespace_normal().child(b.caption)));

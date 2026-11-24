@@ -27,6 +27,35 @@ test("closing one file preserves other tabs and chooses the next, previous, then
  await view.closeFile(key("c.ts"),cx);expect(view.active).toBe(key("a.ts"));
  await view.closeFile(key("a.ts"),cx);expect(view.active).toBeNull();expect(view.docs.size).toBe(0);expect(released).toEqual(["b.ts","c.ts","a.ts"]);
 });
+
+test('PDF open, source commands, save, drafts and reload never read or write text bytes', async () => {
+ let reads=0; disk=async()=>{reads++;throw Error('PDF must never reach text loader')};
+ // The document routes to the actual common loader; replace only its host execution boundary.
+ const { PdfPreview }=await import('../mods/workspace-document/pdf-view.js');
+ const call=PdfPreview.prototype.call;
+ PdfPreview.prototype.call=async function(op:string){return op==='render'?{page:1,pages:2,version:'one',image:'/tmp/page.png',width:1546,height:2000}:{};};
+ try {
+  view.open('/project/report.pdf',null,cx,{root:'/project',space:'one'});await Promise.all(pending);
+  const doc=view.docs.get(key('report.pdf'));expect(doc.kind).toBe('pdf');expect(doc.pdf.pages).toBe(2);expect(doc.editor).toBeUndefined();
+  view.save(doc,cx);view.editor(doc);await view.draft(doc);view.reload(doc,cx);await Promise.all(pending);
+  built.length=0;view.render(cx);expect(byId('save')).toBeUndefined();expect(byId('mode-Source')).toBeUndefined();expect(byId('pdf-next')).toBeDefined();
+  expect(reads).toBe(0);await expect(readFile(view.draftPath(doc))).rejects.toThrow();
+  await view.closeFile(key('report.pdf'),cx);expect(doc.pdf.closed).toBe(true);
+ } finally { PdfPreview.prototype.call=call; }
+});
+
+test('two spaces with identical PDF filenames keep distinct loaders and reopening refreshes', async()=>{
+ const { PdfPreview }=await import('../mods/workspace-document/pdf-view.js');
+ const call=PdfPreview.prototype.call;let renders=0;
+ PdfPreview.prototype.call=async function(op:string){if(op==='render'){renders++;return{page:1,pages:2,version:String(renders),image:'/tmp/page.png',width:1546,height:2000};}return{};};
+ try {
+  view.open('/one/report.pdf',null,cx,{root:'/one',space:'one'});view.open('/two/report.pdf',null,cx,{root:'/two',space:'two'});await Promise.all(pending);
+  const one=view.docs.get(':/one/report.pdf'),two=view.docs.get(':/two/report.pdf');
+  expect(one.pdf).not.toBe(two.pdf);expect(one.pdf.token).not.toBe(two.pdf.token);expect(one.root).toBe('/one');expect(two.root).toBe('/two');
+  view.open('/one/report.pdf',null,cx);await Promise.all(pending);expect(renders).toBe(3);
+  await view.close();expect(one.pdf.closed).toBe(true);expect(two.pdf.closed).toBe(true);
+ } finally { PdfPreview.prototype.call=call; }
+});
 test("closing an inactive tab keeps focus on the active file",async()=>{
  add("a.ts");add("b.ts");view.active=key("a.ts");await view.closeFile(key("b.ts"),cx);expect(view.active).toBe(key("a.ts"));
 });

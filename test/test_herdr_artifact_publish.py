@@ -114,6 +114,10 @@ class Publish(unittest.TestCase):
             dst = os.path.join(ro, h)
             shutil.copyfile(os.path.join(os.path.dirname(A.MARKUP), h), dst)
             os.chmod(dst, 0o444)
+        for h in A.PDF_HELPERS:
+            dst = os.path.join(ro, h)
+            shutil.copyfile(os.path.join(os.path.dirname(A.RECIPE_VIEW), h), dst)
+            os.chmod(dst, 0o444)
         os.chmod(ro, 0o555)
         d = self.recipe()
         os.chmod(os.path.join(d, "recipe.json"), 0o444)
@@ -204,6 +208,9 @@ class Publish(unittest.TestCase):
                 mod = os.path.join(self.dir, "app", "mods", out["mod"])
                 js = [os.path.join(r, n) for r, _, names in os.walk(mod) for n in names if n.endswith(".js")]
                 self.assertIn("artifact-markup.js", [os.path.basename(f) for f in js])
+                if kind == 'recipe':
+                    for helper in A.PDF_HELPERS:
+                        self.assertTrue(os.path.isfile(os.path.join(mod, helper)), helper)
                 missing = []
                 for f in js:
                     with open(f) as fh:

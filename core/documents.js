@@ -9,6 +9,7 @@ export function language(path) {
     js: 'javascript', mjs: 'javascript', cjs: 'javascript', mts: 'typescript', cts: 'typescript', html: 'html', htm: 'html', css: 'css', scss: 'css', xml: 'xml', xsd: 'xml', xsl: 'xml', svg: 'xml', sql: 'sql', tf: 'hcl', tfvars: 'hcl', hcl: 'hcl', json: 'json', py: 'python', rs: 'rust', jsonc: 'json', txt: 'text', csv: 'text', tsv: 'text' })[ext] ?? ext;
 }
 export function documentKind(path) {
+  if (/\.pdf$/i.test(path)) return 'pdf';
   if (/\.(docx|doc)$/i.test(path)) return 'docx';
   if (/\.(xlsx|xlsm|xltx|xls|xlsb)$/i.test(path)) return 'excel';
   return /\.(md|markdown)$/i.test(path) ? 'markdown' : /\.(csv|tsv)$/i.test(path) ? 'csv' : 'text';

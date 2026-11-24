@@ -81,6 +81,9 @@ cleanup. `service/pdf-preview.test.ts` runs the common controller with the real
 helper, including late close and rapid navigation. Document tests check text,
 draft and save exclusion. Artifact packaging tests require all imports and the
 Python helper to travel with published recipes.
+Real raster tests skip when Poppler is unavailable. The Bun controller suite
+always runs the real helper with Poppler hidden from its child PATH to verify
+the missing-tool fallback and cleanup without requiring a system installation.
 
 For the browser regression, build first, then run
 `bun test/browser/serve-pdf.ts 8846`. This loopback-only fixture server applies

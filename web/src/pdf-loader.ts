@@ -18,6 +18,7 @@ class BinaryData {
     return resource(kind === 'cMapUrl' ? maps : kind === 'standardFontDataUrl' ? fonts : wasm, filename)
   }
 }
+class PreviewFailure extends Error {}
 
 export function canvasSize(width: number, height: number, scale: number, dpr: number) {
   const ratio = Math.min(Math.max(1, dpr), 2, Math.sqrt(4_000_000 / (width * height * scale * scale)))
@@ -33,33 +34,47 @@ export class PdfSession {
   port: Worker
   worker: PDFWorker
   workerUrl: string
+  failed = false
   constructor(url: string) {
     // Supplying a real port prevents PDF.js from falling back to parsing on the UI thread.
     // A blob wrapper also works in the self-contained artifact preview HTML.
-    this.workerUrl = URL.createObjectURL(new Blob([`import ${JSON.stringify(new URL(worker, document.baseURI).href)};`], { type: 'text/javascript' }))
+    this.workerUrl = URL.createObjectURL(new Blob([`await import(${JSON.stringify(new URL(worker, document.baseURI).href)});`], { type: 'text/javascript' }))
     try { this.port = new Worker(this.workerUrl, { type: 'module' }); this.worker = PDFWorker.create({ port: this.port }) }
     catch (e) { URL.revokeObjectURL(this.workerUrl); throw e }
     this.task = getDocument({ url, worker: this.worker, disableAutoFetch: true, disableStream: true,
       useWorkerFetch: false, BinaryDataFactory: BinaryData,
       enableXfa: false, stopAtErrors: true, maxImageSize: 16_000_000, canvasMaxAreaInBytes: 16_000_000 })
+    this.port.addEventListener('error', () => { this.failed = true })
+  }
+  async bounded<T>(operation: Promise<T>, ms: number) {
+    let timer: ReturnType<typeof setTimeout> | undefined
+    let onError = () => {}
+    try {
+      return await Promise.race([operation, new Promise<never>((_, reject) => {
+        onError = () => reject(new PreviewFailure('The PDF worker could not start. Open the original in a PDF app.'))
+        this.port.addEventListener('error', onError, { once: true })
+        if (this.failed) onError()
+        timer = setTimeout(() => reject(new PreviewFailure('PDF preview timed out. Reload or open the original in a PDF app.')), ms)
+      })])
+    } finally { clearTimeout(timer); this.port.removeEventListener('error', onError) }
   }
   async open() {
-    const timer = setTimeout(() => void this.destroy(), 20000)
-    try { this.doc = await this.task.promise; return this.doc.numPages }
+    try { this.doc = await this.bounded(this.task.promise, 20000); return this.doc.numPages }
     catch (error) {
       await this.destroy()
+      if (error instanceof PreviewFailure) throw error
       if ((error as Error).name === 'PasswordException') throw new Error('Password-protected PDFs cannot be previewed here. Open the original in a PDF app.')
       throw new Error('PDF could not be loaded. It may be corrupt, unsupported or unavailable. Open the original in a PDF app.')
-    } finally { clearTimeout(timer) }
+    }
   }
   cancel() { this.generation++; this.renderTask?.cancel(); this.renderTask = undefined }
   async render(pageNumber: number, width: number, zoom: number | null) {
     this.cancel()
     const generation = this.generation
-    const timer = setTimeout(() => void this.destroy(), 15000)
+    const deadline = Date.now() + 15000
     let page
     try {
-      page = await this.doc!.getPage(pageNumber)
+      page = await this.bounded(this.doc!.getPage(pageNumber), 15000)
       if (this.closed || generation !== this.generation) return null
       const original = page.getViewport({ scale: 1 })
       const scale = zoom ?? Math.min(2, Math.max(100, width - 24) / original.width, Math.max(200, innerHeight * .65) / original.height)
@@ -71,18 +86,20 @@ export class PdfSession {
       canvas.setAttribute('aria-label', `PDF page ${pageNumber}`); canvas.setAttribute('role', 'img')
       const viewport = page.getViewport({ scale: size.width / original.width })
       this.renderTask = page.render({ canvas, viewport })
-      await this.renderTask.promise
+      await this.bounded(this.renderTask.promise, Math.max(1, deadline - Date.now()))
       if (this.closed || generation !== this.generation) { canvas.width = canvas.height = 0; return null }
       return canvas
     } catch (error) {
       if (generation !== this.generation && !this.closed) return null
+      await this.destroy()
       throw error
-    } finally { clearTimeout(timer); page?.cleanup() }
+    } finally { page?.cleanup() }
   }
   async destroy() {
     if (this.closed) return
     this.closed = true; this.cancel()
-    try { await this.task.destroy().catch(() => {}) }
-    finally { this.worker.destroy(); this.port.terminate(); URL.revokeObjectURL(this.workerUrl) }
+    // A worker that never started cannot answer PDF.js's Terminate request.
+    void this.task.destroy().catch(() => {})
+    this.worker.destroy(); this.port.terminate(); URL.revokeObjectURL(this.workerUrl)
   }
 }

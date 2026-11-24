@@ -14,8 +14,10 @@ async function renderOne(pdf, extra) {
 }
 
 export class PdfPreview {
+  /** @param {string} path @param {{on?: string|null, helper?: string}} options */
   constructor(path, { on = null, helper = `${appHome()}/mods/workspace-document/pdf-render.py` } = {}) {
     this.path = path; this.on = on; this.helper = helper;
+    this.unsupported = win()?.platform === 'windows';
     this.root = `${appHome()}/data/pdf-preview`;
     this.token = `pdf-${Date.now()}-${Math.random().toString(36).slice(2)}`;
     this.page = 1; this.pages = 0; this.zoom = 1; this.fit = true;
@@ -30,6 +32,7 @@ export class PdfPreview {
   load(cx) {
     if (this.closed) return;
     if (this.on) { this.error = 'Remote PDF previews are not available in the native pane. Open a local copy to preview it.'; cx.notify(); return; }
+    if (this.unsupported) { this.error = 'Native PDF preview currently supports Linux and macOS with Python and Poppler. Use Open original on Windows.'; cx.notify(); return; }
     this.wanted = (this.wanted ?? 0) + 1;
     if (this.busy) return;
     this.busy = true; this.error = null;
@@ -51,7 +54,7 @@ export class PdfPreview {
     cx.notify();
   }
   check(cx) {
-    if (this.closed || this.on || this.busy || this.checking) return;
+    if (this.closed || this.on || this.unsupported || this.busy || this.checking) return;
     this.checking = true;
     cx.spawn(async cx => {
       try { const out = await this.call('stat'); const previous = this.observedVersion; this.observedVersion = out.version; if (!this.closed && previous !== undefined && out.version !== previous) this.load(cx); }
@@ -60,7 +63,7 @@ export class PdfPreview {
     });
   }
   turn(delta, cx) { this.page = Math.max(1, Math.min(this.pages || 1, this.page + delta)); this.load(cx); }
-  async dispose() { this.closed = true; await this.work?.catch(() => {}); if (!this.on) await this.call('close').catch(() => {}); this.result = null; }
+  async dispose() { this.closed = true; await this.work?.catch(() => {}); if (!this.on && !this.unsupported) await this.call('close').catch(() => {}); this.result = null; }
   async original(cx) {
     if (this.on) { cx.write_to_clipboard(this.path); return; }
     const os = win()?.platform;
@@ -95,5 +98,5 @@ export function pdfView(pdf, t, id = 'pdf', embedded = false) {
       .on_size_change((size, cx) => { if (size.width !== pdf.size.width || size.height !== pdf.size.height) { pdf.size = size; cx.notify(); } })
       .child(pdf.busy ? div().p(16).text_size(12).child('Rendering PDF page…') : data && !pdf.error
         ? div().p(12).child(image(data.image.startsWith(appHome() + '/') ? data.image.slice(appHome().length + 1) : data.image).w(width).h(height))
-        : div().p(16).text_size(12).child(pdf.error ? 'Use Open original to view this file in a PDF app.' : 'Loading PDF…')));
+        : div().p(16).text_size(12).child(pdf.error ? (pdf.on ? 'Copy the remote path or open a local copy to preview it.' : 'Use Open original to view this file in a PDF app.') : 'Loading PDF…')));
 }

@@ -24,11 +24,13 @@ def limits():
     # Poppler runs outside the UI process. POSIX limits also bound hostile page contents.
     try:
         import resource
-        resource.setrlimit(resource.RLIMIT_CPU, (10, 10))
-        resource.setrlimit(resource.RLIMIT_AS, (768 * 1024 * 1024,) * 2)
-        resource.setrlimit(resource.RLIMIT_FSIZE, (20 * 1024 * 1024,) * 2)
-    except (ImportError, ValueError, OSError):
-        pass
+    except ImportError:
+        return
+    for kind, value in ((resource.RLIMIT_CPU, 10), (resource.RLIMIT_AS, 768 * 1024 * 1024), (resource.RLIMIT_FSIZE, 20 * 1024 * 1024)):
+        try:
+            resource.setrlimit(kind, (value, value))
+        except (ValueError, OSError):
+            pass
 
 
 def command(argv):

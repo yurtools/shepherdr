@@ -47,3 +47,7 @@ test('remote files never invoke local rendering and corrupt files stop with a re
  const path=join(root,'bad.pdf');await writeFile(path,'corrupt');const pdf=new PdfPreview(path,{helper});pdf.load(cx);await settled();
  expect(pdf.error).toContain('corrupt');expect(pdf.busy).toBe(false);await pdf.dispose();
 });
+test('unsupported native platforms keep an explicit fallback without launching a renderer',async()=>{
+ const pdf=new PdfPreview('/project/report.pdf',{helper});pdf.unsupported=true;pdf.load(cx);pdf.check(cx);await pdf.dispose();await settled();
+ expect(calls.length).toBe(0);expect(pdf.error).toContain('Windows');expect(pdf.result).toBeNull();
+});

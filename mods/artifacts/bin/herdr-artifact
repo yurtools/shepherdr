@@ -1974,8 +1974,8 @@ PREVIEW_TYPES = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg
                  ".mp4": "video/mp4", ".m4v": "video/mp4", ".webm": "video/webm", ".mov": "video/quicktime",
                  ".mp3": "audio/mpeg", ".m4a": "audio/mp4", ".wav": "audio/wav", ".ogg": "audio/ogg", ".pdf": "application/pdf"}
 # the page: its own inline script and styles, its fonts inside; it asks only this server (its clips, sounds and PDFs too)
-VIEWER_CSP = ("default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; font-src data:; "
-              "img-src 'self' data:; media-src 'self'; frame-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'; "
+VIEWER_CSP = ("default-src 'none'; script-src 'unsafe-inline' data: 'wasm-unsafe-eval'; worker-src blob:; style-src 'unsafe-inline'; font-src data:; "
+              "img-src 'self' data:; media-src 'self'; frame-src 'self'; connect-src 'self' data:; base-uri 'none'; form-action 'none'; "
               "frame-ancestors 'none'")
 # an artifact's own file, as the service sends it (service/artifacts.ts)
 FILE_CSP = "sandbox; default-src 'none'; img-src 'self'; media-src 'self'; style-src 'unsafe-inline'"

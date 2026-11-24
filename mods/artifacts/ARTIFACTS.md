@@ -74,8 +74,10 @@ Blocks, top to bottom (each may carry an `"id"`; the person's notes point at blo
   `loop` for a short clip that plays itself). **A short clip beats a GIF**: a GIF is big and can't stop or seek; a
   clip is smaller, has sound and controls, and plays on the phone. No poster given: its first frame is made at publish
   (with ffmpeg here) and the card shows it. A `.mov` or other clip no browser plays becomes an mp4 copy at publish
-  (ffmpeg here; without it, the notice says so). `audio` is a small player; `pdf` shows the PDF inline, with "Open the
-  PDF" under it (a phone may show only the link). In the window (GPUI) a clip, sound or PDF can't play: it shows its
+  (ffmpeg here; without it, the notice says so). `audio` is a small player; `pdf` shows read-only pages with page,
+  zoom/Fit, Reload and Open original controls, including on phones. Newly published recipes use the same native PDF
+  viewer as documents on local Linux/macOS with Python and Poppler; missing tools or unsupported files show a fallback.
+  In the window (GPUI) a clip or sound can't play: it shows its
   poster (or a tile) and says "plays in the web app", so put the one thing it must show in the caption.
 - **Sizes**: a video at most 40 MB each, a sound 20 MB, a PDF 25 MB, a picture or other file 4 MB; the whole artifact
   64 MB (every kept version counts). Over that, publish says which file and what to do (e.g. a shorter, smaller

@@ -31,12 +31,9 @@ export function named(f: File, now: Date, i = 0, of = 1): File {
   return new File([f], name, { type: f.type, lastModified: f.lastModified })
 }
 
-/** what a paste attaches; none when it is text. A rich copy (a document, a spreadsheet) brings a picture of itself
- *  along with its text: the text wins there, so pasting cells or a paragraph stays a paste of text. A picture copied
- *  in the browser comes with an <img> of itself but no plain text: that is still a picture. */
+/** Attach real file payloads even when text/HTML describe the same image. Never fetch an HTML image URL. */
 export function pasted(dt: Pick<DataTransfer, 'files' | 'types' | 'getData'> | null, now = new Date()): File[] {
   if (!dt?.files?.length) return []
-  if (dt.types.includes('text/html') && dt.getData('text/plain').trim()) return []
   const files = Array.from(dt.files)
   const nameless = files.filter((f) => NAMELESS.test(f.name)).length
   let n = 0

@@ -2441,9 +2441,8 @@ function startUpload(chatKey: string, id: string, since = Date.now()): Promise<s
   return up
 }
 
-/** files from +, a paste or a drop: each shows in the message box at once (a picture as itself, from the device) while
- *  it uploads to Shepherdr, and waits there until it is sent. One whose upload fails keeps its place: Send tries again */
-async function attach(chatKey: string, list: File[]) {
+/** Files from +, a paste or a drop stay on this device with a local preview until Send starts their upload. */
+function attach(chatKey: string, list: File[]) {
   if (!list.length) return
   const added = list.map((f) => {
     const id = `upload:${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
@@ -2453,7 +2452,6 @@ async function attach(chatKey: string, list: File[]) {
     return { name: f.name, path: id }
   })
   setUI((u) => ({ plus: null, files: { ...u.files, [chatKey]: [...(u.files[chatKey] ?? []), ...added] } }))
-  await Promise.allSettled(added.map((a) => startUpload(chatKey, a.path)))
 }
 
 /** a page opened again: what was still sending goes on (its pictures from the device), and the device lets go of

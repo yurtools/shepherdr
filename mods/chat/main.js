@@ -345,9 +345,11 @@ export default class Chat extends View {
       // Copied files pasted as text (file:// lines) become attachments.
       const v = this.box.value();
       if (/^file:\/\/\S/m.test(v)) {
-        const found = v.split("\n").filter((l) => /^file:\/\/\S+$/.test(l.trim())).map((l) => decodeURIComponent(l.trim().slice(7)));
-        this.addFiles(attach.paths(found));
-        this.box.set_value(v.split("\n").filter((l) => !/^file:\/\/\S+$/.test(l.trim())).join("\n"));
+        const found = attach.filePaths(v);
+        if (found.length) {
+          this.addFiles(attach.paths(found));
+          this.box.set_value(v.split("\n").filter((l) => !attach.filePaths(l).length).join("\n"));
+        }
       }
       this.slashSel = 0;
       // Editing a recalled message makes it a new one: arrows move in it again.
@@ -356,11 +358,9 @@ export default class Chat extends View {
       this.saveSoon(cx);
       cx.notify();
     });
-    // A paste with no text: the clipboard's image or copied files become attachments.
-    this.box.on("paste_other", (_e, cx) => cx.spawn(async (cx) => {
-      const got = await attach.fromClipboard().catch((e) => { this.error = String(e?.message ?? e); cx.notify(); return []; });
-      if (got.length) { this.error = null; this.addFiles(got); this.saveSoon(cx); cx.notify(); }
-    }));
+    // Older/native Paste actions with no text still arrive here. Keyboard and menu Paste
+    // use the same transaction, including when the clipboard also advertises text/HTML.
+    this.box.on("paste_other", (_e, cx) => this.pasteClipboard(cx));
     this.wasFocused = false;
     // Up/Down/Tab/Escape reach the textarea first, which keeps them. While the "/" list shows
     // (chat_slash) or the box is empty or showing a recalled message (chat_recall), these
@@ -369,6 +369,9 @@ export default class Chat extends View {
       bound = true;
       const keys = [];
       for (const ctx of ["Input", "TextArea", "Textarea"]) {
+        for (const chat of ["chat_composer", "chat_slash", "chat_recall", "chat_stop"]) {
+          for (const keystroke of ["ctrl-v", "cmd-v"]) keys.push({ keystroke, action: "chat_paste", context: `${chat} > ${ctx}` });
+        }
         keys.push({ keystroke: "up", action: "chat_slash_up", context: `chat_slash > ${ctx}` },
           { keystroke: "down", action: "chat_slash_down", context: `chat_slash > ${ctx}` },
           { keystroke: "tab", action: "chat_slash_take", context: `chat_slash > ${ctx}` },
@@ -1526,6 +1529,7 @@ export default class Chat extends View {
   // Enter: now (while the agent works, it takes it mid-turn). Ctrl+Enter while it
   // works: held, and sent by itself once it is free.
   send(cx, hold = false) {
+    if (this.clipboardPaste) { toast({ title: 'Paste is still loading', body: 'Wait for the attachment to appear, then send.' }); return; }
     // A picked "#space" goes as its mention, which names its target (core/mentions.js).
     const text = mentions.expandTasks(mentions.expand(this.box.value().trim(), this.picked), this.pickedTasks);
     this.picked = [];
@@ -2588,11 +2592,45 @@ export default class Chat extends View {
     if(req.action==='cut'){this.box.set_selected_range(range);this.box.replace('');this.saveSoon(cx);}
     if(req.action==='paste'){
       this.box.focus();this.box.set_selected_range(range);
-      const pasted=cx.read_from_clipboard();
-      if(typeof pasted==='string'){this.box.replace(pasted);this.saveSoon(cx);}
-      else cx.spawn(async cx=>{try{this.addFiles(await attach.fromClipboard());this.saveSoon(cx);}catch(e){this.error=String(e?.message??e);}cx.notify();});
+      this.pasteClipboard(cx, req);
     }
     if(req.action==='select-all'){this.box.focus();this.box.set_selected_range({start:0,end:this.box.value().length});}
+  }
+
+  // A paste belongs to the captured draft and agent, even if a picker/task changes this view
+  // while the OS reader runs. Text is captured synchronously and never interpreted as code.
+  clipboardOwner() {
+    return JSON.stringify([this.draftFile, this.originKey, this.addr, this.kind, this.slot, this.companion, this.machine, this.choice?.sel?.profile, this.dflt?.home]);
+  }
+
+  pasteClipboard(cx, req = null) {
+    if (this.clipboardPaste) return; // A duplicate key/paste_other/menu notification shares this extraction.
+    const job = { owner: this.clipboardOwner(), value: req?.value ?? this.box.value(),
+      range: req?.range ?? this.box.selected_range(), files: this.files, quote: this.quote,
+      text: cx.read_from_clipboard() };
+    this.clipboardPaste = job;
+    cx.notify();
+    const current = () => this.clipboardOwner() === job.owner && this.box.value() === job.value && this.files === job.files && this.quote === job.quote;
+    cx.spawn(async (cx) => {
+      let got = [], error = null, imageFailed = false;
+      try { got = await attach.fromClipboard(); }
+      catch (e) { error = String(e?.message ?? e); imageFailed = !!e?.clipboardImage; }
+      try {
+        if (!current()) {
+          got.forEach(attach.drop);
+          toast({ title: 'Paste canceled', body: 'The draft or agent changed. Paste again in the intended chat.' });
+          return;
+        }
+        this.error = error;
+        if (error) toast({ title: 'Clipboard image could not be read', body: error, level: 'error' });
+        if (got.length) this.addFiles(got);
+        else if (!imageFailed && typeof job.text === 'string' && job.text.length) {
+          this.box.set_selected_range(job.range);
+          this.box.replace(job.text);
+        }
+        this.saveSoon(cx);
+      } finally { if (this.clipboardPaste === job) this.clipboardPaste = null; cx.notify(); }
+    });
   }
 
   // ---- dictation ----------------------------------------------------------------------------
@@ -4823,7 +4861,7 @@ export default class Chat extends View {
     // written there answer it ("Reply instead…").
     const ready = this.phase === "ready" || this.phase === "fresh";
     const empty = !this.box.value().trim() && !this.files.length;
-    const can = ready && !empty;
+    const can = ready && !empty && !this.clipboardPaste;
     const list = this.focused || this.paneFocused ? this.suggestions() : [];
     const rec = this.dict.state;
     const recallable = !list.length && (!this.box.value() || this.recall >= 0);
@@ -4833,6 +4871,7 @@ export default class Chat extends View {
       // Esc stops a working agent while the box is empty and nothing is open over it.
       .key_context([list.length ? "chat_slash" : recallable ? "chat_recall" : "chat_composer",
         st === "working" && !list.length && !this.box.value().trim() && !this.quote ? "chat_stop" : null].filter(Boolean).join(" "))
+      .on_action("chat_paste", take((cx) => this.pasteClipboard(cx)))
       .on_action("chat_stop", take((cx) => this.stop(cx)))
       .on_action("chat_slash_up", take(() => { this.slashSel = (sel + list.length - 1) % list.length; }))
       .on_action("chat_slash_down", take(() => { this.slashSel = (sel + 1) % list.length; }))

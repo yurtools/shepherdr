@@ -1,7 +1,7 @@
 // herdr-artifact open (SHEP-99): an agent's herdr.show label, here or on another machine, opens the artifact on the
 // page the person used last that's on screen; an ask set before the service started, or seen once, never shows again.
 import { expect, test } from "bun:test";
-import { Shows, showAsk, windowArgs, SHOW, SHOW_FRESH } from "./show.ts";
+import { Shows, showAsk, showSource, windowArgs, SHOW, SHOW_FRESH } from "./show.ts";
 import { Live } from "./live.ts";
 
 const NOW = 1_800_000_000_000;
@@ -57,4 +57,12 @@ test("an explicit source machine survives requests from another terminal", () =>
   const p = page(NOW); (live as any).pages.add(p.ws);
   live.show('proof-1234', 'vm');
   expect(JSON.parse(p.sent[0])).toEqual({ type: 'show', artifact: 'proof-1234', machine: 'vm' });
+});
+
+test('machine aliases from a remote caller are translated through immutable core IDs', () => {
+  const ask = showAsk(term('sender/t1', { id: 'a', at: NOW, artifact: 'proof-1234', machine: 'mini', origin: 'core-2' }))!;
+  expect(showSource(ask, 'core-1', new Map([['target', { id: 'core-2' }]] )).machine).toBe('target');
+  expect(showSource(ask, 'core-2', new Map()).machine).toBeNull();
+  expect(showSource(ask, 'core-1', new Map()).machine).toBe('unavailable/core-2');
+  expect(showAsk(term('sender/t1', { id: 'old', at: NOW, artifact: 'proof-1234', machine: 'mini' }))?.machine).toBe('sender/mini');
 });

@@ -26,6 +26,7 @@ mock.module('herdr', () => fakeHerdr({
 const { openViewer } = await import('../../lib/artview.js');
 const { showInSidebar } = await import('../../lib/artifact-sidebar.js');
 const { default: Accept } = await import('../../mods/accept-card/main.js');
+const { default: Artifacts } = await import('../../mods/artifacts/main.js');
 const { default: TaskArtifacts } = await import('../../mods/task-artifacts/main.js');
 const { PanelHost } = await import('../../mods/chat/panel.js');
 const cx: any = { notify() {}, spawn(f: any) { const p = Promise.resolve(f(cx)); work.push(p); return p; } };
@@ -43,9 +44,11 @@ test('proof opens over its recorded owner while B is active', async () => {
  expect(actions.filter(a => a[0] === 'herdr-app').map(a => a[1])).toEqual([['do', 'space.select', '--id', 'A']]);
 });
 test('switching during pull retains owner, requested historical version and original machine', async () => {
- let finish!: () => void; gate = () => new Promise<void>(r => { finish = r; });
+ let finish!: () => void; let started!: () => void;
+ const pulling = new Promise<void>(r => { started = r; });
+ gate = () => new Promise<void>(r => { finish = r; started(); });
  const pending = openViewer({ id: record.id, machine: 'vm', version: 1, latest: 3 });
- while (!finish) await Promise.resolve();
+ await pulling;
  active('B'); finish(); await pending;
  expect(overlays()[0][1]).toBe('vm/A');
  expect(actions.find(a => a[1]?.includes('pull'))[1]).toContain('--from');
@@ -88,4 +91,10 @@ test('late task-artifact lists cannot overwrite another stopped task', async () 
  // list returns no artifacts: the identity guard still matters when both terminals are null.
  const p = h.loadArts(h.rec, null, cx); h.cur = { terminal: null, task: 'SHOP-5' }; h.rec = { ref: 'SHOP-5', folder: '/b' };
  await p; expect(state.has('tasks.thread.artifacts')).toBe(false);
+});
+
+test('a remembered native sidebar proof does not follow a later selection of B', async () => {
+ state.set('artifacts.view', { id: record.id, space: 'A', machine: null });
+ const view: any = Object.create(Artifacts.prototype); view.viewHead(cx); await Promise.all(work);
+ expect(actions).toContainEqual(['layout.select', { stack: 'artifacts', child: 'artifacts-list' }]);
 });

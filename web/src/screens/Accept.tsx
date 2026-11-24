@@ -8,7 +8,7 @@ import { findArtifact } from "@core/artifact-owner.js"
 // scroll. Accept stays in view under it either way.
 import clsx from 'clsx'
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
-import { act, closeArtifact, getState, openArtifact, taskOf, useStore } from '../kernel.ts'
+import { act, closeArtifact, getState, openArtifact, setUI, taskOf, useStore } from '../kernel.ts'
 import { Dialog } from '../rowmenu.tsx'
 import type { Artifact } from '@shared/types.ts'
 import { DownIcon, NextIcon, OpenIcon, Primary } from '../ui.tsx'
@@ -41,7 +41,12 @@ type Shown = { status?: string; deferred_ready_at?: number; ready_at?: number; r
 // Which task's card is open (one at a time): a small store of its own, so any row or header can open it.
 let open: string | null = null
 const listeners = new Set<() => void>()
-export const openAccept = (task: string) => { open = task; for (const f of listeners) f() }
+export const openAccept = (task: string) => {
+  const { snap } = getState()
+  const owner = snap && taskOf(snap, task)?.reviewSpace
+  if (owner && snap!.places.some((p) => p.id === owner)) setUI({ place: owner })
+  open = task; for (const f of listeners) f()
+}
 const close = () => { open = null; for (const f of listeners) f() }
 const useOpen = () => useSyncExternalStore((f) => { listeners.add(f); return () => listeners.delete(f) }, () => open)
 // The tasks whose accept runs now from this screen: their row and header say "Accepting…" meanwhile, as the window's
@@ -136,10 +141,10 @@ function IndividualAcceptCard() {
   const task = useOpen()
   const named = useStore((s) => (task && s.snap ? taskOf(s.snap, task)?.name : undefined))
   const ownerTask = useStore((s) => task && s.snap ? taskOf(s.snap, task) : undefined)
-  const machine = ownerTask?.reviewMachine ?? null
   const artifacts = useStore((s) => s.snap?.artifacts)
-  const [loaded, setT] = useState<{ task: string; value: Shown } | null>(null)
+  const [loaded, setT] = useState<{ task: string; value: Shown; machine: string | null } | null>(null)
   const t = loaded?.task === task ? loaded.value : null
+  const machine = loaded?.task === task ? loaded.machine : ownerTask?.reviewMachine ?? null
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const locked = useRef(false)
@@ -149,7 +154,9 @@ function IndividualAcceptCard() {
     setT(null); setError(null); setBusy(false); setDetails(false)
     if (!task) return
     let gone = false
-    act({ type: 'evidence', task }).then((x) => !gone && setT({ task, value: x as Shown }), (e) => !gone && setError(String(e?.message ?? e)))
+    const source = getState().snap
+    const machine = source ? taskOf(source, task)?.reviewMachine ?? null : null
+    act({ type: 'evidence', task }).then((x) => !gone && setT({ task, value: x as Shown, machine }), (e) => !gone && setError(String(e?.message ?? e)))
     return () => { gone = true }
   }, [task])
 
@@ -157,7 +164,8 @@ function IndividualAcceptCard() {
   const ready = t?.state === 'ready' && (!t.status || ['ready', 'deferred'].includes(t.status))
   const e = t?.evidence ?? {}
   // its proof as the app knows it, to draw in the card; one it doesn't know (yet) stays a row that opens it
-  const proofArt = e.proof ? findArtifact(artifacts, e.proof.id, machine) : undefined
+  const candidate = e.proof ? findArtifact(artifacts, e.proof.id, machine) : undefined
+  const proofArt = candidate?.place ? candidate : null
 
   const accept = async () => {
     if (!ready || busy || locked.current || !e.decision_token || e.decision_error) return
@@ -173,7 +181,7 @@ function IndividualAcceptCard() {
       setError(String((err as Error)?.message ?? err))
       // accepted (or changed) from elsewhere meanwhile: show where it is now, not the refusal
       const now = (await act({ type: 'evidence', task }).catch(() => null)) as Shown | null
-      if (now && now.state !== 'ready') { setT({ task, value: now }); setError(null) }
+      if (now && now.state !== 'ready') { setT({ task, value: now, machine }); setError(null) }
       setBusy(false)
     } finally { locked.current = false }
   }

@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test'
-import { artifactRoute } from './artifact-route.ts'
+import { artifactRoute, artifactInPlace } from './artifact-route.ts'
 import { decide, screenOfUrl, stepsTo, urlOf } from './nav.ts'
 import type { Snapshot } from '@shared/types.ts'
 const a = { id: 'proof-1234', place: 'A', machine: undefined }
@@ -25,3 +25,18 @@ test('artifact history retains machine and explicit version; close/back have coh
   expect(decide({ shep: 1, key: '', prev: null, screen: b }, opened)).toBe('push')
   expect(decide({ shep: 1, key: '', prev: null, screen: opened }, { ...opened, viewer: null })).toBe('replace')
 })
+
+test('a CLI link identifies its original core even when machine aliases or serving host change', () => {
+  const s = { ...snap, machines: [{ machine: 'renamed-vm', coreId: 'core-remote' }],
+    artifacts: [a, { ...a, machine: 'renamed-vm', place: 'vm/A' }] } as Snapshot
+  expect(artifactRoute(s, 'old-name/proof-1234', undefined, 'core-remote')).toEqual({ artifact: 'renamed-vm/proof-1234', place: 'vm/A', origin: 'core-remote' })
+  expect(artifactRoute(s, a.id, undefined, 'deleted-core').error).toContain('original machine')
+  expect(artifactRoute({ ...s, machines: [{ coreId: 'core-local', here: true }] as any }, a.id, undefined, 'core-local').artifact).toBe('/proof-1234')
+});
+
+test('a cached sidebar proof cannot follow a later selection of B or a deleted owner', () => {
+ expect(artifactInPlace(snap, '/proof-1234', 'A')).toBe(a as any)
+ expect(artifactInPlace(snap, '/proof-1234', 'B')).toBeNull()
+ expect(artifactInPlace(snap, undefined, 'A')).toBeNull()
+ expect(artifactInPlace({ ...snap, places: [] }, '/proof-1234', 'A')).toBeNull()
+});

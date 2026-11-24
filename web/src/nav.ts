@@ -77,6 +77,7 @@ export function urlOf(s: Screen, phone: boolean, path = location.pathname, slug:
   if (s.viewer) {
     q.set('artifact', s.viewer.artifact)
     if (s.viewer.v) q.set('v', String(s.viewer.v))
+    if (s.viewer.origin) q.set('origin', s.viewer.origin)
   }
   return `${path}?${q}`
 }
@@ -92,7 +93,7 @@ export function screenOfUrl(search: string, desktop: boolean, tabOf: (t: string 
     place: q.get('place') ?? 'all',
     task: q.get('task'),
     tab: tabOf(q.get('tab')),
-    viewer: q.get('artifact') ? { artifact: q.get('artifact')!, ...(Number(q.get('v')) > 0 ? { v: Number(q.get('v')) } : {}) } : null,
+    viewer: q.get('artifact') ? { artifact: q.get('artifact')!, ...(q.get('origin') ? { origin: q.get('origin')! } : {}), ...(Number(q.get('v')) > 0 ? { v: Number(q.get('v')) } : {}) } : null,
     sheet: q.get('task') && !desktop ? itemOfUrl(q.get('item')) : null,
     settings: null,
     search: false,

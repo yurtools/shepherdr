@@ -146,6 +146,8 @@ export interface Section {
 }
 
 export interface Machine {
+  /** Immutable core ID, used to route artifact links across machine aliases. */
+  coreId?: string
   /** Core native display name, before a Shepherdr-only rename. */
   ownName?: string
   /** m:<its key>: what its spaces' order and its fold are kept under */
@@ -1353,7 +1355,7 @@ export type ServerEvent =
   /** the answer to a screen's ping: its link still works */
   | { type: 'pong' }
   /** an agent shows the person an artifact (herdr-artifact open): this screen, the one they used last, opens it */
-  | { type: 'show'; artifact: string; machine?: string | null }
+  | { type: 'show'; artifact: string; machine?: string | null; origin?: string }
 
 /** how Shepherdr's last update of itself went (update.json in its folder, written by the supervisor) */
 export interface UpdateStatus {

@@ -35,19 +35,20 @@ async function setBody(mod) {
 }
 
 export async function showInSidebar(view) {
-  await selectArtifactOwner(view);
-  const l = layout(), body = find(l, "artifacts-view-body");
-  if (!body) return false;
-  // base: the latest version's mod (art-<id>); mod may be an older one (art-<id>--v<n>).
-  setShared("artifacts.view", { mod: view.mod, base: view.base ?? view.mod, id: view.id, title: view.title, version: view.version, latest: view.latest ?? view.version, machine: view.machine ?? null, space: view.space, at: Date.now() });
-  const show = async () => {
+  try {
     await selectArtifactOwner(view);
+    const body = find(layout(), "artifacts-view-body");
+    if (!body) return false;
+    if (body.content?.mod !== view.mod || body.content?.props) await setBody(view.mod);
+    // A space may have changed while the layout was written.
+    await selectArtifactOwner(view);
+    setShared("artifacts.view", { ...view, base: view.base ?? view.mod, latest: view.latest ?? view.version, at: Date.now() });
     run("layout.select", { stack: "panel-body", child: "artifacts" });
     run("layout.select", { stack: "artifacts", child: "artifacts-view" });
     run("layout.show", { id: "panel" });
-  };
-  if (body.content?.mod === view.mod && !body.content?.props) { await show(); return true; }
-  return setBody(view.mod)
-    .then(async () => { await show(); return true; })
-    .catch((e) => { toast({ title: "Artifact didn't open", body: plainError(e), level: "error" }); return false; });
+    return true;
+  } catch (e) {
+    toast({ title: "Artifact didn't open", body: plainError(e), level: "error" });
+    return false;
+  }
 }

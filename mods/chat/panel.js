@@ -169,7 +169,7 @@ export class PanelHost {
       const said = logs.length ? await exec("grep", ["-ohE", GREP, ...logs], on ? { on } : {}).catch(() => null) : null;
       const ids = taskArtifacts(arts, { ref: rec.ref, folder: rec.folder, machine: null, agents: rec.agents, proof: rec.proof?.id ?? null }, publishedIds(said?.stdout));
       const list = ids.map((id) => arts.find((a) => a.id === id)).map((a) => ({ id: a.id, title: a.title, v: a.version, at: a.at, proof: a.id === rec.proof?.id }));
-      const v = { terminal: addr ?? null, ref: rec.ref, machine: on, folder: rec.folder, space: rec.space ?? null, list };
+      const v = { terminal: addr ?? null, ref: rec.ref, machine: on, key: cur?.key ?? null, folder: rec.folder, space: rec.space ?? null, list };
       if (this.cur === cur && this.rec?.ref === rec.ref && this.rec?.folder === rec.folder && (this.rec?.machine ?? null) === on && JSON.stringify(v) !== JSON.stringify(shared("tasks.thread.artifacts") ?? null)) setShared("tasks.thread.artifacts", v);
       this.artsKey = key;
       this.artsAt = Date.now();
@@ -391,7 +391,7 @@ export class PanelHost {
   // "Artifacts", with how many once the shown task has some ("Artifacts 3").
   artsLabel(want) {
     const a = shared("tasks.thread.artifacts");
-    const n = a && a.terminal === (want?.terminal ?? null) && (want?.terminal || a.ref === want?.task) ? a.list.length : 0;
+    const n = a && a.terminal === (want?.terminal ?? null) && JSON.stringify(a.key ?? null) === JSON.stringify(want?.key ?? null) && (want?.terminal || a.ref === want?.task) ? a.list.length : 0;
     return n ? `Artifacts ${n}` : "Artifacts";
   }
 

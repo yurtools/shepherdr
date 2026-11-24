@@ -134,6 +134,7 @@ export default class Artifacts extends View {
 
   // Makes sure the artifact's mod is in this app (pulling it from its machine), then calls fn(mod).
   open(a, machine, cx) {
+    note("view", { view: "artifact", artifact: a.id });
     this.opening = a.id;
     cx.notify();
     cx.spawn(async (cx) => {
@@ -261,6 +262,12 @@ export default class Artifacts extends View {
   // (markup.js lays its layer over the artifact while shared "artifacts.markup" names it). The
   // full-screen viewer has the same (mods/chat-image/artifact-bar.js; keep the two in step).
   viewHead(cx) {
+    const ownerView = shared("artifacts.view");
+    if (ownerView && spaces().find((s) => s.active)?.id !== ownerView.space) {
+      // The sidebar is shared by spaces; a remembered proof must not follow a later selection.
+      cx.spawn(async () => backToList());
+      return h_flex().size_full().child("Artifacts");
+    }
     const t = theme();
     const v = shared("artifacts.view") ?? null;
     const titles = shared("artifacts.titles") ?? {};

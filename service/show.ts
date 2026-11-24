@@ -11,7 +11,7 @@ export const SHOW = "herdr.show";
 export const SHOW_FRESH = 2 * 60_000;
 
 /** machine: the asking terminal's (null: this one), where the artifact is */
-export type ShowAsk = { id: string; at: number; artifact: string; machine: string | null };
+export type ShowAsk = { id: string; at: number; artifact: string; machine: string | null; origin?: string };
 
 /** A terminal's ask to show an artifact (its herdr.show label), or null. */
 export function showAsk(t: { address?: string; labels?: Record<string, string> | null } | null | undefined): ShowAsk | null {
@@ -20,7 +20,12 @@ export function showAsk(t: { address?: string; labels?: Record<string, string> |
   if (!a || typeof a.id !== "string" || !a.id || typeof a.artifact !== "string" || !/^\w[\w.-]{0,119}$/.test(a.artifact)) return null;
   if (a.machine != null && (typeof a.machine !== "string" || !/^[\w.-]{1,64}$/.test(a.machine))) return null;
   const cut = t?.address?.indexOf("/") ?? -1;
-  return { id: a.id.slice(0, 64), at: Number(a.at) || 0, artifact: a.artifact, machine: typeof a.machine === "string" && /^[\w.-]{1,64}$/.test(a.machine) ? a.machine : cut > 0 ? t!.address!.slice(0, cut) : null };
+  const sender = cut > 0 ? t!.address!.slice(0, cut) : null;
+  // A --from alias on another machine is not necessarily this host's alias.
+  // showSource translates it by core ID; old untranslatable requests remain unavailable.
+  const machine = typeof a.machine === "string" ? (sender ? `${sender}/${a.machine}` : a.machine) : sender;
+  return { id: a.id.slice(0, 64), at: Number(a.at) || 0, artifact: a.artifact, machine,
+    ...(typeof a.origin === "string" ? { origin: a.origin } : {}) };
 }
 
 /** Follows the terminals' asks: each new, fresh one once (an ask already set when it starts is never shown). */
@@ -53,4 +58,11 @@ export async function showInWindow(a: ShowAsk) {
   const { HC_TERMINAL_ID: _t, ...env } = process.env;
   const p = Bun.spawn([TOOL, ...windowArgs(a)], { env, stdout: "ignore", stderr: "ignore", stdin: "ignore" });
   await p.exited;
+}
+
+/** Translate an immutable source ID to this service's machine name, never another host's alias. */
+export function showSource(a: ShowAsk, here: string | undefined, machines: Map<string, { id: string | null }>): ShowAsk {
+  if (!a.origin) return a;
+  const machine = a.origin === here ? null : [...machines].find(([, m]) => m.id === a.origin)?.[0];
+  return { ...a, machine: machine === undefined ? `unavailable/${a.origin}` : machine };
 }

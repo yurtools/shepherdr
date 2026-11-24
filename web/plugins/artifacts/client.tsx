@@ -1,4 +1,4 @@
-import { artifactChatMachine } from "@client/artifact-route.ts"
+import { artifactChatMachine, artifactInPlace } from "@client/artifact-route.ts"
 import { artifactKey, findArtifact } from "@core/artifact-owner.js"
 // Artifacts any agent makes (shepherdr artifact): a card in the chat where it was made, in a sealed frame; full screen
 // on a tap, with its versions, Mark up and a box to write to its keeper, so you change it by chatting beside it; and a
@@ -272,6 +272,7 @@ function setShown(key: string, id: string | null) {
 
 /** the artifact a side panel shows, while it is still kept */
 function useShown(key: string) {
+  const place = useUI((u) => u.place)
   const id = useSyncExternalStore(
     (l) => {
       shownListeners.add(l)
@@ -279,7 +280,7 @@ function useShown(key: string) {
     },
     () => shownIn[key],
   )
-  return findArtifact(useSnap()?.artifacts, id)
+  return artifactInPlace(useSnap(), id, place)
 }
 
 /** Show an artifact beside the chat: in the Artifacts list on the right (whatever its chips show; a phone's
@@ -292,8 +293,9 @@ export function showInPanel(id: string) {
   if (!a?.place || !snap.places.some((p) => p.id === a.place)) return openArtifact(id)
   if (ui.place !== a.place) setUI({ place: a.place, task: null })
   if (ui.viewer) closeArtifact()
-  setShown(`list:${listView(ui, snap).key}`, id)
-  setUI(ui.device === 'phone' ? { task: null, tab: 'artifacts', pick: null, plus: null, menu: false } : { task: ui.task && !taskInMiddle(ui, snap) ? null : ui.task, side: 'artifacts' })
+  const now = getState().ui
+  setShown(`list:${listView(now, snap).key}`, artifactKey(a))
+  setUI(now.device === 'phone' ? { task: null, tab: 'artifacts', pick: null, plus: null, menu: false } : { task: now.task && !taskInMiddle(now, snap) ? null : now.task, side: 'artifacts' })
 }
 
 /** Mark up / Done, one look in the viewer's bar and the panel's (and the window's, mods/artifacts/main.js and
@@ -693,7 +695,7 @@ function Viewer() {
   useEffect(() => setMarkup(false), [v?.artifact, shown])
   if (!v) return null
   const phone = device === 'phone'
-  if (!art || !shown || v.error || !art.place || !snap?.places.some((p) => p.id === art.place))
+  if (!art || !shown || v.error || (v.owner && v.owner !== art.place) || !art.place || !snap?.places.some((p) => p.id === art.place))
     return (
       <div role="dialog" aria-modal="true" aria-label="Artifact" className="fixed inset-0 z-40 grid place-items-center bg-black/35 p-6" onClick={closeArtifact}>
         <div className="rounded-box bg-bg px-5 py-4 shadow-dialog">{v.error || (snap ? 'This artifact or its owning space is unavailable.' : 'Opening…')}</div>

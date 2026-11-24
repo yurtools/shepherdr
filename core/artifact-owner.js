@@ -4,6 +4,7 @@ export const artifactKey = (a) => a.machine ? `${a.machine}/${a.id}` : `/${a.id}
 export const spaceKey = (space, machine = null) => !space ? null : machine && !space.startsWith(`${machine}/`) ? `${machine}/${space}` : space;
 
 export function artifactOwner(a, tasks = []) {
+  if (!a?.id) return null;
   const machine = a.machine ?? null;
   const candidates = tasks.filter((t) => (t.machine ?? null) === machine && (
     (t.proof?.id ?? t.proof) === a.id ||
@@ -25,6 +26,7 @@ export function artifactOwner(a, tasks = []) {
  * @returns {T | null}
  */
 export function findArtifact(arts = [], id, machine = undefined) {
+  if (!id) return null;
   const matches = arts.filter((a) => machine !== undefined
     ? a.id === id && (a.machine ?? null) === machine
     : id.includes('/') ? artifactKey(a) === id : a.id === id);

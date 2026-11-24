@@ -42,7 +42,7 @@ class Ownership(unittest.TestCase):
             json.dump(dict(folder=folder, prefix='SHOP', tasks=[dict(id=4, space=space, proof=proof)]), f)
 
     def opts(self, **kw):
-        return types.SimpleNamespace(**dict(id=self.a['id'], machine=None, tab=False, direction='right', beside=None, **kw))
+        return types.SimpleNamespace(**{**dict(id=self.a['id'], machine=None, tab=False, direction='right', beside=None), **kw})
 
     def test_cli_selects_owner_before_opening(self):
         calls = []
@@ -81,9 +81,30 @@ class Ownership(unittest.TestCase):
         self.assertFalse(any('pane.split' in c.args[0] for c in run.call_args_list))
 
     def test_remote_link_and_open_request_keep_the_original_machine(self):
-        with mock.patch.object(A, 'web_base', return_value='https://example.test/'):
-            self.assertEqual(A.web_link(self.a['id'], 'vm'), 'https://example.test/?artifact=vm%2Fproof-1234')
-        with mock.patch.dict(os.environ, {'HC_TERMINAL_ID': 't1'}), mock.patch.object(A, 'run', return_value=types.SimpleNamespace(returncode=0)) as run:
+        with mock.patch.object(A, 'web_base', return_value='https://example.test/'), mock.patch.object(A, 'source_id', return_value='vm-core'):
+            self.assertEqual(A.web_link(self.a['id'], 'vm'), 'https://example.test/?artifact=proof-1234&origin=vm-core')
+        with mock.patch.dict(os.environ, {'HC_TERMINAL_ID': 't1'}), mock.patch.object(A, 'source_id', return_value='vm-core'), mock.patch.object(A, 'run', return_value=types.SimpleNamespace(returncode=0)) as run:
             self.assertTrue(A.ask_screen(self.a['id'], 'vm'))
         ask = json.loads(run.call_args.args[0][-1].split('=', 1)[1])
         self.assertEqual((ask['artifact'], ask['machine']), (self.a['id'], 'vm'))
+
+    def test_remote_cli_open_qualifies_the_owner_and_targets_its_own_tab(self):
+        def run(args):
+            if 'show' in args:
+                data = dict(self.a, space='A')
+            elif args == ['herdr-app', 'ls']:
+                data = {'spaces': [{'id': 'vm/A', 'machine': 'vm', 'tabs': []}]}
+            else:
+                data = {}
+            return types.SimpleNamespace(returncode=0, stdout=json.dumps(data), stderr='')
+        with mock.patch.object(A, 'run', side_effect=run) as calls, mock.patch.object(A, 'pull', return_value='art-vm-proof-1234'):
+            A.open_window(self.opts(machine='vm', tab=True))
+        self.assertIn(mock.call(['herdr-app', 'do', 'space.select', '--id', 'vm/A']), calls.call_args_list)
+        self.assertIn(mock.call(['herdr-app', 'do', 'tab.new', '--space', 'vm/A', '--mod', 'art-vm-proof-1234']), calls.call_args_list)
+
+    def test_explicit_pane_from_another_space_is_refused(self):
+        listing = {'spaces': [{'id': 'A', 'tabs': [{'terminals': [{'pane': 'pane-a'}]}]}]}
+        with mock.patch.object(A, 'local_mod', return_value='art-proof-1234'), mock.patch.object(A, 'run', return_value=types.SimpleNamespace(returncode=0, stdout=json.dumps(listing))) as run:
+            with self.assertRaisesRegex(A.Fail, 'not in.*owning space'):
+                A.open_window(self.opts(beside='pane-b'))
+        self.assertFalse(any('space.select' in c.args[0] or 'pane.split' in c.args[0] for c in run.call_args_list))

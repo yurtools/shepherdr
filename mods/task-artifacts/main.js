@@ -22,7 +22,7 @@ function ago(ms) {
 // The shown task's, once the header has found them (null: not yet).
 function mine() {
   const a = shared("tasks.thread.artifacts"), w = shared("tasks.thread");
-  return a && w && a.terminal === (w.terminal ?? null) && (w.terminal || a.ref === w.task) ? a : null;
+  return a && w && a.terminal === (w.terminal ?? null) && JSON.stringify(a.key ?? null) === JSON.stringify(w.key ?? null) && (w.terminal || a.ref === w.task) ? a : null;
 }
 
 export default class TaskArtifacts extends View {

@@ -1007,7 +1007,7 @@ def cmd_publish(o):
         art = {"id": aid, "created": now(), "versions": []}
     fresh = not o.id
     # A task's agent names its task first: "HAT-2: Coverage by package".
-    task = o.task or art.get("task") or who["task"]
+    task = o.task or (who["task"] if fresh else art.get("task"))
     if task and not title.upper().startswith(task.upper()):
         title = f"{task}: {title}"
 
@@ -1045,7 +1045,7 @@ def cmd_publish(o):
         # a conversion keeps the artifact's time and place in the list (only its version is new)
         # Keep the original owner when another terminal updates the artifact.
         if fresh:
-            art["taskKey"] = who.get("taskKey") if task == who.get("task") else None
+            art["taskKey"] = who.get("taskKey") if not o.task and task == who.get("task") else None
             art["space"] = owner_space(dict(art, task=task, folder=loc["folder"])) if task else who.get("space")
         art.update(title=title, version=v, folder=loc["folder"], publisher=publisher, task=task, at=art.get("at", at) if as_maker else at, files=files)
         art["versions"].append({"v": v, "at": at, "publisher": publisher, "kind": "custom" if custom else "recipe",
@@ -1887,12 +1887,12 @@ WEB_JSON = SHEP(".herdr/shepherdr/web.json")
 SHOW = "herdr.show"
 
 
-def core_doc(name):
-    """A herdr-core document's value on this machine (hc connect, plain JSON lines), or None."""
+def core_call(method, params):
+    """A read-only herdr-core request (plain JSON lines), or None."""
     if not shutil.which("hc"):
         return None
     ask = "".join(json.dumps({"jsonrpc": "2.0", "id": i, "method": m, "params": p}) + "\n"
-                  for i, m, p in ((1, "hello", {"generation": 1}), (2, "doc.get", {"name": name})))
+                  for i, m, p in ((1, "hello", {"generation": 1}), (2, method, params)))
     try:
         r = subprocess.run(["hc", "connect"], input=ask, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
                            universal_newlines=True, timeout=10)
@@ -1904,8 +1904,20 @@ def core_doc(name):
         except ValueError:
             continue
         if isinstance(m, dict) and m.get("id") == 2:
-            return (m.get("result") or {}).get("value")
+            return m.get("result")
     return None
+
+
+def core_doc(name):
+    return (core_call("doc.get", {"name": name}) or {}).get("value")
+
+
+def source_id(machine=None):
+    """Immutable core ID: --from names are relative to this machine, not the web host."""
+    if machine:
+        rows = (core_call("machine.list", {}) or {}).get("machines", [])
+        return next((x.get("id") for x in rows if x.get("name") == machine), None)
+    return ((core_call("server.status", {}) or {}).get("core") or {}).get("id")
 
 
 def web_base():
@@ -1923,7 +1935,10 @@ def web_base():
 
 def web_link(aid, machine=None):
     base = web_base()
-    return f"{base}?artifact={urllib.parse.quote(f'{machine}/{aid}' if machine else aid, safe='')}" if base else None
+    if not base:
+        return None
+    origin = source_id(machine) or "unknown"
+    return f"{base}?artifact={urllib.parse.quote(aid, safe='')}&origin={urllib.parse.quote(origin, safe='')}"
 
 
 NO_LINK = ("No web link is known here yet: Shepherdr's web app isn't served, or the machine serving it hasn't "
@@ -1951,7 +1966,7 @@ def ask_screen(aid, machine=None):
     me_ = os.environ.get("HC_TERMINAL_ID")
     if not me_ or not shutil.which("hc"):
         return False
-    ask = {"id": secrets.token_hex(4), "at": now(), "artifact": aid, "machine": machine}
+    ask = {"id": secrets.token_hex(4), "at": now(), "artifact": aid, "machine": machine, "origin": source_id(machine)}
     return run(["hc", "label", me_, f"{SHOW}={json.dumps(ask, separators=(',', ':'))}"]).returncode == 0
 
 
@@ -1965,7 +1980,10 @@ def open_window(o):
         r = run([sys.executable, os.path.realpath(__file__), "--on", o.machine, "show", o.id, "--json"])
         if r.returncode != 0:
             raise Fail("Couldn't read the artifact's owner.")
-        a = json.loads(r.stdout.strip().split("\n")[-1])
+        try:
+            a = json.loads(r.stdout.strip().split("\n")[-1])
+        except (ValueError, IndexError):
+            raise Fail("Couldn't read the artifact's owner.")
     else:
         with Store(find_anywhere(o.id), write=False) as s:
             a = public(s.find(o.id))

@@ -131,7 +131,7 @@ export function artifactBar(view, a, handle) {
       .child(iconBtn("sidebar", "mods/chat-image/panel-right.svg", () => {
         if (marking) setShared(MARKUP, null);
         const done = showInSidebar({ ...a, latest });
-        if (done) done.then(() => closeOverlay(props()?.overlay));
+        if (done) done.then((ok) => { if (ok) closeOverlay(props()?.overlay); });
       }, t))
       .child(rule(t)))
     .child(iconBtn("close", "mods/chat-image/x.svg", () => closeOverlay(props()?.overlay), t));

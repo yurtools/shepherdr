@@ -48,7 +48,7 @@ import { Secrets, SecretsHome } from "./secrets.ts";
 import { Agents } from "./agents.ts";
 import { Machines } from "./machines.ts";
 import { Push, alertsOf, agentAlerts } from "./push.ts";
-import { Shows, showInWindow } from "./show.ts";
+import { Shows, showSource, showInWindow } from "./show.ts";
 import { dictate, liveToken, cachedKey, refused } from "./dictate.ts";
 import { readUsage } from "../core/voice.js";
 import { sh, exec } from "./model.ts";
@@ -145,7 +145,10 @@ live.onVisible = (v) => { push.visible = v; };
 const shows = new Shows();
 hub.on((e) => {
   if (e.type !== "reset" && e.type !== "labels" && e.type !== "created") return;
-  for (const a of shows.take(hub.terminals.values())) if (host.serving() && !live.show(a.artifact, a.machine) && a.machine) void showInWindow(a).catch(() => {});
+  for (const ask of shows.take(hub.terminals.values())) {
+    const a = showSource(ask, host.me?.id, host.machines);
+    if (host.serving() && !live.show(a.artifact, a.machine, a.origin) && a.machine) void showInWindow(a).catch(() => {});
+  }
 });
 // what was already waiting or ready when the service started: no alert for it
 let alerted: Set<string> | null = null;
@@ -321,7 +324,7 @@ const snapshotOf = (b: Parameters<NonNullable<typeof model.onBuild>>[0]) => live
     windowSection((k) => model.value(k))], off: offList(), offPlugins: offPlugins(),
   // every machine the window's sidebar lists: one not connected reads "Offline" (or "Connecting…") under its header
   // in the order the person dragged them into (SHEP-153): this computer first until then
-  machines: (SPm.byMachineOrder as any)([{ name: me?.host ?? "this machine", here: true, state: "connected" }, ...b.known.map((m) => ({ name: m.name, here: false, state: m.state }))],
+  machines: (SPm.byMachineOrder as any)([{ name: me?.host ?? "this machine", here: true, state: "connected", coreId: host.me?.id }, ...b.known.map((m) => ({ name: m.name, here: false, state: m.state, coreId: host.machines.get(m.name)?.id ?? undefined }))],
     (SPm.machineOrderOf as any)(model.value("spaces-chat")), (m: { name: string; here: boolean }) => (m.here ? null : m.name)),
 })));
 // a task that moved on (accepted, done) changes its news lines in its Assistant's chat, whose conversation may not move:

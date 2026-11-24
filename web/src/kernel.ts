@@ -1,4 +1,4 @@
-import { artifactKey, findArtifact } from "@core/artifact-owner.js"
+import { findArtifact } from "@core/artifact-owner.js"
 import { artifactRoute } from "./artifact-route.ts"
 import { actionable, attentionCounts } from './attention.ts'
 // The screen's small kernel: plugin slots, the store (server data + what's on screen), and the link to the server.
@@ -234,7 +234,7 @@ export interface UI {
    *  remembered on this device */
   split: Panes
   /** an artifact open full screen: at a version you picked, or (none) its latest, following its updates */
-  viewer: { artifact: string; v?: number; owner?: string; error?: string } | null
+  viewer: { artifact: string; v?: number; owner?: string; origin?: string; error?: string } | null
   /** an attached picture opened full screen: a sent one by its message, one still in the message box by its file */
   photo: { chat: string; msg?: string; file?: { name: string; path: string } } | null
   search: boolean
@@ -422,7 +422,7 @@ let state: State = {
     drawer: false,
     sidebars: loadSidebars(),
     split: loadPanes(),
-    viewer: params.get('artifact') ? { artifact: params.get('artifact')!, ...(Number(params.get('v')) > 0 ? { v: Number(params.get('v')) } : {}) } : null,
+    viewer: params.get('artifact') ? { artifact: params.get('artifact')!, origin: params.get('origin') ?? undefined, ...(Number(params.get('v')) > 0 ? { v: Number(params.get('v')) } : {}) } : null,
     photo: null,
     search: false,
     adding: false,
@@ -518,8 +518,9 @@ export function setUI(patch: Partial<UI> | ((ui: UI) => Partial<UI>)) {
   else if (p.task === null && p.split === undefined && state.ui.task && state.ui.split.pane < 0 && state.ui.split.panes.length) p = { ...splitTo({ ...state.ui.split, pane: 0 }), ...p }
   // nothing changes: nothing redraws
   if ((Object.keys(p) as (keyof UI)[]).every((k) => Object.is(p[k], state.ui[k]))) return
+  const resolvingArtifact = !!state.ui.viewer && !state.ui.viewer.owner && !!p.viewer?.owner
   state = { ...state, ui: { ...state.ui, ...p } }
-  if ((Object.keys(p) as (keyof UI)[]).some((k) => STEP_FIELDS.has(k))) syncUrl()
+  if ((Object.keys(p) as (keyof UI)[]).some((k) => STEP_FIELDS.has(k))) syncUrl(resolvingArtifact)
   // usage insights (usage.ts): the screen shown, and the time on the one before
   noteView(state.ui)
   if (p.sidebars) saveSidebars(p.sidebars)
@@ -713,6 +714,7 @@ addEventListener('popstate', (e) => {
   }
   if (!entry) write('replace')
   stayOnShown()
+  if (state.ui.viewer) openArtifact(state.ui.viewer.artifact, state.ui.viewer.v, undefined, state.ui.viewer.origin)
   // split, the place stepped back to shows in the focused pane (or focuses the pane that has it)
   if (state.ui.place !== before.place) {
     const patch = placeInPane(before, state.ui.place)
@@ -789,7 +791,7 @@ export function connect() {
     pinging = null
     const msg = JSON.parse(ev.data) as ServerEvent
     if (msg.type === 'pong') return
-    if (msg.type === 'show') return openArtifact(msg.artifact, undefined, msg.machine)
+    if (msg.type === 'show') return openArtifact(msg.artifact, undefined, msg.machine, msg.origin)
     if (msg.type === 'snapshot') {
       // an add-on switched on or off in Settings › Window: the page starts again with its plugins in or out (main.tsx)
       const booted = (window as { shepherdrOff?: string[] }).shepherdrOff
@@ -800,7 +802,7 @@ export function connect() {
       stayOnShown()
       fromOldPin(msg.snapshot)
       // Deep links wait for ownership, including artifacts arriving from another machine later.
-      if (state.ui.viewer && !state.ui.viewer.owner) openArtifact(state.ui.viewer.artifact, state.ui.viewer.v)
+      if (state.ui.viewer && !state.ui.viewer.owner) openArtifact(state.ui.viewer.artifact, state.ui.viewer.v, undefined, state.ui.viewer.origin)
       // once loaded, the first snapshot with every machine in reach says which chats are gone (one connecting or out
       // of reach may not list its chats yet: then none is dropped); later ones don't, so a failed one left open a day
       // keeps its Retry
@@ -1365,7 +1367,7 @@ export function togglePin() {
 
 /** the lists' chips changed: pinned, they stay; following, until another place is picked */
 export function setChips(chips: string[]) {
-  setUI((ui) => ({ lists: { ...ui.lists, chips: [...new Set(chips)], at: ui.place }, cur: 0, archived: null, viewer: null }))
+  setUI((ui) => ({ lists: { ...ui.lists, chips: [...new Set(chips)], at: ui.place }, cur: 0, archived: null }))
 }
 
 /** a wide screen with the lists pinned opens a task in the middle, over its place's chat, the pinned list staying
@@ -1462,7 +1464,7 @@ export function togglePlaces() {
 }
 
 export function goPlace(id: string) {
-  setUI((ui) => ({ ...placeInPane(ui, id), place: id, task: null, drawer: false, settings: null, tab: 'chat', pick: null, menu: false, cur: 0, archived: null }))
+  setUI((ui) => ({ ...placeInPane(ui, id), place: id, task: null, drawer: false, settings: null, tab: 'chat', pick: null, menu: false, cur: 0, archived: null, viewer: null }))
 }
 
 /** a task opens straight into its agent's chat */
@@ -1502,14 +1504,14 @@ export function goChat(key: string) {
 export type Children = { children?: ReactNode }
 
 /** an artifact full screen, at its latest (following its updates) or at a version */
-export function openArtifact(id: string, v?: number, machine?: string | null) {
+export function openArtifact(id: string, v?: number, machine?: string | null, origin?: string) {
   const key = machine ? `${machine}/${id}` : machine === null ? `/${id}` : id
-  const route = state.snap ? artifactRoute(state.snap, id, machine) : null
-  if (!route?.place) return setUI({ viewer: { artifact: key, v, error: route?.error }, pick: null, plus: null, menu: false })
+  const route = state.snap ? artifactRoute(state.snap, id, machine, origin) : null
+  if (!route?.place) return setUI({ viewer: { artifact: key, v, origin, error: route?.error }, pick: null, plus: null, menu: false })
   const task = state.ui.task && taskOf(state.snap!, state.ui.task)?.place === route.place ? state.ui.task : null
   // The owner is selected in the same state change as the viewer; no agent action is sent.
   setUI({ place: route.place, task, sheet: task ? state.ui.sheet : null,
-    viewer: { artifact: route.artifact!, v, owner: route.place }, pick: null, plus: null, menu: false, drawer: false })
+    viewer: { artifact: route.artifact!, v, owner: route.place, origin: route.origin }, pick: null, plus: null, menu: false, drawer: false })
 }
 
 /** close it (its step in the history goes too, so Back and the close button agree) */

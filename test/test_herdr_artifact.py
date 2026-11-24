@@ -72,6 +72,19 @@ class Artifacts(unittest.TestCase):
         with A.Store(A.locate(self.folder), write=False) as s:
             return s.data["artifacts"]
 
+    def test_updating_from_another_task_keeps_the_original_artifact_owner(self):
+        d = os.path.join(self.dir, "owned-recipe")
+        with mock.patch("sys.stdout"):
+            A.cmd_new(types.SimpleNamespace(dir=d, custom=False))
+        with mock.patch.object(A, "me", return_value={"terminal": "t9", "task": None, "space": "A"}):
+            self.publish(d, title="Owned recipe")
+        a = self.only()[0]
+        with mock.patch.object(A, "me", return_value={"terminal": "t10", "task": "OTHER-2", "space": "B"}):
+            self.publish(d, id=a["id"])
+        updated = self.record(a["id"])
+        self.assertEqual(updated["space"], "A")
+        self.assertIsNone(updated["task"])
+
     def test_new_writes_a_recipe_that_publishes(self):
         d = os.path.join(self.dir, "report")
         with mock.patch("sys.stdout"):

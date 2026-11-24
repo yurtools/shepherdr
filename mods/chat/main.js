@@ -2068,9 +2068,9 @@ export default class Chat extends View {
   // The spaces the agent's machine reaches, from its herdr-task reach map (what tell-assistant
   // follows); none there yet: the spaces on its own machine.
   async loadReach() {
-    const address=this.addr,machine=this.machine,epoch=this.readEpoch;
+    const address=this.addr,machine=this.machine,pid=this.t?.foreground?.pid;
     const r = await exec("sh", ["-c", mentions.REACH_FILE], { on: machine }).catch(() => null);
-    if(this.historyClosed||address!==this.addr||machine!==this.machine||epoch!==this.readEpoch)return;
+    if(this.historyClosed||address!==this.addr||machine!==this.machine||pid!==this.t?.foreground?.pid)return;
     let graph = null;
     try { graph = JSON.parse(r?.stdout || "null")?.graph ?? null; } catch {}
     const here = graph ? null : (spaces() ?? []).filter((x) => (x.machine ?? null) === (this.machine ?? null))
@@ -2125,10 +2125,10 @@ export default class Chat extends View {
   async loadTasks() {
     const folder = this.t?.foreground?.cwd ?? this.t?.cwd;
     if (!folder) return;
-    const address=this.addr,machine=this.machine,epoch=this.readEpoch;
+    const address=this.addr,machine=this.machine,pid=this.t?.foreground?.pid;
     const args = [...(machine ? ["--on", machine] : []), "list", "--json", "--folder", folder];
     const [r, old] = await Promise.all([args, [...args, "--archived"]].map((a) => exec("herdr-task", a).catch(() => null)));
-    if(this.historyClosed||address!==this.addr||machine!==this.machine||epoch!==this.readEpoch||folder!==(this.t?.foreground?.cwd??this.t?.cwd))return;
+    if(this.historyClosed||address!==this.addr||machine!==this.machine||pid!==this.t?.foreground?.pid||folder!==(this.t?.foreground?.cwd??this.t?.cwd))return;
     const tasks = (out) => { try { const d = JSON.parse(out?.stdout ?? "{}"); return (d.tasks ?? []).map((x) => ({ ...x, folder: d.folder })); } catch { return null; } };
     const now = tasks(r);
     if (now) {
@@ -2176,9 +2176,9 @@ export default class Chat extends View {
   // Every folder's tasks on its machine (herdr-task list --all): a space's tasks can be in any
   // folder, not only where its Assistant runs.
   async loadSpaceTasks() {
-    const address=this.addr,machine=this.machine,epoch=this.readEpoch,feature=this.feature;
+    const address=this.addr,machine=this.machine,pid=this.t?.foreground?.pid,feature=this.feature;
     const r = await exec("herdr-task", [...(machine ? ["--on", machine] : []), "list", "--all", "--read-only", "--json"]).catch(() => null);
-    if(this.historyClosed||address!==this.addr||machine!==this.machine||epoch!==this.readEpoch||feature!==this.feature)return;
+    if(this.historyClosed||address!==this.addr||machine!==this.machine||pid!==this.t?.foreground?.pid||feature!==this.feature)return;
     try {
       const d = JSON.parse(r?.stdout ?? "null");
       if (Array.isArray(d)) {
@@ -3220,7 +3220,7 @@ export default class Chat extends View {
   }
 
   historyVisible(plan) {
-    return !!plan&&!this.historyClosed&&this.history===plan.owner&&!plan.owner.closed&&equal(plan.scope,this.historyIdentity());
+    return !!plan?.owner&&!this.historyClosed&&this.history===plan.owner&&!plan.owner.closed&&equal(plan.scope,this.historyIdentity());
   }
 
   historyEvent(plan,fn) {

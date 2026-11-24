@@ -91,10 +91,26 @@ test('quiet task and reach polls preserve equivalent inputs; real changes still 
 });
 
 test('late task and reach polls cannot publish into another agent context', async () => {
-  for (const method of ['loadTasks', 'loadReach', 'loadSpaceTasks']) {
+  for (const method of ['loadTasks', 'loadReach', 'loadSpaceTasks']) for(const change of ['address','pid','closed']) {
     const h = polling(); h.payload(method === 'loadSpaceTasks' ? [{ folder: '/repo', tasks: [{ ref: 'TEST-1' }] }] : { folder: '/repo', tasks: [] });
-    h.pause(); const pending = h.v[method](); await Promise.resolve(); h.v.addr = 'different-agent'; h.resume(); await pending;
+    h.v.t.foreground={pid:100};h.pause(); const pending = h.v[method](); await Promise.resolve();
+    if(change==='address')h.v.addr = 'different-agent';
+    if(change==='pid')h.v.t.foreground={pid:200};
+    if(change==='closed')h.v.historyClosed=true;
+    h.resume(); await pending;
     expect(h.v.tasks).toBeUndefined(); expect(h.v.reach).toBeUndefined(); expect(h.v.spaceTasks).toBeUndefined();
+  }
+});
+
+test('initial metadata loading survives discovery of the same process conversation log', async () => {
+  for(const method of ['loadTasks','loadReach','loadSpaceTasks']){
+    const h=polling();h.v.t.foreground={pid:100};
+    h.payload(method==='loadSpaceTasks'?[{folder:'/repo',tasks:[{ref:'TEST-1'}]}]:{folder:'/repo',tasks:[]});
+    h.pause();const pending=h.v[method]();await Promise.resolve();
+    // locate starts metadata loads before FIND returns the initial log and reset
+    // advances readEpoch. That reset must not lose the only initial task load.
+    h.v.readEpoch=2;h.v.path='newly-discovered-log';h.resume();await pending;
+    expect(h.v[method==='loadTasks'?'tasks':method==='loadReach'?'reach':'spaceTasks']).toBeDefined();
   }
 });
 

@@ -62,7 +62,8 @@ native methods/callback. It establishes these JavaScript failure paths, not the
 frequency of their interleaving in the live native scheduler.
 
 Task/reach loaders now retain equivalent inputs, comparing their JSON data
-outside render, and reject replies from an abandoned agent/read generation.
+outside render, and reject replies from an abandoned agent/process. Discovering
+the same process's initial log does not discard its in-flight metadata loads.
 Task progress still updates news/cards; retained linked Markdown depends on task
 references, folders, titles and archive state rather than progress. Renaming a
 task still updates its links. No poll interval or preparation budget changed.

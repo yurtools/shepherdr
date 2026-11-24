@@ -1,3 +1,4 @@
+import { artifactKey, findArtifact } from "@core/artifact-owner.js"
 // Voice (SHEP-105): a call with Shepherdr itself, not one chat. One voice takes what you say to any space's Assistant
 // or task's agent, tells you when they reply or need you, and opens things here (voiceNav; its screen tool reads and
 // acts on this very page, screen.ts, whichever device started the call). It starts from the voice button beside Search in
@@ -137,10 +138,11 @@ async function doNav(nav: Nav): Promise<NavAck> {
   }
   if (nav.kind === 'artifact' && str(nav.artifact)) {
     const id = str(nav.artifact)
-    if (!(snap.artifacts ?? []).some((a) => a.id === id)) return no('this app doesn\'t list that artifact')
+    const a = findArtifact(snap.artifacts, id, typeof nav.machine === 'string' ? nav.machine : nav.machine === null ? null : undefined)
+    if (!a) return no('this app does not list an unambiguous artifact on that machine')
     setUI({ settings: null, search: false, menu: false, plus: null })
-    openArtifact(id)
-    return check(getState().ui.viewer?.artifact === id, 'the artifact didn\'t open')
+    openArtifact(a.id, typeof nav.v === 'number' ? nav.v : undefined, a.machine ?? null)
+    return check(getState().ui.viewer?.artifact === artifactKey(a) && !getState().ui.viewer?.error, 'the artifact didn\'t open')
   }
   if (nav.kind === 'settings') {
     setUI({ viewer: null, search: false, menu: false, plus: null })

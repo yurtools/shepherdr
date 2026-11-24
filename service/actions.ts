@@ -214,6 +214,11 @@ export async function act(hub: Hub, b: any, compat: Compat): Promise<unknown> {
     if (!a) throw new Error("That chat isn't here any more.");
     return a;
   };
+  if (b?.type === 'permission-info') {
+    if (!compat.asks?.information || !['advice','review'].includes(b.command)) throw new Error('Choose Advice or Ask Assistant on a permission card.');
+    await compat.asks.information(str(b.question,200),str(b.hash,64),b.command,argv=>exec(hub,argv,null,20));
+    return {ok:true};
+  }
   if (b?.type === "answer" && typeof b.question === "string" && b.question.startsWith("scr-")) {
     // a CLI's start screen (service/watch.ts): a tap presses that choice, only on the screen the card was drawn from;
     // "Answer in terminal" just shows the terminal
@@ -640,7 +645,7 @@ export async function act(hub: Hub, b: any, compat: Compat): Promise<unknown> {
     // a recipe's answer or a note on one of its blocks: to the agent that keeps the artifact
     const text = str(b.text ?? b.note, 4000).trim();
     if (!text) throw new Error("Nothing to send.");
-    return compat.artifacts.say(str(b.artifact, 100), Number(b.v) || 1, text, typeof b.target === "string" ? b.target.slice(0, 300) : undefined);
+    return compat.artifacts.say(str(b.artifact, 100), Number(b.v) || 1, text, typeof b.target === "string" ? b.target.slice(0, 300) : undefined, b.machine !== undefined ? b.machine : compat.spaceOf(b.place)?.machine ?? null);
   }
   switch (b?.type) {
     case "send": {

@@ -1,7 +1,8 @@
+import { BoundedWait, DISPOSED } from "./bounded-wait.js";
 import { Preparation, PreparedHistory, RecentIndex, sortPlan, equal } from "./core/chat-preparation.js";
 import { inReviewScope } from "./core/review.js";
 import {projectFolder} from './project-folder.js';
-import {appendInstructions,spaceInstructions} from './core/instructions.js';
+import { startRole, roleStart, featureTask } from './role-launch.js';
 import {readShepherdr} from './coordinator.js';
 import LinkedMarkdown from './linked-markdown.js';
 import { chatLink, chatLinkScan, scanChatLink } from './core/chat-links.js';
@@ -64,7 +65,6 @@ import { SH } from "./core/paths.js";
 import { settle } from "./core/pending.js";
 import { dirsReady } from "./dirs.js";
 import * as agent from "./agent.js";
-import { cleanCommand } from "./core/clean-env.js";
 import * as choices from "./settings.js";
 import { Dictation, BUN_PATH, warmAudio } from "./dictate.js";
 
@@ -93,8 +93,6 @@ const KEEP = 2000;
 const COMFORTABLE_COLUMN = 760;
 const KINDS = { "claude-code": "claude", claude: "claude", codex: "codex" };
 const norm = (s) => String(s ?? "").replace(/\s+/g, " ").trim();
-// The role templates' folder on the machine a command runs on (sh -c prefix: $dir).
-const TEMPLATE = 'dir="$HOME/.config/herdr-core/templates"; ';
 // Whether a machine's layout is here now (it's connected); this computer always is.
 const online = (machine) => !machine || machines().find((m) => m.name === machine)?.layout === "ready";
 const same = (a, b) => norm(a) === norm(b);
@@ -208,7 +206,8 @@ const ASKS_THERE = 'd="${HERDR_APP_HOME:-$HOME/.config/herdr-app}/data/chat-asks
 const REMOTE_LIST = `${ASKS_THERE}; t=$1; shift
 for f in "$d/req/$t".*.json; do [ -f "$f" ] || continue; n=\${f##*/}; n=\${n%.json}; [ -f "$d/ans/$n.json" ] && continue
   kill -0 "\${n##*.}" 2>/dev/null || continue; printf 'req\\t%s\\t' "$n"; tr '\\n\\t' '  ' < "$f"; echo
-  if [ -f "$d/req/$n.status" ]; then printf 'status\\t%s\\t' "$n"; tr '\\n\\t' '  ' < "$d/req/$n.status"; echo; fi; done
+  if [ -f "$d/req/$n.status" ]; then printf 'status\\t%s\\t' "$n"; tr '\\n\\t' '  ' < "$d/req/$n.status"; echo; fi
+  if [ -f "$d/req/$n.advice" ]; then printf 'advice\\t%s\\t' "$n"; tr '\\n\\t' '  ' < "$d/req/$n.advice"; echo; fi; done
 for n in "$@"; do [ -f "$d/end/$n" ] && printf 'end\\t%s\\t%s\\n' "$n" "$(head -n 1 "$d/end/$n")"; done; exit 0`;
 // An answer there: how it went, then the answer ($3) in place at once.
 const REMOTE_ANSWER = `${ASKS_THERE}; mkdir -p "$d/ans" "$d/end"; [ -f "$d/req/$1.json" ] || exit 3
@@ -267,14 +266,10 @@ export default class Chat extends View {
     if (props()?.panel === true && !_props?.inner) {
       this.host = new PanelHost(Chat, props()?.head === true);
       // pane.go (mod.json "focusable") can land on the header too: it hands the keyboard on to the chat below it (the
-      // body's nested Chat takes "focus" in its own loop). At most 5 s per wait, as the loop below.
+      // body's nested Chat takes "focus" in its own loop).
       if (this.host.head) cx.spawn(async (cx) => {
-        let cmd = null;
         for (;;) {
-          cmd ??= nextCommand();
-          const c = await Promise.race([cmd, cx.sleep(5000)]);
-          if (c === undefined) continue;
-          cmd = null;
+          const c = await nextCommand();
           if (c === "focus") run("pane.go", { direction: "down" });
         }
       });
@@ -350,9 +345,11 @@ export default class Chat extends View {
       // Copied files pasted as text (file:// lines) become attachments.
       const v = this.box.value();
       if (/^file:\/\/\S/m.test(v)) {
-        const found = v.split("\n").filter((l) => /^file:\/\/\S+$/.test(l.trim())).map((l) => decodeURIComponent(l.trim().slice(7)));
-        this.addFiles(attach.paths(found));
-        this.box.set_value(v.split("\n").filter((l) => !/^file:\/\/\S+$/.test(l.trim())).join("\n"));
+        const found = attach.filePaths(v);
+        if (found.length) {
+          this.addFiles(attach.paths(found));
+          this.box.set_value(v.split("\n").filter((l) => !attach.filePaths(l).length).join("\n"));
+        }
       }
       this.slashSel = 0;
       // Editing a recalled message makes it a new one: arrows move in it again.
@@ -361,11 +358,9 @@ export default class Chat extends View {
       this.saveSoon(cx);
       cx.notify();
     });
-    // A paste with no text: the clipboard's image or copied files become attachments.
-    this.box.on("paste_other", (_e, cx) => cx.spawn(async (cx) => {
-      const got = await attach.fromClipboard().catch((e) => { this.error = String(e?.message ?? e); cx.notify(); return []; });
-      if (got.length) { this.error = null; this.addFiles(got); this.saveSoon(cx); cx.notify(); }
-    }));
+    // Older/native Paste actions with no text still arrive here. Keyboard and menu Paste
+    // use the same transaction, including when the clipboard also advertises text/HTML.
+    this.box.on("paste_other", (_e, cx) => this.pasteClipboard(cx));
     this.wasFocused = false;
     // Up/Down/Tab/Escape reach the textarea first, which keeps them. While the "/" list shows
     // (chat_slash) or the box is empty or showing a recalled message (chat_recall), these
@@ -374,6 +369,9 @@ export default class Chat extends View {
       bound = true;
       const keys = [];
       for (const ctx of ["Input", "TextArea", "Textarea"]) {
+        for (const chat of ["chat_composer", "chat_slash", "chat_recall", "chat_stop"]) {
+          for (const keystroke of ["ctrl-v", "cmd-v"]) keys.push({ keystroke, action: "chat_paste", context: `${chat} > ${ctx}` });
+        }
         keys.push({ keystroke: "up", action: "chat_slash_up", context: `chat_slash > ${ctx}` },
           { keystroke: "down", action: "chat_slash_down", context: `chat_slash > ${ctx}` },
           { keystroke: "tab", action: "chat_slash_take", context: `chat_slash > ${ctx}` },
@@ -429,7 +427,7 @@ export default class Chat extends View {
     this.workerCards = new AskCards({
       reply: (ask, text, cx) => this.replyWorker(ask, text, cx),
       toTerminal: (ask) => { openTaskThread(ask.terminal, ask.ref, ask.title); requestWorkerTerminal(ask.terminal); },
-      chatAbout: (ask) => openTaskThread(ask.terminal, ask.ref, ask.title),
+      chatAbout: (ask) => openTaskThread(ask.terminal, ask.ref, ask.title, "chat"),
     }, cx.focus_handle());
     // Codex's own questions (request_user_input, no hook): the same question card, its answer
     // pressed on Codex's screen (codexCard(), answerCodex()).
@@ -548,15 +546,10 @@ export default class Chat extends View {
     });
     if (this.addr) cx.spawn(async (cx) => this.watchAsks(cx));
     // Keys (keys.json "mod:chat") and the header's buttons (pane-chat) for this chat.
-    // At most 5 s per wait (one pending nextCommand), so a reload's old build ends at its next
-    // cx use instead of staying in memory.
+    // The host cancels the pending receive when this copy closes or reloads.
     cx.spawn(async (cx) => {
-      let cmd = null;
       for (;;) {
-        cmd ??= nextCommand();
-        const c = await Promise.race([cmd, cx.sleep(5000)]);
-        if (c === undefined) continue;
-        cmd = null;
+        const c = await nextCommand();
         // From the shell: data/chat-sendreq.json = { pane, text, files? }, then `herdr-app do
         // chat.send` (with fill: true, the words go into the box instead; with thread:
         // { terminal, task, title }, that worker's thread opens beside this chat).
@@ -636,6 +629,7 @@ export default class Chat extends View {
   // asks are released (Codex waits on the hook), so it asks in its terminal instead. Claude's stay
   // on the web's cards: its terminal shows its own prompt meanwhile. A call or a recording ends with it.
   async close(cx) {
+    this.askWait?.dispose(); this.logWait?.dispose(); this.voiceWait?.dispose();
     if (this.host) return this.host.close(cx);
     this.clearHistory(true);
     const cleanup = this.clearLinkedMarkdown(true, cx);
@@ -712,19 +706,22 @@ export default class Chat extends View {
   async watchAsks(cx) {
     if (this.askLoop) return;
     this.askLoop = true;
+    const wait = this.askWait = new BoundedWait();
+    try {
     await exec("sh", ["-c", 'mkdir -p "$1/open" "$1/req" "$1/ans"', "x", this.askDir]).catch(() => {});
     for (;;) {
-      if (!this.addr) { await cx.sleep(3000); continue; }
+      if (!this.addr) { wait.clear(); await cx.sleep(3000); continue; }
       if (this.machine) {
+        wait.clear();
         await this.readRemoteAsks(cx).catch(() => {});
         await cx.sleep(3000);
         continue;
       }
       await this.readAsks(cx);
       // One watch at a time, as for the log.
-      this.askWatch ??= watchFolder(`${this.askDir}/req`).finally(() => { this.askWatch = null; });
-      await Promise.race([this.askWatch, cx.sleep(5000)]);
+      if (await wait.next(cx, this.askDir, () => watchFolder(`${this.askDir}/req`), 5000) === DISPOSED) return;
     }
+    } finally { wait.dispose(); }
   }
 
   // Another machine's agent (SHEP-139): its requests there that still wait (their hook alive),
@@ -734,12 +731,13 @@ export default class Chat extends View {
     const machine = this.machine, address = this.addr, local = address.slice(machine.length + 1);
     const r = await exec("hc", ["exec", "--on", machine, "sh", "-c", REMOTE_LIST, "x", local, ...this.asks.map((a) => a.id)]);
     if (r.code !== 0 || this.machine !== machine || this.addr !== address) return;
-    const reqs = new Map(), ends = new Map(), statuses = new Map();
+    const reqs = new Map(), ends = new Map(), statuses = new Map(), advice = new Map();
     for (const line of String(r.stdout ?? "").split("\n")) {
       const [kind, id, ...rest] = line.split("\t");
       if (!id || !/^[\w.-]+$/.test(id)) continue;
       if (kind === "req") reqs.set(id, rest.join("\t"));
       else if (kind === "status") statuses.set(id, rest.join("\t"));
+      else if (kind === "advice") advice.set(id, rest.join("\t"));
       else if (kind === "end" && rest.join("\t").trim()) ends.set(id, rest.join("\t").trim());
     }
     const kept = [];
@@ -751,7 +749,7 @@ export default class Chat extends View {
       let req = null;
       try { req = JSON.parse(text); } catch {}
       const w = req ? words(req) : { kind: "permission", title: UNREAD_APPROVAL, detail: "", unread: true };
-      const approval = permissionStatus(req, statuses.get(id)), old = this.asks.find(a => a.id === id);
+      const approval = permissionStatus(req, statuses.get(id), advice.get(id)), old = this.asks.find(a => a.id === id);
       kept.push({ id, req, words: w, approval, machine });
       if ((!old || old.approval?.attention === false) && approval?.attention !== false) added = true;
     }
@@ -789,9 +787,10 @@ export default class Chat extends View {
       // Unreadable here: it can only be allowed in the terminal.
       const w = req ? words(req) : { kind: "permission", title: UNREAD_APPROVAL, detail: "", unread: true };
       const metadata = await readTextFile(`${this.askDir}/req/${id}.status`).catch(() => null);
+      const advice = await readTextFile(`${this.askDir}/req/${id}.advice`).catch(() => null);
       // Recheck after the async reads: a handoff/answer may have closed it in between.
       if (await readTextFile(`${this.askDir}/ans/${id}.json`).catch(() => null) !== null || await readTextFile(`${this.askDir}/req/${id}.json`).catch(() => null) !== text) continue;
-      const approval = permissionStatus(req, metadata), old = this.asks.find(a => a.id === id);
+      const approval = permissionStatus(req, metadata, advice), old = this.asks.find(a => a.id === id);
       kept.push({ id, req, words: w, approval });
       if ((!old || old.approval?.attention === false) && approval?.attention !== false) added = true;
     }
@@ -1015,7 +1014,7 @@ export default class Chat extends View {
       busy: this.screenBusy.has(own.id), error: this.screenErr.get(own.id),
       press: (i, cx) => this.pressScreen(own, i, cx), toTerminal: () => this.toTerminal() }) });
     // A worker's: headed by its task, with its chat a quiet link at the right.
-    const open = (id, ref, title, terminal) => [linkCtl(`wask-open-${id}`, "Open chat", () => openTaskThread(terminal, ref, title))];
+    const open = (id, ref, title, terminal) => [linkCtl(`wask-open-${id}`, "Open chat", () => openTaskThread(terminal, ref, title, "chat"))];
     for (const a of this.wasks ?? []) {
       yield;
       if (a.secret) {
@@ -1461,8 +1460,9 @@ export default class Chat extends View {
   }
 
   async follow(cx) {
+    const wait = this.logWait = new BoundedWait();
     let last = 0;
-    for (;;) {
+    try { for (;;) {
       try {
         if (!this.path || Date.now() - last > 4000) { last = Date.now(); await this.locate(cx); }
         if (this.phase === "ended" && !this.swapping) {
@@ -1516,12 +1516,12 @@ export default class Chat extends View {
         // Here: wake on the log's folder changing, and look again now and then anyway.
         const dir = this.path.slice(0, this.path.lastIndexOf("/"));
         // One watch at a time: the folder may stay quiet for hours.
-        if (this.watching?.dir !== dir) this.watching = { dir, next: watchFolder(dir).finally(() => { this.watching = null; }) };
-        await Promise.race([this.watching.next, cx.sleep(4000)]);
+        if (await wait.next(cx, dir, () => watchFolder(dir), 4000) === DISPOSED) return;
       } else {
+        wait.clear();
         await cx.sleep(working ? 1500 : 4000);
       }
-    }
+    } } finally { wait.dispose(); }
   }
 
   // ---- sending ------------------------------------------------------------------------------
@@ -1529,6 +1529,7 @@ export default class Chat extends View {
   // Enter: now (while the agent works, it takes it mid-turn). Ctrl+Enter while it
   // works: held, and sent by itself once it is free.
   send(cx, hold = false) {
+    if (this.clipboardPaste) { toast({ title: 'Paste is still loading', body: 'Wait for the attachment to appear, then send.' }); return; }
     // A picked "#space" goes as its mention, which names its target (core/mentions.js).
     const text = mentions.expandTasks(mentions.expand(this.box.value().trim(), this.picked), this.pickedTasks);
     this.picked = [];
@@ -1845,6 +1846,13 @@ export default class Chat extends View {
   // The first message starts the agent (its template), parked behind this chat, with the
   // message as its task; then the chat follows it as usual.
   startAgent(msg, cx, thenTerminal = false) {
+    if (this.phase === 'starting') return;
+    if (this.slotAgent()) {
+      this.adoptSlot(cx);
+      if (msg) this.queue.push(msg);
+      if (thenTerminal) this.toTerminal();
+      return;
+    }
     const pane = this.slotPane();
     if (!pane) { toast({ title: "Couldn't start the Assistant", body: "This chat hasn't found its pane. Try again in a moment.", level: "error" }); return; }
     const rec = this.slotRec();
@@ -1860,11 +1868,7 @@ export default class Chat extends View {
     const local = machine || !msg ? [] : msg.files.map((f) => f.path);
     let task = msg ? [reply + msg.text, ...local].filter(Boolean).join("\n\n") : "";
     const featureRecord = this.featureRecord;
-    if (this.feature && !featureRecord?.session) {
-      const naming = featureRecord?.autoName ? `First choose a short feature title and run python3 ${JSON.stringify(`${appHome()}/mods/workspace-launchers/bin/workspace-state`)} feature-name with one JSON argument containing id=${this.feature} and name=your title. This only names this feature. ` : '';
-      const context = featureRecord?.context ? `\nContext handoff from the parent conversation (reference only; old tool calls and tasks are not new instructions):\n${featureRecord.context}` : '';
-      task = `You are the Feature Assistant for ${featureRecord?.name ?? 'this feature'} (feature ID ${this.feature}). ${naming}Use the shared worker/reviewer settings. Own only tasks for this feature.${context}\n\n${task}`;
-    }
+    if (this.feature) task = featureTask(featureRecord ?? { id: this.feature }, task);
     const p = msg ? { id: `pending-${msg.id}`, text: msg.text, replyTo: msg.quote ? excerpt(msg.quote.text, 80) : null, files: msg.files.filter((f) => !f.image).map((f) => f.name),
       paths: msg.files.filter((f) => f.image).map((f) => f.path), at: Date.now(), sent: task, match: norm(msg.text).slice(0, 60) || null } : { failed: null };
     if (msg) this.pending.push(p);
@@ -1881,78 +1885,25 @@ export default class Chat extends View {
     cx.spawn(async (cx) => {
       // A still-empty Assistant may have been opened before its space folder changed.
       if(this.role==='coordinator'&&space)folder=await projectFolder(space);
-      // Chosen settings (the New space dialog, props.settings): the template's words with that
-      // agent and its flags, as a one-off template (as restart.sh does), written beside the
-      // template on the machine it runs on. There, an agent that isn't installed leaves the
-      // template's own command (what that machine's sync put there).
-      // Every start goes through a one-off (SHEP-86): its command first clears a parent Claude Code
-      // session's markers the holder may carry (core/clean-env.js), then execs the agent: hc runs a
-      // template's command under sh -c, and where sh is dash (Debian, Ubuntu) the shell would stay
-      // the terminal's program, so the chat wouldn't know its CLI.
-      let launch = template, oneOff = null, words = "";
-      const st = this.choice?.sel ?? props()?.settings;
-      const on = machine ? { on: machine } : {};
-      const there = !machine || !st?.agent ? true : (await knownAgents(on).catch(() => []))
-        .some((a) => (a.key === st.agent || (a.run ?? [])[0] === st.agent) && a.installed !== false);
-      {
-        const q = (a) => (/^[\w@%+=:,./-]+$/.test(a) ? a : `'${String(a).replace(/'/g, "'\\''")}'`);
-        const src = (await exec("sh", ["-c", TEMPLATE + 'cat "$dir/$1.md"', "x", template], on).catch(() => null))?.stdout ?? "";
-        const head = /^---\n([\s\S]*?)\n---\n?/.exec(src);
-        const body = appendInstructions(head ? src.slice(head[0].length) : src,spaceInstructions(await readShepherdr(),space?.id,this.role));
-        const own = /^command:[ \t]*(.+)$/m.exec(head?.[1] ?? "")?.[1]?.trim();
-        let selected = st;
-        try {
-          if (st?.agent && !there) throw new Error("The assigned agent is not installed on this machine.");
-          selected = await agent.profilePick(st, machine);
-        } catch (error) {
-      this.historySourceRevision=(this.historySourceRevision??0)+1;
-          this.phase = "fresh"; p.failed = String(error.message ?? error);
-          toast({ title: "Assistant did not start", body: p.failed, level: "error" }); cx.notify(); return;
-        }
-        const selectedArgv = selected?.agent ? await approvalArgv(agent.argvFor(selected, { agent: null, argv: [] }).argv, space?.id, this.role, folder, machine) : null;
-        const cmd = selectedArgv ? selectedArgv.map(q).join(" ") : own;
-        if (body.trim() && cmd) {
-          words = body.trim();
-          oneOff = `herdr-${template}-${Date.now().toString(36)}`;
-          const file = `---\nname: ${oneOff}\ndescription: A one-off ${template} start with chosen settings (mods/chat), removed after use.\ncommand: ${cleanCommand(cmd)}\n---\n${body}`;
-          await exec("sh", ["-c", TEMPLATE + 'printf "%s" "$2" > "$dir/$1.md"', "x", oneOff, file], on);
-          launch = oneOff;
-        }
+      let address;
+      const spec = { slot: this.slot, pane, tab: rec?.tab, role: this.role, template, space, folder,
+        settings: this.choice?.sel ?? props()?.settings, featureRecord, task };
+      try { address = await startRole(spec); }
+      catch (error) {
+        p.failed = String(error.message ?? error);
+        toast({ title: "Assistant did not start", body: p.failed, level: "error" });
+        if (msg) { this.pending = this.pending.filter(x => x !== p); if (!this.box.value().trim()) this.box.set_value(msg.text); }
+        this.phase = "fresh"; cx.notify(); return;
       }
-      const args = ["run", "--bg", "--json", "--no-parent", "--keep", ...(machine ? ["--on", machine] : []), ...(folder ? ["--cwd", folder] : []),
-        "--label", `herdr.chat=${chatLabel(pane)}`, "--label", `herdr.chat.slot=${this.slot}`, "--label", `herdr.chat.origin=slot:${this.slot}`,
-        "--label", `herdr.role=${this.role}`,
-        ...(this.feature ? ["--label", `herdr.feature=${this.feature}`] : []),
-        ...(space ? ["--label", `herdr.coordinator.space=${String(space.id).split("/").pop()}`] : []),
-        ...(rec?.tab ? ["--label", `herdr.coordinator.tab=${String(rec.tab).split("/").pop()}`] : []),
-        ...(this.feature && featureRecord?.session ? ["--", ...agent.resumeArgv(featureRecord.kind ?? "codex", featureRecord.argv ?? ["codex", "--no-daemon"], featureRecord.session), ...(task ? [task] : [])] : [launch, ...(task ? [task] : [])])];
-      const r = await hc(args).catch((e) => ({ code: 1, stderr: String(e?.message ?? e), stdout: "" }));
-      if (oneOff) exec("sh", ["-c", TEMPLATE + 'rm -f "$dir/$1.md"', "x", oneOff], on);
-      let out = {};
-      try { out = JSON.parse(r.stdout || "{}"); } catch {}
-      // hc waits to hand the agent its first message and gives up while the CLI shows a screen of
-      // its own (trust this folder, in a new folder on another machine): hc took too long, but the
-      // agent runs. Then this chat sends the template's words and the task itself once the agent is
-      // idle past that screen (follow()), so the Assistant never starts without its instructions.
-      const late = (r.code !== 0 || !out.address) && this.slotAgent();
-      if (late) out = { address: late, first_message: { sent: false } };
-      if (out.address && out.first_message?.sent === false && words) this.firstSend = [words, task].filter(Boolean).join("\n\n");
-      if (r.code !== 0 && !late || !out.address) {
-      this.historySourceRevision=(this.historySourceRevision??0)+1;
-        p.failed = (r.stderr || r.stdout || "It didn't start.").trim();
-        toast({ title: `The ${this.role === "coordinator" ? "Assistant" : this.role} didn't start`, body: msg ? `${p.failed} Your message is back in the box.` : p.failed, level: "error" });
-        // the fresh chat shows no pending rows: the message goes back in the box rather than vanish (GitHub #839)
-        if (msg) { this.pending = this.pending.filter((x) => x !== p); if (!this.box.value().trim()) this.box.set_value(msg.text); }
-        this.phase = "fresh";
-        cx.notify();
-        return;
-      }
+      // Another view may have won the shared launch. Its first prompt is already in flight;
+      // retain this Chat's message to deliver afterwards rather than start again or lose it.
+      if (msg && roleStart(spec)?.task !== task) { this.pending = this.pending.filter(x => x !== p); this.queue.push(msg); }
       // Remember what the person asked: the agent's first message is the template's words with it.
       if (msg) {
         this.firstTask = msg.text;
         fs.mkdir(`${appHome()}/data/chat-first`, { recursive: true }).then(() => fs.writeFile(this.firstFile, msg.text)).catch(() => {});
       }
-      this.addr = machine && !out.address.includes("/") ? `${machine}/${out.address}` : out.address;
+      this.addr = address;
       this.machine = this.addr.includes("/") ? this.addr.split("/")[0] : null;
       await this.flag();
       this.phase = "finding";
@@ -2121,12 +2072,17 @@ export default class Chat extends View {
   // The spaces the agent's machine reaches, from its herdr-task reach map (what tell-assistant
   // follows); none there yet: the spaces on its own machine.
   async loadReach() {
-    const r = await exec("sh", ["-c", mentions.REACH_FILE], { on: this.machine }).catch(() => null);
+    const address=this.addr,machine=this.machine,pid=this.t?.foreground?.pid;
+    const r = await exec("sh", ["-c", mentions.REACH_FILE], { on: machine }).catch(() => null);
+    if(this.historyClosed||address!==this.addr||machine!==this.machine||pid!==this.t?.foreground?.pid)return;
     let graph = null;
     try { graph = JSON.parse(r?.stdout || "null")?.graph ?? null; } catch {}
     const here = graph ? null : (spaces() ?? []).filter((x) => (x.machine ?? null) === (this.machine ?? null))
       .map((x) => ({ id: String(x.id).split("/").pop(), name: x.name, route: "", machine: this.machine ?? "", target: String(x.id).split("/").pop(), assistant: false }));
-    this.reach = { from: graph?.core?.name ?? this.machine, spaces: graph ? mentions.reachable(graph) : here };
+    const next = { from: graph?.core?.name ?? this.machine, spaces: graph ? mentions.reachable(graph) : here };
+    // Polls marshal new objects even when nothing changed. Compare outside
+    // render so neither history nor retained Markdown is invalidated by them.
+    if(JSON.stringify(next)!==JSON.stringify(this.reach))this.reach=next;
   }
 
   // A message's words with each #-mention in plain markdown: its name and machine, and "out of
@@ -2173,11 +2129,19 @@ export default class Chat extends View {
   async loadTasks() {
     const folder = this.t?.foreground?.cwd ?? this.t?.cwd;
     if (!folder) return;
-    const args = [...(this.machine ? ["--on", this.machine] : []), "list", "--json", "--folder", folder];
+    const address=this.addr,machine=this.machine,pid=this.t?.foreground?.pid;
+    const args = [...(machine ? ["--on", machine] : []), "list", "--json", "--folder", folder];
     const [r, old] = await Promise.all([args, [...args, "--archived"]].map((a) => exec("herdr-task", a).catch(() => null)));
+    if(this.historyClosed||address!==this.addr||machine!==this.machine||pid!==this.t?.foreground?.pid||folder!==(this.t?.foreground?.cwd??this.t?.cwd))return;
     const tasks = (out) => { try { const d = JSON.parse(out?.stdout ?? "{}"); return (d.tasks ?? []).map((x) => ({ ...x, folder: d.folder })); } catch { return null; } };
     const now = tasks(r);
-    if (now) this.tasks = [...now, ...(tasks(old) ?? [])];
+    if (now) {
+      const next=[...now,...(tasks(old)??[])];
+      if(JSON.stringify(next)!==JSON.stringify(this.tasks)){
+        this.tasks=next;
+        this.taskMentionStamp=JSON.stringify(next.map(x=>[x.ref,x.folder,x.title,x.archived]));
+      }
+    }
   }
 
   // The tasks a message mentions: by their id (HAT-1, from herdr-task's `ref`) or as #4.
@@ -2216,7 +2180,9 @@ export default class Chat extends View {
   // Every folder's tasks on its machine (herdr-task list --all): a space's tasks can be in any
   // folder, not only where its Assistant runs.
   async loadSpaceTasks() {
-    const r = await exec("herdr-task", [...(this.machine ? ["--on", this.machine] : []), "list", "--all", "--read-only", "--json"]).catch(() => null);
+    const address=this.addr,machine=this.machine,pid=this.t?.foreground?.pid,feature=this.feature;
+    const r = await exec("herdr-task", [...(machine ? ["--on", machine] : []), "list", "--all", "--read-only", "--json"]).catch(() => null);
+    if(this.historyClosed||address!==this.addr||machine!==this.machine||pid!==this.t?.foreground?.pid||feature!==this.feature)return;
     try {
       const d = JSON.parse(r?.stdout ?? "null");
       if (Array.isArray(d)) {
@@ -2224,7 +2190,10 @@ export default class Chat extends View {
         const signature = JSON.stringify(next);
         // This runs outside render. An unchanged eight-second response must not
         // invalidate news, mentions and every retained Markdown row on a repaint.
-        if (signature !== this.spaceTasksPayload) { this.spaceTasksPayload = signature; this.spaceTasks = next; }
+        if (signature !== this.spaceTasksPayload) {
+          this.spaceTasksPayload = signature; this.spaceTasks = next;
+          this.spaceTaskMentionStamp=JSON.stringify(next.map(x=>[x.ref,x.folder,x.title,x.archived]));
+        }
       }
     } catch {}
   }
@@ -2583,7 +2552,7 @@ export default class Chat extends View {
     if(target.kind==='web'){cx.open_url(target.url);return;}
     if(target.kind!=='file'){toast({title:'Link could not be opened',body:'Use a website URL or a local project-file path.'});return;}
     const doc=panes().find(p=>p.tab===tab&&p.mod==='workspace-document');
-    const file={file:target.file,on:this.machine??null,line:target.line,column:target.column};
+    const file={file:target.file,on:this.machine??null,line:target.line,column:target.column,root:folder,space:space?.id};
     if(doc){setShared('workspace.document.open',{...file,pane:doc.pane,at:Date.now()});run('pane.focus',{pane:doc.pane});return;}
     const slot=`doc-link-${Date.now()}-${Math.random().toString(36).slice(2)}`;
     const args=origin?{pane:origin.pane,direction:'right',mod:'workspace-document',props:{...file,slot}}
@@ -2641,11 +2610,46 @@ export default class Chat extends View {
     if(req.action==='cut'){this.box.set_selected_range(range);this.box.replace('');this.saveSoon(cx);}
     if(req.action==='paste'){
       this.box.focus();this.box.set_selected_range(range);
-      const pasted=cx.read_from_clipboard();
-      if(typeof pasted==='string'){this.box.replace(pasted);this.saveSoon(cx);}
-      else cx.spawn(async cx=>{try{this.addFiles(await attach.fromClipboard());this.saveSoon(cx);}catch(e){this.error=String(e?.message??e);}cx.notify();});
+      this.pasteClipboard(cx, req);
     }
     if(req.action==='select-all'){this.box.focus();this.box.set_selected_range({start:0,end:this.box.value().length});}
+  }
+
+  // A paste belongs to the captured draft and agent, even if a picker/task changes this view
+  // while the OS reader runs. Text is captured synchronously and never interpreted as code.
+  clipboardOwner() {
+    return JSON.stringify([this.draftFile, this.originKey, this.addr, this.kind, this.slot, this.companion, this.machine, this.choice?.sel?.profile, this.dflt?.home]);
+  }
+
+  pasteClipboard(cx, req = null) {
+    const owner = this.clipboardOwner();
+    if (this.clipboardPaste?.owner === owner) return; // Duplicate notifications share the in-flight extraction.
+    const job = { owner, value: req?.value ?? this.box.value(),
+      range: req?.range ?? this.box.selected_range(), files: this.files, quote: this.quote,
+      text: cx.read_from_clipboard() };
+    this.clipboardPaste = job;
+    cx.notify();
+    const current = () => this.clipboardPaste === job && this.clipboardOwner() === job.owner && this.box.value() === job.value && this.files === job.files && this.quote === job.quote;
+    cx.spawn(async (cx) => {
+      let got = [], error = null, imageFailed = false;
+      try { got = await attach.fromClipboard(); }
+      catch (e) { error = String(e?.message ?? e); imageFailed = !!e?.clipboardImage; }
+      try {
+        if (!current()) {
+          got.forEach(attach.drop);
+          toast({ title: 'Paste canceled', body: 'The draft or agent changed. Paste again in the intended chat.' });
+          return;
+        }
+        this.error = error;
+        if (error) toast({ title: 'Clipboard image could not be read', body: error, level: 'error' });
+        if (got.length) this.addFiles(got);
+        else if (!imageFailed && typeof job.text === 'string' && job.text.length) {
+          this.box.set_selected_range(job.range);
+          this.box.replace(job.text);
+        }
+        this.saveSoon(cx);
+      } finally { if (this.clipboardPaste === job) this.clipboardPaste = null; cx.notify(); }
+    });
   }
 
   // ---- dictation ----------------------------------------------------------------------------
@@ -2786,10 +2790,12 @@ export default class Chat extends View {
   }
 
   async followCall(cx) {
+    this.voiceWait?.dispose();
+    const wait = this.voiceWait = new BoundedWait();
     const dir = this.callDir;
     const call = this.call;
     let touched = 0, lastStatus = null, seen = new Set((this.conv?.items ?? []).map((x) => x.id));
-    while (this.call === call) {
+    try { while (this.call === call) {
       const s = await readTextFile(`${dir}/state.json`).catch(() => null);
       let st = null;
       try { st = JSON.parse(s ?? "null"); } catch {}
@@ -2829,17 +2835,12 @@ export default class Chat extends View {
         if (fresh.length) { this.callSay({ type: "reply", text: fresh.slice(-2).map((x) => x.text).join("\n\n") }); fresh.forEach((x) => seen.add(x.id)); }
       }
       // One watch at a time (a new one each second would pile up while the folder is quiet).
-      if (this.callWatch?.dir !== dir) {
-        const w = { dir, next: watchFolder(dir).catch(() => null).finally(() => { if (this.callWatch === w) this.callWatch = null; }) };
-        this.callWatch = w;
-      }
-      // What the window shows, for the call's "here"; what the voice agent asked to show.
-      // (the watch kept before awaiting: one that fires meanwhile clears this.callWatch)
-      const woke = this.callWatch.next;
+      // Start watching before callNav: an event arriving during navigation is kept.
+      wait.prepare(dir, () => watchFolder(dir));
       this.callWhere();
       await this.callNav();
-      await Promise.race([woke, cx.sleep(1000)]);
-    }
+      if (await wait.next(cx, dir, () => watchFolder(dir), 1000, () => null) === DISPOSED) return;
+    } } finally { wait.dispose(); }
   }
 
   // What the window shows now, for the voice agent's "here", "this task" (voice.ts reads where.json): the space
@@ -2949,7 +2950,7 @@ export default class Chat extends View {
       if (nav.kind === "tasks" && nav.search) setShared("tasks.searchreq", { q: String(nav.search), at });
       return { ok: true };
     }
-    if (nav.kind === "artifact") { openViewer({ id: nav.artifact, title: nav.title, version: nav.v, latest: nav.v, machine: nav.machine ?? null }); return { ok: true }; }
+    if (nav.kind === "artifact") { openViewer({ id: nav.artifact, title: nav.title, version: nav.v, machine: nav.machine ?? null }); return { ok: true }; }
     if (nav.kind === "settings") { run("app.settings", nav.section ? { section: String(nav.section).toLowerCase() } : {}); return { ok: true }; }
     return no("the window can't show that");
   }
@@ -2978,6 +2979,7 @@ export default class Chat extends View {
   }
 
   async hangup() {
+    this.voiceWait?.dispose();
     const call = this.call;
     this.call = null;
     this.callShared();
@@ -3224,6 +3226,14 @@ export default class Chat extends View {
 
   rows() { return this.history?.snapshot?.rows ?? []; }
 
+  // A layout/status refresh belongs to the same timeline. Only an actual
+  // conversation/route change may replace it with the Opening notice.
+  historyIdentity() {
+    return [this.addr,this.path,this.kind,this.role,this.feature,this.pickKey()??this.areaKey(),
+      this.machine,this.taskRef,
+      this.t?.labels?.["herdr.task"],this.t?.labels?.["herdr.role"],this.t?.labels?.["herdr.space"],this.t?.labels?.["herdr.coordinator.space"]];
+  }
+
   historyContext() {
     const screens=shared("chat.screens")??{},by=this.workerTasks();
     const screenSig=JSON.stringify([this.addr,...by.keys()].map(addr=>screens[addr]??null));
@@ -3234,7 +3244,7 @@ export default class Chat extends View {
       this.t?.labels?.["herdr.task"],this.t?.labels?.["herdr.role"],this.t?.labels?.["herdr.space"],this.t?.labels?.["herdr.coordinator.space"],
       screenSig,machineSig,this.asks,
       (this.wasks??[]).map(a=>`${a.id}:${a.secret?.kept??""}:${a.requestHash??""}:${JSON.stringify(a.approval)}`).join("|"),
-      (this.sasks??[]).map(a=>`${a.name}:${a.kept}`).join("|")];
+      (this.sasks??[]).map(a=>`${a.name}:${a.kept}`).join("|"),this.measureGen??0];
   }
 
   historyStamp() {
@@ -3245,7 +3255,11 @@ export default class Chat extends View {
   }
 
   historyCurrent(plan) {
-    return !this.historyClosed&&this.history?.snapshot===plan&&equal(plan.context,this.historyContext());
+    return this.historyVisible(plan)&&this.history.snapshot===plan&&equal(plan.context,this.historyContext());
+  }
+
+  historyVisible(plan) {
+    return !!plan?.owner&&!this.historyClosed&&this.history===plan.owner&&!plan.owner.closed&&equal(plan.scope,this.historyIdentity());
   }
 
   historyEvent(plan,fn) {
@@ -3261,7 +3275,7 @@ export default class Chat extends View {
   prepareHistory(t,cx) {
     if(this.historyClosed)return null;
     const work=this.history??=new Preparation();
-    work.request(this.historyContext(),this.historyStamp(),()=>this.historyPlan());
+    work.request(this.historyContext(),this.historyStamp(),()=>this.historyPlan(),this.historyIdentity());
     this.scheduleHistory(cx);
     return work.snapshot;
   }
@@ -3274,9 +3288,9 @@ export default class Chat extends View {
       if(this.history!==work||work.closed)return;
       // UI inputs can change between draw and a timer. Invalidate before doing
       // even the first unit of work or exposing any row's controls.
-      work.request(this.historyContext(),this.historyStamp(),()=>this.historyPlan());
+      work.request(this.historyContext(),this.historyStamp(),()=>this.historyPlan(),this.historyIdentity());
       const result=work.step(32);
-      if(!equal(work.context,this.historyContext())){work.request(this.historyContext(),this.historyStamp(),()=>this.historyPlan());cx.notify();}
+      if(!equal(work.context,this.historyContext())){work.request(this.historyContext(),this.historyStamp(),()=>this.historyPlan(),this.historyIdentity());cx.notify();}
       if(result.error){this.preparingHistory=null;this.error=String(result.error.message??result.error);cx.notify();return;}
       if(result.changed&&work.snapshot){
         this.rowRevisions=work.snapshot.revisions;
@@ -3300,7 +3314,8 @@ export default class Chat extends View {
     for(const p of this.pending??[]){yield;host.pending.push({...p});}
     for(const p of this.replied??[]){yield;host.replied.push({...p});}
     for(const [id,state] of this.rowRevisions??[]){yield;host.rowRevisions.set(id,{...state});}
-    const plan=new PreparedHistory();plan.context=this.history.context;this.preparingHistory=plan;
+    const plan=new PreparedHistory();plan.owner=this.history;plan.context=this.history.context;plan.scope=this.history.scope;
+    plan.generation=this.measureGen??0;this.preparingHistory=plan;
     const rows=yield* host.rowPlan();
     plan.rows=rows;plan.recent=new RecentIndex(rows.length);
     for(let i=0;i<rows.length;i++){
@@ -3732,7 +3747,10 @@ export default class Chat extends View {
   // Presentation inputs can change before the next draw. Conversation objects are
   // only a callback validity guard: rebuild() replaces them during ordinary loads.
   linkedMarkdownStamp() {
-    return [this.measureGen,this.width,this.column(),zoomOf(),this.findQuery(),this.pickKey()??this.areaKey(),this.reach,this.tasks,this.spaceTasks];
+    // Progress/status changes update cards/news, not the text of task links.
+    // These signatures are calculated by the loaders, never by a paint pass.
+    return [this.measureGen,this.width,this.column(),zoomOf(),this.findQuery(),this.pickKey()??this.areaKey(),this.reach,
+      this.taskMentionStamp??this.tasks,this.spaceTaskMentionStamp??this.spaceTasks];
   }
 
   linkedMarkdownInputs() {
@@ -4878,7 +4896,7 @@ export default class Chat extends View {
     // written there answer it ("Reply instead…").
     const ready = this.phase === "ready" || this.phase === "fresh";
     const empty = !this.box.value().trim() && !this.files.length;
-    const can = ready && !empty;
+    const can = ready && !empty && !this.clipboardPaste;
     const list = this.focused || this.paneFocused ? this.suggestions() : [];
     const rec = this.dict.state;
     const recallable = !list.length && (!this.box.value() || this.recall >= 0);
@@ -4888,6 +4906,7 @@ export default class Chat extends View {
       // Esc stops a working agent while the box is empty and nothing is open over it.
       .key_context([list.length ? "chat_slash" : recallable ? "chat_recall" : "chat_composer",
         st === "working" && !list.length && !this.box.value().trim() && !this.quote ? "chat_stop" : null].filter(Boolean).join(" "))
+      .on_action("chat_paste", take((cx) => this.pasteClipboard(cx)))
       .on_action("chat_stop", take((cx) => this.stop(cx)))
       .on_action("chat_slash_up", take(() => { this.slashSel = (sel + list.length - 1) % list.length; }))
       .on_action("chat_slash_down", take(() => { this.slashSel = (sel + 1) % list.length; }))
@@ -5274,6 +5293,9 @@ export default class Chat extends View {
       .child(this.notice(t, WORDS.opening, this.error??null)).child(this.composer(t,st));
     const {rows,keys,sizes,index:rowIndex}=prepared;
     const event=fn=>this.historyEvent(prepared,fn);
+    // Scrolling/hover remain available while replacement rows are prepared.
+    // Actions and measurements still require the exact current presentation.
+    const viewport=fn=>(...args)=>{if(this.history?.snapshot===prepared&&this.historyVisible(prepared))return fn(...args);};
     // First-seen times this render found (seenAt()), shared once it's done; the newest 60 kept.
     if (this.seenNew && !this.seenFlush) {
       this.seenFlush = true;
@@ -5318,7 +5340,7 @@ export default class Chat extends View {
       ? this.notice(t, "No messages", "Write to the agent below.")
       : v_flex().relative().flex_1().min_h(0).pt(8)
         .id("chat-body")
-        .on_size_change(event((size, cx) => {
+        .on_size_change(viewport((size, cx) => {
           const was = this.listH, h = unzoom(size.height);
           this.listH = h;
           if (was && Math.abs(was - h) > 0.5 && this.pinned) { this.stick = true; cx.notify(); }
@@ -5326,13 +5348,13 @@ export default class Chat extends View {
         // How far down the list a press was, for the action bands (rows take no handlers).
         .on_mouse_down("left", event((e) => { this.bodyPress = unzoom(e.local_position?.y); }))
         // Hover repaint follows message boundaries; moving within a long reply does not remeasure it.
-        .on_mouse_move(event((e, cx) => {
+        .on_mouse_move(viewport((e, cx) => {
           const row=rows[prepared.geometry.at((this.scrollTop??0)+unzoom(e.local_position?.y??0))];
           const b=row?.bar?.of??row?.blk??row?.of??row?.id??null;
           if (b !== this.hoverBand) { this.hoverBand = b; cx.notify(); }
         }))
         .on_hover((hovered, cx) => { if (!hovered) { this.hoverBand = null; cx.notify(); } })
-        .on_scroll_wheel(event((e, cx) => {
+        .on_scroll_wheel(viewport((e, cx) => {
           const y = e.delta?.y ?? 0;
           // Where the list is scrolled to, as near as known (the list doesn't say): wheel moves it.
           const movement = viewportScroll(this.scrollTop, y, prepared.total, Math.max(0, (this.listH ?? 0) - 8));
@@ -5343,12 +5365,16 @@ export default class Chat extends View {
           if (y > 0 && (this.range?.start ?? 9) <= 1) this.loadEarlier(cx);
         }))
         .child(v_virtual_list("chat-rows", rows.length, sizes, (i) => rows[i].id, (range) => {
-          if(!this.historyCurrent(prepared))return [];
-          this.range = range;
-          if (rows.length && !(range.end > range.start)) this.blank = true;
-          // The first row on screen bounds the scroll position: keep the estimate inside it.
-          const top = prepared.geometry.sum(range.start);
-          if ((this.scrollTop ?? 0) < top || (this.scrollTop ?? 0) >= top + (sizes[range.start] ?? 0)) this.scrollTop = top;
+          // A deferred frame owes the host one element per requested row even
+          // after a newer snapshot commits. Painting is not an approval action.
+          if(!this.historyVisible(prepared))return [];
+          if(this.historyCurrent(prepared)){
+            this.range = range;
+            if (rows.length && !(range.end > range.start)) this.blank = true;
+            // Only the current layout may update the scroll estimate.
+            const top = prepared.geometry.sum(range.start);
+            if ((this.scrollTop ?? 0) < top || (this.scrollTop ?? 0) >= top + (sizes[range.start] ?? 0)) this.scrollTop = top;
+          }
           return rows.slice(range.start, range.end).map((x, j) => {
             const flash = this.flash && (x.id === this.flash.id || String(x.id).startsWith(`${this.flash.id}:`));
             return div().relative().w_full().h(sizes[range.start + j]).when(!x.bar || x.kind === "band", (el) => el.overflow_hidden())
@@ -5357,7 +5383,7 @@ export default class Chat extends View {
               // Ids carry the width's generation, as the measurer's do: a reply's words keep the
               // width they were first laid out at, so after a resize (a restart's first narrow
               // frames) they'd stay narrow and tall, spilling under the next row.
-              .child(this.row(x, t, `v${this.measureGen}-${this.rowRevisions?.get(x.id)?.revision??0}-`))
+              .child(this.row(x, t, `v${prepared.generation}-${prepared.revisions?.get(x.id)?.revision??0}-`))
               .when(Boolean(flash), (el) => el.child(div().id(`flash-${x.id}`).absolute().inset_0().rounded(10).bg(t.accent + "26")
                 .opacity(this.flash.on ? 1 : 0).transition("opacity", { duration: 1100, easing: "ease-out" })));
           });

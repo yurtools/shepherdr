@@ -146,6 +146,8 @@ export interface Section {
 }
 
 export interface Machine {
+  /** Immutable core ID, used to route artifact links across machine aliases. */
+  coreId?: string
   /** Core native display name, before a Shepherdr-only rename. */
   ownName?: string
   /** m:<its key>: what its spaces' order and its fold are kept under */
@@ -411,7 +413,9 @@ export interface Question {
   title: string
   kind: 'Form' | 'Question' | 'Plan'
   /** Execution permission lifecycle; absent on ordinary questions, plans and older sources. */
-  approval?: { state: string; text: string; detail?: string; attention: boolean }
+  approval?: { state: string; text: string; detail?: string; attention: boolean; advice?: { state: string; text: string; detail?: string; note: string; owner?: string; ownerType?: string; requestHash: string } }
+  requestHash?: string
+  permissionLocal?: boolean
   steps?: string[]
   /** several questions on one card (3.0's): a step for each, then one to check the answers and Submit */
   parts?: { title: string; header?: string; multi?: boolean; choices: Choice[] }[]
@@ -1240,6 +1244,7 @@ export interface Snapshot {
 }
 
 export type Action =
+  | { type: 'permission-info'; question: string; hash: string; command: 'advice' | 'review' }
   | { type: 'evidence'; task: string }
   | { type: 'accept'; task: string; expect?: string; preceding?: string[] }
   | { type: 'later'; task: string; restore?: boolean }
@@ -1263,9 +1268,9 @@ export type Action =
   | { type: 'page-note'; chat: string; page: string; note: string; target?: string }
   /** an artifact's page sent something, you noted on it, or wrote about it in its viewer: to its keeper. By its place,
       so another machine's goes there */
-  | { type: 'artifact-send'; place: string; artifact: string; v: number; text: string }
-  | { type: 'artifact-note'; place: string; artifact: string; v: number; note: string; target?: string }
-  | { type: 'artifact-say'; place: string; artifact: string; v: number; text: string }
+  | { type: 'artifact-send'; place: string; artifact: string; machine?: string | null; v: number; text: string }
+  | { type: 'artifact-note'; place: string; artifact: string; machine?: string | null; v: number; note: string; target?: string }
+  | { type: 'artifact-say'; place: string; artifact: string; machine?: string | null; v: number; text: string }
   | { type: 'artifact-delete'; place: string; artifact: string }
   /** Mark up's notes from the shared browser, sent together into the task's chat */
   | { type: 'browser-notes'; cid?: string; chat: string; url: string; title?: string; viewport?: { w: number; h: number }; notes: BrowserNote[] }
@@ -1350,7 +1355,7 @@ export type ServerEvent =
   /** the answer to a screen's ping: its link still works */
   | { type: 'pong' }
   /** an agent shows the person an artifact (herdr-artifact open): this screen, the one they used last, opens it */
-  | { type: 'show'; artifact: string }
+  | { type: 'show'; artifact: string; machine?: string | null; origin?: string }
 
 /** how Shepherdr's last update of itself went (update.json in its folder, written by the supervisor) */
 export interface UpdateStatus {

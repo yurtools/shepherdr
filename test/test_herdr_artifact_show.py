@@ -25,6 +25,8 @@ if cmd == ["connect"]:
         m = json.loads(line)
         if m["method"] == "hello":
             r = {"generation": 1, "framed": False, "methods": ["doc.get"]}
+        elif m["method"] == "server.status":
+            r = {"core": {"id": "hub-core"}}
         elif m["method"] == "doc.get" and m["params"]["name"] == "shepherdr.web" and os.environ.get("FAKE_WEB"):
             r = {"value": json.loads(os.environ["FAKE_WEB"]), "version": 3}
         else:
@@ -84,7 +86,7 @@ class Show(unittest.TestCase):
         r = self.run_tool("open", self.aid, FAKE_WEB=json.dumps({"link": LINK, "id": "hub-core"}))
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertNotIn("Traceback", r.stderr)
-        self.assertIn(f"Link: {LINK}?artifact={self.aid}", r.stdout)
+        self.assertIn(f"Link: {LINK}?artifact={self.aid}&origin=hub-core", r.stdout)
         self.assertIn("Asked the person's screen", r.stdout)
         (label,) = self.labels()
         self.assertEqual(label[0], "t5")
@@ -97,11 +99,11 @@ class Show(unittest.TestCase):
     def test_open_json_says_what_it_did(self):
         r = self.run_tool("open", self.aid, "--json", FAKE_WEB=json.dumps({"link": LINK.rstrip("/"), "id": "hub-core"}))
         out = json.loads(r.stdout)
-        self.assertEqual(out, {"id": self.aid, "link": f"{LINK}?artifact={self.aid}", "screen": True, "window": None})
+        self.assertEqual(out, {"id": self.aid, "link": f"{LINK}?artifact={self.aid}&origin=hub-core", "screen": True, "window": None})
 
     def test_link_prints_only_the_link(self):
         r = self.run_tool("link", self.aid, FAKE_WEB=json.dumps({"link": LINK, "id": "hub-core"}))
-        self.assertEqual((r.returncode, r.stdout), (0, f"{LINK}?artifact={self.aid}\n"))
+        self.assertEqual((r.returncode, r.stdout), (0, f"{LINK}?artifact={self.aid}&origin=hub-core\n"))
         self.assertEqual(self.labels(), [])
 
     def test_no_host_word_then_this_machines_own_service(self):
@@ -109,7 +111,7 @@ class Show(unittest.TestCase):
         with open(os.path.join(self.home, ".herdr", "shepherdr", "web.json"), "w") as f:
             json.dump({"on": True, "link": "https://laptop.example.test/shepherdr/"}, f)
         r = self.run_tool("link", self.aid)
-        self.assertEqual(r.stdout, f"https://laptop.example.test/shepherdr/?artifact={self.aid}\n")
+        self.assertEqual(r.stdout, f"https://laptop.example.test/shepherdr/?artifact={self.aid}&origin=hub-core\n")
 
     def test_no_link_known_still_asks_the_screen(self):
         r = self.run_tool("open", self.aid)

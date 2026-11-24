@@ -1,3 +1,4 @@
+import { openWorkerView } from './task-view.js';
 // Jump (Ctrl+K, as Shepherdr's ⌘K): one box that finds a space, a task, an artifact or a machine and
 // goes there. Opened with mod.open:jump (again closes it), a popup at the top of the window.
 // Type to filter: every word typed must be in the item somewhere, any case (Shepherdr's
@@ -94,11 +95,7 @@ const find = (node, id) => {
 
 // A task's worker chat inside the Tasks panel (mods/chat/panel.js openTaskThread).
 function openTaskThread(terminal, task, title) {
-  setShared("tasks.thread", { terminal, task: task ?? null, title: title ?? null, at: Date.now() });
-  run("layout.select", { stack: "panel-body", child: "tasks" });
-  run("layout.select", { stack: "tasks", child: "tasks-thread" });
-  if (find(layout(), "tasks-thread-body")) run("layout.select", { stack: "tasks-thread-body", child: "tasks-thread-chat" });
-  run("layout.show", { id: "panel" });
+  openWorkerView({ terminal, task: task ?? null, title: title ?? null });
 }
 
 // The Tasks list, searched for one task (mods/tasks/main.js reads shared "tasks.searchreq").
@@ -283,8 +280,8 @@ export default class Jump extends View {
   // Over the chat the keyboard was in, as its card opens it; else in the Artifacts sidebar.
   openArtifact(a) {
     const area = chatArea(this.openedAt);
-    const show = area || !hasSidebarView() ? showViewer : (v) => showInSidebar(v) || showViewer(v);
-    openViewer({ id: a.id, title: a.title, version: a.version, machine: a.machine ?? null }, area, show);
+    const show = area || !hasSidebarView() ? showViewer : async (v) => { if (!await showInSidebar(v)) await showViewer(v); };
+    openViewer({ id: a.id, title: a.title, machine: a.machine ?? null }, area, show);
   }
 
   mark(r, t) {

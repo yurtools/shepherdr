@@ -26,7 +26,7 @@ const TYPES: Record<string, string> = { ".png": "image/png", ".jpg": "image/jpeg
 /** what a file a recipe shows is served with: sandboxed, sniffed as nothing else, a clip or sound played from this origin */
 const SHOWN = "sandbox; default-src 'none'; img-src 'self'; media-src 'self'; style-src 'unsafe-inline'";
 
-export type Art = { id: string; title: string; version: number; folder: string; publisher?: string; task?: string | null; at: number; files: string[]; versions: { v: number; at: number; publisher?: string; note?: string }[]; machine?: string; folderName?: string };
+export type Art = { id: string; title: string; version: number; folder: string; publisher?: string; task?: string | null; space?: string | null; taskKey?: string | null; at: number; files: string[]; versions: { v: number; at: number; publisher?: string; note?: string }[]; machine?: string; folderName?: string };
 
 async function run(args: string[]) {
   const p = Bun.spawn([TOOL, ...args], { stdout: "pipe", stderr: "pipe", stdin: "ignore" });
@@ -136,10 +136,14 @@ export class Artifacts {
 
   /** The person's words to the agent that keeps it (a note on a block, or an answer); another machine's through
    *  herdr-artifact --on, as the window's panel reaches it. */
-  async say(id: string, v: number, text: string, spot?: string, machine: string | null = null) {
+  async say(id: string, v: number, text: string, spot?: string, machine: string | null | undefined = undefined) {
     if (!/^\w[\w.-]{0,119}$/.test(id)) throw new Error("Not an artifact.");
     // where it is kept: this machine's own list first, else another's
-    machine ??= this.here.some((a) => a.id === id) ? null : this.list.find((a) => a.id === id)?.machine ?? null;
+    if (machine === undefined) {
+      const found = this.list.filter((a) => a.id === id);
+      if (found.length !== 1) throw new Error("The artifact's machine is unavailable or ambiguous.");
+      machine = found[0].machine ?? null;
+    }
     if (machine && !MACHINE.test(machine)) throw new Error("Not a machine.");
     const args = [...(machine ? ["--on", machine] : []), "note", id, "--text", text, "--version", String(v), "--json", ...(spot ? ["--spot", spot] : [])];
     const r = await run(args);

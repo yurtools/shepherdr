@@ -6,6 +6,7 @@
 // shared "artifacts.view" says which artifact its header names.
 
 import { layout, run, shared, setShared, appHome, readTextFile, writeTextFile } from "herdr";
+import { selectArtifactOwner } from "./artview.js";
 import { toast, plainError } from "./ui.js";
 
 function find(node, id) {
@@ -33,18 +34,21 @@ async function setBody(mod) {
   }
 }
 
-export function showInSidebar(view) {
-  const l = layout(), body = find(l, "artifacts-view-body");
-  if (!body) return false;
-  // base: the latest version's mod (art-<id>); mod may be an older one (art-<id>--v<n>).
-  setShared("artifacts.view", { mod: view.mod, base: view.base ?? view.mod, id: view.id, title: view.title, version: view.version, latest: view.latest ?? view.version, machine: view.machine ?? null, at: Date.now() });
-  const show = () => {
+export async function showInSidebar(view) {
+  try {
+    await selectArtifactOwner(view);
+    const body = find(layout(), "artifacts-view-body");
+    if (!body) return false;
+    if (body.content?.mod !== view.mod || body.content?.props) await setBody(view.mod);
+    // A space may have changed while the layout was written.
+    await selectArtifactOwner(view);
+    setShared("artifacts.view", { ...view, base: view.base ?? view.mod, latest: view.latest ?? view.version, at: Date.now() });
     run("layout.select", { stack: "panel-body", child: "artifacts" });
     run("layout.select", { stack: "artifacts", child: "artifacts-view" });
     run("layout.show", { id: "panel" });
-  };
-  if (body.content?.mod === view.mod && !body.content?.props) { show(); return Promise.resolve(true); }
-  return setBody(view.mod)
-    .then(() => { show(); return true; })
-    .catch((e) => { toast({ title: "Artifact didn't open", body: plainError(e), level: "error" }); return false; });
+    return true;
+  } catch (e) {
+    toast({ title: "Artifact didn't open", body: plainError(e), level: "error" });
+    return false;
+  }
 }

@@ -52,7 +52,7 @@ id="$t.$(date +%s).$$"
 req="$d/req/$id.json"
 ans="$d/ans/$id.json"
 end="$d/end/$id"
-done_() { rm -f "$req" "$req.tmp" "$ans" "${req%.json}.context" "${req%.json}.status" "$d/../approvals/pending/$id.json"; exit 0; }
+done_() { rm -f "$req" "$req.tmp" "$ans" "${req%.json}.context" "${req%.json}.status" "${req%.json}.advice" "$d/../approvals/pending/$id.json" "$d/../approvals/advice/$id.json"; exit 0; }
 # Over without a decision from here: why, for the card's quiet line, then go.
 ended() { printf '%s\n' "$1" > "$end.tmp" 2>/dev/null && mv "$end.tmp" "$end" 2>/dev/null; done_; }
 # Claude stops the hook itself when its prompt is refused or interrupted in the terminal.

@@ -72,6 +72,19 @@ class Artifacts(unittest.TestCase):
         with A.Store(A.locate(self.folder), write=False) as s:
             return s.data["artifacts"]
 
+    def test_updating_from_another_task_keeps_the_original_artifact_owner(self):
+        d = os.path.join(self.dir, "owned-recipe")
+        with mock.patch("sys.stdout"):
+            A.cmd_new(types.SimpleNamespace(dir=d, custom=False))
+        with mock.patch.object(A, "me", return_value={"terminal": "t9", "task": None, "space": "A"}):
+            self.publish(d, title="Owned recipe")
+        a = self.only()[0]
+        with mock.patch.object(A, "me", return_value={"terminal": "t10", "task": "OTHER-2", "space": "B"}):
+            self.publish(d, id=a["id"])
+        updated = self.record(a["id"])
+        self.assertEqual(updated["space"], "A")
+        self.assertIsNone(updated["task"])
+
     def test_new_writes_a_recipe_that_publishes(self):
         d = os.path.join(self.dir, "report")
         with mock.patch("sys.stdout"):
@@ -206,7 +219,7 @@ class WhoPublishes(unittest.TestCase):
     def test_its_label_names_its_task(self):
         with mock.patch.dict(os.environ, {"HC_TERMINAL_ID": "t5"}, clear=False), self.hc({"herdr.task": "dev-shop#4"}) as run:
             os.environ.pop("HERDR_BROWSER_TASK", None)
-            self.assertEqual(A.me(), {"terminal": "t5", "task": "SHOP-4"})
+            self.assertEqual(A.me(), {"terminal": "t5", "task": "SHOP-4", "taskKey": "dev-shop#4", "space": None})
             self.assertEqual(run.call_args[0][0], ["hc", "get", "t5", "--json"])
 
     def test_no_label_then_its_task_env(self):
@@ -219,7 +232,7 @@ class WhoPublishes(unittest.TestCase):
         self.assertIsNone(A.task_ref("nonsense"))
         with mock.patch.dict(os.environ, {"HC_TERMINAL_ID": "t5"}), self.hc({}, code=1):
             os.environ.pop("HERDR_BROWSER_TASK", None)
-            self.assertEqual(A.me(), {"terminal": "t5", "task": None})
+            self.assertEqual(A.me(), {"terminal": "t5", "task": None, "taskKey": None, "space": None})
 
 
 class ReadOnlySandbox(unittest.TestCase):

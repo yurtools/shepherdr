@@ -1,3 +1,4 @@
+import { artifactKey, findArtifact } from "@core/artifact-owner.js"
 import { attentionCounts } from './attention.ts'
 // The layout: places | coordinator chat | tasks or artifacts on a desktop (sidebars resize, places hides), and an open
 // task's side panel after them (focus hides places and the chat, for the task); chat | tasks or artifacts with places in a drawer on a tablet; one column with a
@@ -687,21 +688,21 @@ function TasksPane({ place, i }: { place: Place; i: number }) {
 /** an artifact in a pane, at its latest */
 function ArtifactPane({ id, i }: { id: string; i: number }) {
   const snap = useSnap()!
-  const art = snap.artifacts?.find((a) => a.id === id)
+  const art = findArtifact(snap.artifacts, id)
   const View = registry.views.artifact
-  if (!art) return <GonePane i={i} what="This artifact is gone." />
+  if (!art || !art.place || !snap.places.some((p) => p.id === art.place)) return <GonePane i={i} what="This artifact is gone." />
   return (
     <section aria-label={art.title} className="flex min-h-0 min-w-0 flex-1 flex-col">
       <Head>
         {i ? null : <PlacesToggle when="closed" />}
         <PageIcon className={clsx(ic, 'text-fg2')} />
         <Who name={art.title} kind={`${placeOf(snap, art.place).name} · v${art.v} · ${art.when}`} />
-        <IconButton label="Open full screen" onClick={() => openArtifact(art.id)}>
+        <IconButton label="Open full screen" onClick={() => openArtifact(art.id, undefined, art.machine ?? null)}>
           <OpenIcon className={ic} />
         </IconButton>
         <PaneButtons i={i} />
       </Head>
-      <div className="relative min-h-0 flex-1">{View ? <View artifactId={art.id} /> : null}</div>
+      <div className="relative min-h-0 flex-1">{View ? <View artifactId={artifactKey(art)} /> : null}</div>
     </section>
   )
 }

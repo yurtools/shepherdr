@@ -7,6 +7,7 @@ import { h_flex, v_flex, Editor, EditorState, TextView } from "gpui-base";
 import { run, setShared, props, panes, shared, focused, nextCommand, readTextFile, writeTextFile, appHome, theme, settings, exec, spaces } from "herdr";
 import * as fs from "fs/promises";
 import { MAX_TEXT, language, documentKind, parseCSV, delimiterFor, saveState } from "./core/documents.js";
+import { PdfPreview, pdfView } from './pdf-view.js';
 
 function hash(value) { let h = 2166136261; for (let i = 0; i < value.length; i++) h = Math.imul(h ^ value.charCodeAt(i), 16777619); return (h >>> 0).toString(16); }
 export default class Document extends View {
@@ -20,7 +21,7 @@ export default class Document extends View {
         if (this.pane && focused()?.pane !== this.pane) continue;
         const doc = this.docs.get(this.active);
         if (!doc) continue;
-        if (command === "source") { doc.preview = false; doc.highlight = false; }
+        if (command === "source" && doc.kind !== 'pdf') { doc.preview = false; doc.highlight = false; }
         if (command === "highlight") doc.highlight = true;
         if (command === "preview" && doc.kind !== "text") doc.preview = true;
         if (command === "save") this.save(doc, cx);
@@ -31,16 +32,19 @@ export default class Document extends View {
   }
   draftPath(doc) { return `${appHome()}/data/document-drafts/${hash(`${doc.on ?? ''}:${doc.path}`)}.json`; }
   async draft(doc) {
+    if (doc.kind === 'pdf') return;
     const path = this.draftPath(doc);
     if (doc.text !== doc.saved) { await fs.mkdir(`${appHome()}/data/document-drafts`, { recursive: true }); await fs.writeFile(path, JSON.stringify({ path: doc.path, on: doc.on, text: doc.text, saved: doc.saved })); }
     else { try { await fs.unlink(path); } catch {} }
   }
   open(path, on, cx, location = null) {
     const key = `${on ?? ''}:${path}`; this.active = key;
-    if (this.docs.has(key)) { const doc=this.docs.get(key);if(location?.line){doc.location=location;this.jump(doc);}cx.notify(); return; }
+    if (this.docs.has(key)) { const doc=this.docs.get(key);if(doc.pdf)doc.pdf.load(cx);if(location?.line){doc.location=location;this.jump(doc);}cx.notify(); return; }
     const doc = { path, on, kind: documentKind(path), saved: null, text: null, error: null, conflict: false, preview: /\.(md|markdown|csv|tsv|docx|xlsx|xlsm|xltx|xls|doc|xlsb)$/i.test(path) };
     if(location?.line)doc.location={line:location.line,column:location.column};
+    doc.root = location?.root; doc.space = location?.space;
     this.docs.set(key, doc);
+    if (doc.kind === 'pdf') { doc.pdf = new PdfPreview(path, { on }); doc.pdf.load(cx); return; }
     cx.spawn(async cx => {
       try {
         if (doc.kind === 'docx' || doc.kind === 'excel') {
@@ -71,7 +75,7 @@ export default class Document extends View {
     });
   }
   editor(doc) {
-    if (doc.closed) return;
+    if (doc.closed || doc.kind === 'pdf') return;
     doc.editor?.release(); const t = theme();
     doc.editor = EditorState.new({ value: doc.text, language: language(doc.path), readonly: Boolean(doc.on), font_family: settings().font_family, font_size: 12.5,
       syntax: { keyword: t.ansi5, string: t.ansi2, comment: t.dim, function: t.ansi4, type: t.ansi3, number: t.ansi1, constant: t.ansi6 } });
@@ -91,6 +95,7 @@ export default class Document extends View {
   }
   check(cx) {
     const doc = this.docs.get(this.active);
+    if (doc?.pdf) { doc.pdf.check(cx); return; }
     if (!doc || doc.office || doc.saved === null || doc.checking || doc.saving) return;
     doc.checking = true;
     cx.spawn(async cx => {
@@ -105,7 +110,7 @@ export default class Document extends View {
     });
   }
   save(doc, cx) {
-    if (doc.on || doc.closed || doc.closing || doc.saving || doc.text === doc.saved || doc.conflict) return;
+    if (doc.kind === 'pdf' || doc.on || doc.closed || doc.closing || doc.saving || doc.text === doc.saved || doc.conflict) return;
     doc.saving = true;
     cx.spawn(async cx => {
       const text = doc.text, expected = doc.saved;
@@ -115,6 +120,7 @@ export default class Document extends View {
     });
   }
   reload(doc, cx) {
+    if (doc.pdf) { doc.pdf.load(cx); return; }
     cx.spawn(async cx => {
       const disk = await readTextFile(doc.path, { on: doc.on }).catch(() => null);
       if (disk === null) { doc.notice = 'Cannot reload file'; cx.notify(); return; }
@@ -135,6 +141,7 @@ export default class Document extends View {
       this.docs.delete(key);
       if (this.active === key) this.active = keys[at + 1] ?? keys[at - 1] ?? null;
       doc.editor?.release();
+      await doc.pdf?.dispose();
       // Closing this exact document pane is LAST: disposal cancels its pending calls.
       const slot=props()?.slot, candidates=panes().filter(p=>p.mod==='workspace-document');
       const ownPane=slot?shared('workspace.documents')?.[slot]:candidates.length===1?candidates[0].pane:null;
@@ -210,16 +217,16 @@ export default class Document extends View {
       .when(Boolean(doc), el => el.child(h_flex().min_h(38).flex_none().px(8).gap(6).items_center().flex_wrap()
         .child(div().flex_1().min_w(0).truncate().text_size(11).text_color(t.dim).child(doc?.path ?? ''))
         .when(['docx','excel'].includes(doc?.kind), el => el.child(this.button('office-reload','Reload preview',false,cx=>{this.docs.delete(`${doc.on??''}:${doc.path}`);this.open(doc.path,doc.on,cx);},t)))
-        .child(this.button('document-copy-path', 'Copy path', false, cx => { const space=spaces().find(s=>s.active),root=shared('workspace.roots')?.[space?.id]??space?.folder; cx.write_to_clipboard(relativeFile(root,doc.path)); }, t))
-        .child(this.button('document-reference', 'Reference in chat', false, () => { const space=spaces().find(s=>s.active); fileActions({ file:doc.path,on:doc.on,root:shared('workspace.roots')?.[space?.id]??space?.folder },null,true); }, t))
+        .child(this.button('document-copy-path', 'Copy path', false, cx => { const space=spaces().find(s=>s.active),root=doc.root??shared('workspace.roots')?.[space?.id]??space?.folder; cx.write_to_clipboard(relativeFile(root,doc.path)); }, t))
+        .child(this.button('document-reference', 'Reference in chat', false, () => { const space=spaces().find(s=>s.active); fileActions({ file:doc.path,on:doc.on,root:doc.root??shared('workspace.roots')?.[space?.id]??space?.folder },null,true); }, t))
         .when(doc?.kind === 'text' && HIGHLIGHT_LANGUAGES.has(language(doc?.path ?? '')), el => el.children(['Edit', 'Highlight'].map((label, i) => this.button(`code-${label}`, label, Boolean(doc.highlight) === Boolean(i), () => { doc.highlight = Boolean(i); }, t))))
-        .when(doc?.kind !== 'text' && !['docx', 'excel'].includes(doc?.kind), el => el.children(['Source', 'Preview'].map((label, i) => this.button(`mode-${label}`, label, doc.preview === Boolean(i), () => { doc.preview = Boolean(i); }, t))))
-        .when(doc?.saved !== null && !doc?.on && !doc?.office, el => el.child(this.button('save', doc?.saving ? 'Saving…' : 'Save', false, cx => this.save(doc, cx), t)))))
+        .when(doc?.kind !== 'text' && !['docx', 'excel', 'pdf'].includes(doc?.kind), el => el.children(['Source', 'Preview'].map((label, i) => this.button(`mode-${label}`, label, doc.preview === Boolean(i), () => { doc.preview = Boolean(i); }, t))))
+        .when(doc?.saved !== null && !doc?.on && !doc?.office && doc?.kind !== 'pdf', el => el.child(this.button('save', doc?.saving ? 'Saving…' : 'Save', false, cx => this.save(doc, cx), t)))))
       .when(Boolean(doc?.conflict), el => el.child(h_flex().px(10).py(6).gap(8).items_center().bg(t.raised)
         .child(div().flex_1().text_size(12).child('File changed on disk. Your draft is retained.'))
         .child(this.button('reload', 'Discard draft and reload', false, cx => this.reload(doc, cx), t))))
       .when(Boolean(doc?.notice) || doc?.recovered || doc?.on, el => el.child(div().px(10).py(4).text_size(11).text_color(t.dim).child(doc?.notice ?? (doc?.recovered ? 'Recovered unsaved draft' : 'Remote file · read only'))))
-      .child(!doc ? div().p(16).child('Open a file from Files') : doc.closing ? div().p(16).child('Closing file…') : doc.error ? div().p(16).child(doc.error) : doc.office ? this.officePreview(doc, t) : doc.highlight && doc.text !== null ? highlighted(doc, language(doc.path), t, hash(doc.path)) : !doc.editor ? div().p(16).child('Loading…') : doc.preview && doc.kind !== 'text' ? this.preview(doc, t) : Editor.new(doc.editor).flex_1().min_h(0));
+      .child(!doc ? div().p(16).child('Open a file from Files') : doc.closing ? div().p(16).child('Closing file…') : doc.pdf ? pdfView(doc.pdf, t) : doc.error ? div().p(16).child(doc.error) : doc.office ? this.officePreview(doc, t) : doc.highlight && doc.text !== null ? highlighted(doc, language(doc.path), t, hash(doc.path)) : !doc.editor ? div().p(16).child('Loading…') : doc.preview && doc.kind !== 'text' ? this.preview(doc, t) : Editor.new(doc.editor).flex_1().min_h(0));
   }
-  async close() { for (const doc of this.docs.values()) { if (doc.text !== null) await this.draft(doc).catch(() => {}); doc.editor?.release(); } }
+  async close() { for (const doc of this.docs.values()) { doc.closed = true; if (doc.pdf) doc.pdf.closed = true; } for (const doc of this.docs.values()) { if (doc.text !== null) await this.draft(doc).catch(() => {}); doc.editor?.release(); await doc.pdf?.dispose(); } }
 }

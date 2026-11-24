@@ -1,7 +1,16 @@
 import { appHome } from 'herdr';
 import { approvalCall, approvalDialog } from './approval.js';
 import { toast, plainError } from './ui.js';
+import { requestHash } from './core/asks.js';
 const args=ask=>['--request',`${appHome()}/data/chat-asks/req/${ask.id}.json`,...(ask.terminal?['--terminal',ask.terminal]:[])];
+export function adviceControl(ask,host){
+ const bound={...ask,terminal:ask.terminal??host.terminal?.(),machine:ask.machine??host.machine?.()};
+ return {id:`ask-advice-${ask.id}`,label:'Advice',look:'secondary',disabled:Boolean(bound.machine)||['processing','pending','ready'].includes(ask.approval?.advice?.state),fn:cx=>cx.spawn(async cx=>{
+  try{await approvalCall('advice',[...args(bound),'--hash',requestHash(ask.req)]);}
+  catch{toast({title:'Advice unavailable',body:'The request may have changed or closed. Refresh the card and try again.',level:'error'});}
+  cx.notify();
+ })};
+}
 export function rememberedControls(ask,host){
  if(ask.words?.kind!=='permission'||ask.words?.unread)return[];
  const bound={...ask,terminal:ask.terminal??host.terminal?.(),machine:ask.machine??host.machine?.()};

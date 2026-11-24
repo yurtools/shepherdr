@@ -14,10 +14,12 @@ function method(name: string) {
 }
 const names = ['rows', 'rowPlan', 'spaced', 'spacedPlan', 'foldOf', 'key', 'guess', 'guessBare', 'findMatches', 'findRow',
   'newsLines', 'newsPlan', 'resolveArts', 'resolveArtsPlan', 'timelineCards', 'timelinePlan',
-  'historyCurrent', 'historyEvent', 'historyContext', 'historyStamp', 'historyPlan', 'prepareHistory', 'scheduleHistory', 'clearHistory'];
+  'historyVisible', 'historyIdentity', 'historyCurrent', 'historyEvent', 'historyContext', 'historyStamp', 'historyPlan', 'prepareHistory', 'scheduleHistory', 'clearHistory'];
 export function historyHost(items: any[], sharedRead: (key: string) => any = () => null) {
   const jobs: any[] = [], stats = { items: 0, keys: 0, guesses: 0, lookups: 0, notifies: 0 };
   const dependencies: any = { ...view, ...geometry, ...preparation,
+    // Pending/reply rows belong to "now". Keep calendar arithmetic real and the fixture clock fixed.
+    Date: class extends Date { static now() { return 1795132800000; } },
     dayLabel: (at: number) => `Day ${Math.floor(at / 86400000)}`, dayOf: (at: number) => Math.floor(at / 86400000) * 86400000, pilotLine,
     askAt: () => 1772946000000, openCard: () => null, assistant: () => false,
     linkCtl: (id: string, label: string, fn: any) => ({id,label,fn}),
@@ -118,13 +120,17 @@ test('every callback bounds all stages, and continuous fresh sources cannot star
   h.drain(); expect(h.v.rows().find((r: any) => r.id === 'm0')).toBeDefined();
 });
 
-test('presentation changes hide actionable rows and invalidate work before the next draw', () => {
+test('presentation changes retain painted rows but invalidate actions and work before the next draw', () => {
   for (const mutate of [(v: any) => v.width--, (v: any) => v.findQuery = () => 'Reply',
     (v: any) => v.tasks = [], (v: any) => v.reach = {}, (v: any) => v.path = 'other',
     (v: any) => { v.unfolded.add('m0'); v.historyRevision++; }]) {
     const h = historyHost(large()); h.v.historyRevision = 0; h.request(); h.drain();
+    const plan=h.v.history.snapshot;
     h.v.conv = { items: large() }; h.request(); mutate(h.v); h.one();
-    expect(h.v.rows()).toEqual([]); h.drain(); expect(h.v.rows().length).toBeGreaterThan(1200);
+    expect(h.v.historyCurrent(plan)).toBe(false);
+    if(h.v.path==='other')expect(h.v.rows()).toEqual([]);
+    else expect(h.v.rows()).toBe(plan.rows);
+    h.drain(); expect(h.v.rows().length).toBeGreaterThan(1200);
   }
 });
 
@@ -181,8 +187,9 @@ test('host-shaped fresh shared values keep identical work and invalidate real sc
   for (let n = 0; n < 20; n++) h.request();
   expect(h.v.history.snapshot).toBe(plan); expect(h.jobs).toHaveLength(0);
   values['chat.screens'].unrelated = [{ id: 'another screen' }]; h.request(); expect(h.v.history.snapshot).toBe(plan);
-  values['chat.screens'].fixture[0].how = 'Declined'; h.request(); expect(h.v.rows()).toEqual([]); h.drain();
-  values['spaces-chat'].machines.local.name = 'Renamed'; h.request(); expect(h.v.rows()).toEqual([]); h.drain();
+  values['chat.screens'].fixture[0].how = 'Declined'; h.request(); expect(h.v.rows()).toBe(plan.rows); expect(h.v.historyCurrent(plan)).toBe(false); h.drain();
+  const renamed=h.v.history.snapshot;
+  values['spaces-chat'].machines.local.name = 'Renamed'; h.request(); expect(h.v.rows()).toBe(renamed.rows); expect(h.v.historyCurrent(renamed)).toBe(false); h.drain();
 });
 
 test('same worker request and payload with changed review policy invalidates cached strips', () => {
@@ -191,8 +198,9 @@ test('same worker request and payload with changed review policy invalidates cac
   h.v.wasks = [ask]; h.request(); h.drain();
   const plan = h.v.history.snapshot;
   ask.approval = { attention: false, reason: 'Review in progress', review: 'running' }; h.request();
-  expect(h.v.history.snapshot).toBeNull(); h.drain(); expect(h.v.history.snapshot).not.toBe(plan);
-  ask.approval.reason = 'A new review result'; h.request(); expect(h.v.rows()).toEqual([]); h.drain();
+  expect(h.v.history.snapshot).toBe(plan); expect(h.v.historyCurrent(plan)).toBe(false); h.drain(); expect(h.v.history.snapshot).not.toBe(plan);
+  const reviewed=h.v.history.snapshot;
+  ask.approval.reason = 'A new review result'; h.request(); expect(h.v.rows()).toBe(reviewed.rows); expect(h.v.historyCurrent(reviewed)).toBe(false); h.drain();
   const stable = h.v.history.snapshot; h.v.wasks = [{ ...ask, approval: { ...ask.approval } }]; h.request();
   expect(h.v.history.snapshot).toBe(stable); expect(h.jobs).toHaveLength(0);
 });

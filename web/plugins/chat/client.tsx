@@ -18,7 +18,7 @@ import { buzz, ForkIcon, mine, openBar, openPicker, quick, react, RewindIcon } f
 import { EDGE } from '@client/gestures.ts'
 import { enterHint, sendsNow } from '@client/enter.ts'
 import { still, useArrive } from '@client/motion.ts'
-import { draggingFiles, dropped, named, pasted } from './paste.ts'
+import { draggingFiles, dropped, named, pastedEvent } from './paste.ts'
 import { dayLabel } from './days.ts'
 import { FindBar, openFind } from './find.tsx'
 import { Fold } from './fold.tsx'
@@ -2118,9 +2118,8 @@ function Composer({ chatKey, placeholder, cli, suggest = null }: { chatKey: stri
                 }}
                 onPaste={(e) => {
                   // a screenshot or a copied file attaches, as + does; text pastes as text
-                  const list = pasted(e.clipboardData)
+                  const list = pastedEvent(e)
                   if (!list.length) return
-                  e.preventDefault()
                   attach(chatKey, list)
                 }}
                 onScroll={(e) => fades(e.currentTarget)}

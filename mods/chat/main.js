@@ -2604,13 +2604,14 @@ export default class Chat extends View {
   }
 
   pasteClipboard(cx, req = null) {
-    if (this.clipboardPaste) return; // A duplicate key/paste_other/menu notification shares this extraction.
-    const job = { owner: this.clipboardOwner(), value: req?.value ?? this.box.value(),
+    const owner = this.clipboardOwner();
+    if (this.clipboardPaste?.owner === owner) return; // Duplicate notifications share the in-flight extraction.
+    const job = { owner, value: req?.value ?? this.box.value(),
       range: req?.range ?? this.box.selected_range(), files: this.files, quote: this.quote,
       text: cx.read_from_clipboard() };
     this.clipboardPaste = job;
     cx.notify();
-    const current = () => this.clipboardOwner() === job.owner && this.box.value() === job.value && this.files === job.files && this.quote === job.quote;
+    const current = () => this.clipboardPaste === job && this.clipboardOwner() === job.owner && this.box.value() === job.value && this.files === job.files && this.quote === job.quote;
     cx.spawn(async (cx) => {
       let got = [], error = null, imageFailed = false;
       try { got = await attach.fromClipboard(); }

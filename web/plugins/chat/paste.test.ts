@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test'
-import { pasted } from './paste.ts'
+import { pasted, pastedEvent } from './paste.ts'
 const png = Uint8Array.from(atob('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII='), c => c.charCodeAt(0))
 function data(files: File[], text = '', html = '') { return { files: files as unknown as FileList, types: ['Files', ...(text ? ['text/plain'] : []), ...(html ? ['text/html'] : [])], getData: (t: string) => t === 'text/plain' ? text : t === 'text/html' ? html : '' } }
 for (const rich of [false, true]) test(`real PNG bytes survive ${rich ? 'bitmap + text/HTML' : 'screenshot-only'} paste and renaming`, async () => {
@@ -15,4 +15,10 @@ test('several images and a named copied file keep their independent contents and
   const got = pasted(data([new File([png], 'image.png', { type: 'image/png' }), new File([png], 'image.png', { type: 'image/png' }), f], 'metadata', '<img>'))
   expect(got).toHaveLength(3); expect(got[0].name).not.toBe(got[1].name); expect(got[2]).toBe(f)
   expect(new Uint8Array(await got[1].arrayBuffer())).toEqual(png)
+})
+
+test('a duplicate browser event is consumed once; a new paste of the same image still attaches', () => {
+  const dt = data([new File([png], 'image.png', { type: 'image/png' })])
+  const event = () => ({ clipboardData: dt, defaultPrevented: false, preventDefault() { this.defaultPrevented = true } })
+  const e = event(); expect(pastedEvent(e)).toHaveLength(1); expect(pastedEvent(e)).toEqual([]); expect(pastedEvent(event())).toHaveLength(1)
 })

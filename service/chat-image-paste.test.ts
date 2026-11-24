@@ -78,3 +78,15 @@ for (const text of ['', 'Please inspect this']) test(`Send retains the attachmen
 test('Send waits for pending extraction rather than sending text and stranding its picture', () => {
   const v: any = new Sending(); v.clipboardPaste = {}; v.send({}); expect(notes[0].title).toBe('Paste is still loading')
 })
+
+test('a new chat may paste while the old extraction waits, without cross-attaching either result', async () => {
+  const resolves: ((f: any[]) => void)[] = []; read = () => new Promise(r => resolves.push(r)); const h = view()
+  h.v.pasteClipboard(h.cx); h.v.addr = 'tdifferent'; h.v.draftFile = 'draft-b'; h.v.pasteClipboard(h.cx)
+  expect(reads).toBe(2); resolves[0]([file('/fixture/old.png')]); resolves[1]([file('/fixture/new.png')]); await h.done()
+  expect(h.v.files).toEqual([file('/fixture/new.png')]); expect(dropped).toEqual([file('/fixture/old.png')]); expect(h.v.clipboardPaste).toBe(null)
+})
+for (const account of ['profile', 'home']) test(`changing the account ${account} cancels an outstanding extraction`, async () => {
+  let resolve!: (f: any[]) => void; read = () => new Promise(r => { resolve = r }); const h = view()
+  h.v.pasteClipboard(h.cx); if (account === 'profile') h.v.choice = { sel: { profile: 'different' } }; else h.v.dflt = { home: '/different-profile' }
+  resolve([file()]); await h.done(); expect(h.v.files).toEqual([]); expect(dropped).toEqual([file()])
+})

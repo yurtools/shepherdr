@@ -32,12 +32,20 @@ export function named(f: File, now: Date, i = 0, of = 1): File {
 }
 
 /** Attach real file payloads even when text/HTML describe the same image. Never fetch an HTML image URL. */
-export function pasted(dt: Pick<DataTransfer, 'files' | 'types' | 'getData'> | null, now = new Date()): File[] {
+export function pasted(dt: Pick<DataTransfer, 'files'> | null, now = new Date()): File[] {
   if (!dt?.files?.length) return []
   const files = Array.from(dt.files)
   const nameless = files.filter((f) => NAMELESS.test(f.name)).length
   let n = 0
   return files.map((f) => (NAMELESS.test(f.name) ? named(f, now, n++, nameless) : f))
+}
+
+/** A re-delivered browser event is already consumed; a new paste of the same bytes is a separate attachment. */
+export function pastedEvent(e: { clipboardData: Pick<DataTransfer, 'files'> | null; defaultPrevented: boolean; preventDefault(): void }): File[] {
+  if (e.defaultPrevented) return []
+  const files = pasted(e.clipboardData)
+  if (files.length) e.preventDefault()
+  return files
 }
 
 /** what a drop attaches: every file, by its own name (a file dragged from a folder always has one) */

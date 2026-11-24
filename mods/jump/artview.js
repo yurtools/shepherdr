@@ -8,7 +8,7 @@
 // Shared: the source is lib/artview.js; bin/sync-shared copies it into each mod in lib/COPIES.
 // Edit lib/artview.js, never a mod's copy, then run bin/sync-shared.
 
-import { exec, appHome, openOverlay, theme, shared, setShared, panes, focused, settings } from "herdr";
+import { exec, appHome, openOverlay, theme, shared, setShared, panes, focused, settings, spaces } from "herdr";
 import { toast, plainError } from "./ui.js";
 
 const CLI = () => `${appHome()}/mods/artifacts/bin/herdr-artifact`;
@@ -56,11 +56,23 @@ function showModal(artifact) {
       { type: "block", background: "background", content: { mod: artifact.mod } }] } });
 }
 
+// Select only a durable owner. Fetches may finish after the person switched spaces.
+export async function selectArtifactOwner(artifact) {
+  const owner = artifact.space;
+  const available = () => spaces().some((s) => s.id === owner && (s.machine ?? null) === (artifact.machine ?? null));
+  if (!owner || !available()) throw new Error("The artifact's owning space is unavailable or was not recorded.");
+  if (!spaces().some((s) => s.id === owner && s.active)) {
+    const r = await exec("herdr-app", ["do", "space.select", "--id", owner]);
+    if (r.code !== 0 || !available() || !spaces().some((s) => s.id === owner && s.active)) throw new Error("The artifact's owning space is unavailable.");
+  }
+}
+
 // Shows an artifact whose mod is already in this app: over artifact.area ({ x, y, width, height }
 // in the window: a chat pane, as the image viewer opens) when it has one, else the whole window;
 // a modal when artifact.modal. The area and modal stay in the toolbar's props, so stepping
 // versions reopens it in the same place.
-export function showViewer(artifact) {
+export async function showViewer(artifact) {
+  await selectArtifactOwner(artifact);
   if (artifact.modal) return showModal(artifact);
   const a = artifact.area;
   const at = a ? { x: Math.round(a.x), y: Math.round(a.y) } : { x: 0, y: 0 };
@@ -72,12 +84,23 @@ export function showViewer(artifact) {
 // from its machine), that version when it's older than the latest. area: the chat pane to cover
 // (null: the whole window); modal: a fitting modal instead (from a dialog); show: what shows it
 // once pulled (default the viewer).
-export function openViewer(a, area = null, show = showViewer) {
+export async function openViewer(a, area = null, show = showViewer) {
   const machine = a.machine ?? null;
-  const older = a.latest && a.version && a.version < a.latest;
-  return artifactCli(null, ["pull", a.id, ...(machine ? ["--from", machine] : []), ...(older ? ["--version", String(a.version)] : [])])
-    .then((out) => show({ mod: out.mod, base: baseMod(out.mod), id: a.id, title: a.title, version: a.version, latest: a.latest ?? a.version, machine, ...(area ? { area } : {}), ...(a.modal ? { modal: true } : {}) }))
-    .catch((e) => { toast({ title: "Artifact didn't open", body: plainError(e), level: "error" }); });
+  const origin = spaces().find((s) => s.active)?.id;
+  try {
+    // show reads durable ownership even for old task proofs; never the active terminal.
+    const record = await artifactCli(machine, ["show", a.id]);
+    const space = record.space && (machine && !record.space.startsWith(`${machine}/`) ? `${machine}/${record.space}` : record.space);
+    const older = a.version && a.version < (a.latest ?? record.version);
+    const out = await artifactCli(null, ["pull", a.id, ...(machine ? ["--from", machine] : []), ...(older ? ["--version", String(a.version)] : [])]);
+    const view = { mod: out.mod, base: baseMod(out.mod), id: a.id, title: record.title, version: older ? a.version : record.version, latest: record.version, machine, space, ...(a.modal ? { modal: true } : {}) };
+    // Coordinates captured from another space (or before a switch) don't describe the owner.
+    if (area && origin === space && spaces().find((s) => s.active)?.id === origin) view.area = area;
+    await selectArtifactOwner(view);
+    await show(view);
+  } catch (e) {
+    toast({ title: "Artifact didn't open", body: plainError(e), level: "error" });
+  }
 }
 
 // Where each chat is in the window, and whether it has the keyboard (shared "chat.areas": { [key]:

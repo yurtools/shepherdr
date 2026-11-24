@@ -1,7 +1,7 @@
 // herdr-artifact open (SHEP-99): an agent's herdr.show label, here or on another machine, opens the artifact on the
 // page the person used last that's on screen; an ask set before the service started, or seen once, never shows again.
 import { expect, test } from "bun:test";
-import { Shows, showAsk, windowArgs, SHOW, SHOW_FRESH } from "./show.ts";
+import { Shows, showAsk, showSource, windowArgs, SHOW, SHOW_FRESH } from "./show.ts";
 import { Live } from "./live.ts";
 
 const NOW = 1_800_000_000_000;
@@ -48,4 +48,21 @@ test("no page on screen: nothing to show it on", () => {
 
 test("no page on screen, another machine's ask: this window opens it from there, in a tab", () => {
   expect(windowArgs({ id: "a1", at: NOW, artifact: "how-to-group-tasks-fa0a", machine: "vm" })).toEqual(["open", "how-to-group-tasks-fa0a", "--from", "vm", "--tab", "--json"]);
+});
+
+test("an explicit source machine survives requests from another terminal", () => {
+  expect(showAsk(term('t1', { id: 'remote', at: NOW, artifact: 'proof-1234', machine: 'vm' }))?.machine).toBe('vm');
+  expect(showAsk(term('t1', { id: 'bad', at: NOW, artifact: 'proof-1234', machine: '../vm' }))).toBeNull();
+  const live = new Live({ on() {} } as any, { on() {} } as any, () => null, '0');
+  const p = page(NOW); (live as any).pages.add(p.ws);
+  live.show('proof-1234', 'vm');
+  expect(JSON.parse(p.sent[0])).toEqual({ type: 'show', artifact: 'proof-1234', machine: 'vm' });
+});
+
+test('machine aliases from a remote caller are translated through immutable core IDs', () => {
+  const ask = showAsk(term('sender/t1', { id: 'a', at: NOW, artifact: 'proof-1234', machine: 'mini', origin: 'core-2' }))!;
+  expect(showSource(ask, 'core-1', new Map([['target', { id: 'core-2' }]] )).machine).toBe('target');
+  expect(showSource(ask, 'core-2', new Map()).machine).toBeNull();
+  expect(showSource(ask, 'core-1', new Map()).machine).toBe('unavailable/core-2');
+  expect(showAsk(term('sender/t1', { id: 'old', at: NOW, artifact: 'proof-1234', machine: 'mini' }))?.machine).toBe('sender/mini');
 });

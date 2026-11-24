@@ -1,3 +1,4 @@
+import { artifactChatMachine } from "@client/artifact-route.ts"
 // Chat: every agent, coordinator or reviewer, gets the same chat. Replies render markdown; question cards answer
 // a CLI's own menus; what you send shows at once and goes in at once, even mid-turn; only while the CLI shows a menu
 // or is starting does it wait, and the bubble says why.
@@ -18,7 +19,7 @@ import { buzz, ForkIcon, mine, openBar, openPicker, quick, react, RewindIcon } f
 import { EDGE } from '@client/gestures.ts'
 import { enterHint, sendsNow } from '@client/enter.ts'
 import { still, useArrive } from '@client/motion.ts'
-import { draggingFiles, dropped, named, pasted } from './paste.ts'
+import { draggingFiles, dropped, named, pastedEvent } from './paste.ts'
 import { dayLabel } from './days.ts'
 import { FindBar, openFind } from './find.tsx'
 import { Fold } from './fold.tsx'
@@ -1419,7 +1420,9 @@ const noteBox = clsx('min-h-10 w-full resize-none rounded-row bg-transparent px-
 const CHECKS: Record<MergeEvidence['checks']['state'], string> = { passed: 'text-ready-fg', failed: 'text-need-fg', running: 'text-work-fg', none: 'text-fg2', unknown: 'text-need-fg' }
 
 /** a merge card: what the human approves, and that this card is how */
-function Evidence({ e, open }: { e: MergeEvidence; open: boolean }) {
+function Evidence({ e, open, chat }: { e: MergeEvidence; open: boolean; chat: string }) {
+  const snap = useSnap()
+  const machine = snap ? artifactChatMachine(snap, chat) : undefined
   const label = 'shrink-0 w-14 text-fg2'
   return (
     <div data-evidence className="flex flex-col gap-1 text-[0.875rem] phone:text-[0.9375rem]">
@@ -1435,7 +1438,7 @@ function Evidence({ e, open }: { e: MergeEvidence; open: boolean }) {
         </details>
       ) : <div className="flex gap-2"><span className={label}>Files</span><span className="text-need-fg">Couldn't read the changes</span></div>}
       <div className="flex gap-2"><span className={label}>Checks</span><span data-evidence-checks={e.checks.state} className={CHECKS[e.checks.state]}>{e.checks.text}</span></div>
-      <div className="flex gap-2"><span className={label}>Proof</span>{e.proof ? <LinkButton onClick={() => openArtifact(e.proof!.id)}>{e.proof.title}</LinkButton> : <span className="text-fg2">No proof artifact</span>}</div>
+      <div className="flex gap-2"><span className={label}>Proof</span>{e.proof ? <LinkButton onClick={() => openArtifact(e.proof!.id, undefined, machine)}>{e.proof.title}</LinkButton> : <span className="text-fg2">No proof artifact</span>}</div>
       {open ? <p data-evidence-approve className="mt-1 text-[0.8125rem] text-fg2">Only this card approves the merge: pick Merge, then Send. A yes in the chat doesn't count.</p> : null}
     </div>
   )
@@ -1617,7 +1620,7 @@ function OneQuestionCard({ q, chat, msg, from, source, steady }: { q: Question; 
       {q.approval && !sent ? <PermissionStatus status={q.approval} /> : null}
       {q.screen ? <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-words text-xs text-fg2">{q.press ? q.screen.split(/(https?:\/\/\S+)/).map((part, j) => j % 2 ? <a key={j} href={part} target="_blank" rel="noreferrer" className="text-accent">{part}</a> : part) : q.screen}</pre> : null}
       {q.terminal && !sent && has('terminal') ? <button type="button" className="text-left text-accent" onClick={() => openTerminal(chat.key)}>{WORDS.openTerminal}</button> : null}
-      {q.evidence ? <Evidence e={q.evidence} open={!sent} /> : null}
+      {q.evidence ? <Evidence e={q.evidence} open={!sent} chat={q.by?.chat ?? chat.key} /> : null}
       {q.plan ? <div data-plan className="max-h-96 overflow-auto"><Markdown text={q.plan} /></div> : null}
       {q.steps ? (
         <ol className="flex list-decimal flex-col gap-0.5 pl-5">
@@ -1661,6 +1664,7 @@ function OneQuestionCard({ q, chat, msg, from, source, steady }: { q: Question; 
           </button>
         )
       })}
+      {q.approval && !sent ? <PermissionInformation q={q} /> : null}
       {sent || q.multi ? null : <OptionPreview choices={q.choices} picked={sel} />}
       {q.other && !sent ? (
         <input
@@ -1734,6 +1738,35 @@ export function PermissionStatus({ status }: { status: NonNullable<Question['app
       <span>{status.text}</span>
     </div>
     {status.detail ? <p className="text-pretty">{status.detail}</p> : null}
+    {status.advice ? <div className="mt-2 flex flex-col gap-1 border-t border-line2 pt-2">
+      <p className="whitespace-pre-wrap text-pretty"><strong>Advice: </strong>{status.advice.text}</p>
+      {status.advice.detail ? <details><summary className="cursor-pointer text-accent">More advice</summary><p className="mt-1 whitespace-pre-wrap text-pretty">{status.advice.detail}</p></details> : null}
+      <p className="text-fg3">{status.advice.note}</p>
+    </div> : null}
+  </div>
+}
+
+export function PermissionInformation({ q }: { q: Question }) {
+  const [busy, setBusy] = useState(false), [error, setError] = useState('')
+  const sending = useRef(false)
+  const request = async (command: 'advice' | 'review') => {
+    if (sending.current || !q.requestHash) return
+    sending.current = true; setBusy(true); setError('')
+    try {
+      const result = await act({type:'permission-info',question:q.id,hash:q.requestHash,command})
+      if (result?.ok === false) setError(result.error ?? 'The Assistant could not receive this request.')
+    } catch { setError('The request may have changed or closed. Refresh the card and try again.') }
+    finally { sending.current = false; setBusy(false) }
+  }
+  if (!q.approval) return null
+  const local = q.permissionLocal === true && !!q.requestHash
+  return <div className="flex flex-col gap-1">
+    <div className="flex flex-wrap gap-2">
+      <button type="button" className="press rounded-row border border-line2 px-3 py-2 text-accent disabled:opacity-40" disabled={!local || busy || ['processing','pending','ready'].includes(q.approval.advice?.state ?? '')} onClick={() => void request('advice')}>Advice</button>
+      <button type="button" className="press rounded-row border border-line2 px-3 py-2 text-accent disabled:opacity-40" disabled={!local || busy || ['processing','assistant'].includes(q.approval.state)} onClick={() => void request('review')}>Ask Assistant</button>
+    </div>
+    {!local ? <p className="text-xs text-fg3">Advice and Assistant review require the original machine’s compatible permission card.</p> : null}
+    {error ? <p role="alert" className="text-xs text-need">{error}</p> : null}
   </div>
 }
 
@@ -2088,9 +2121,8 @@ function Composer({ chatKey, placeholder, cli, suggest = null }: { chatKey: stri
                 }}
                 onPaste={(e) => {
                   // a screenshot or a copied file attaches, as + does; text pastes as text
-                  const list = pasted(e.clipboardData)
+                  const list = pastedEvent(e)
                   if (!list.length) return
-                  e.preventDefault()
                   attach(chatKey, list)
                 }}
                 onScroll={(e) => fades(e.currentTarget)}
@@ -2411,9 +2443,8 @@ function startUpload(chatKey: string, id: string, since = Date.now()): Promise<s
   return up
 }
 
-/** files from +, a paste or a drop: each shows in the message box at once (a picture as itself, from the device) while
- *  it uploads to Shepherdr, and waits there until it is sent. One whose upload fails keeps its place: Send tries again */
-async function attach(chatKey: string, list: File[]) {
+/** Files from +, a paste or a drop stay on this device with a local preview until Send starts their upload. */
+function attach(chatKey: string, list: File[]) {
   if (!list.length) return
   const added = list.map((f) => {
     const id = `upload:${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
@@ -2423,7 +2454,6 @@ async function attach(chatKey: string, list: File[]) {
     return { name: f.name, path: id }
   })
   setUI((u) => ({ plus: null, files: { ...u.files, [chatKey]: [...(u.files[chatKey] ?? []), ...added] } }))
-  await Promise.allSettled(added.map((a) => startUpload(chatKey, a.path)))
 }
 
 /** a page opened again: what was still sending goes on (its pictures from the device), and the device lets go of

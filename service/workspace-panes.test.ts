@@ -65,28 +65,21 @@ test("the chooser keeps accounts distinguishable, includes the Assistant, exclud
   expect(C.besideChoices("agent-pane").map((x: any) => x.label)).toEqual(["Assistant"]);
   expect(C.besideChoices("assistant-pane").map((x: any) => x.label)).toEqual(["Codex (Account 2)"]);
 });
-test("an agentless Assistant can be viewed beside an agent without starting it", async () => {
-  ts = ts.slice(0, 1);
-  state.set("coordinator.slots", { pending: { space: "space", pane: "assistant-pane", tab: "tab-assistant", folder: "/project" } });
-  const choice = C.besideChoices("agent-pane")[0];
-  await C.openBeside("agent-pane", choice);
-  expect(calls[0][1].props).toMatchObject({ slot: "pending", role: "coordinator", space: "space" });
-  expect(calls.map(x => x[0])).toEqual(["pane.split", "pane.focus"]);
-});
 test("opening beside preserves the original account/owner and uses the existing session", async () => {
   const labels = structuredClone(ts[1].labels);
   await C.openBeside("agent-pane", C.besideChoices("agent-pane")[0]);
-  expect(calls[0]).toMatchObject(["pane.split", { pane: "agent-pane", mod: "chat", props: { terminal: "t2" } }]);
+  expect(calls[0]).toEqual(["pane.split", { pane: "agent-pane", direction: "right" }]);
+  expect(C.companionFor("new-pane")?.mode).toBe("terminal");
   expect(ts[1].labels).toEqual(labels);
   const record = C.companionFor("new-pane");
-  await C.companionMode(record, "terminal");
-  expect(C.companionFor("new-pane-2")?.mode).toBe("terminal");
-  expect(calls).toContainEqual(["pane.split", { direction: "down", pane: "new-pane" }]);
+  await C.companionMode(record, "chat");
+  expect(C.companionFor("new-pane-2")?.mode).toBe("chat");
+  expect(calls).toContainEqual(["pane.split", { direction: "down", pane: "new-pane", mod: "chat", props: { companion: record.id, terminal: "t2" } }]);
   expect(calls.at(-1)).toEqual(["pane.close", { pane: "new-pane" }]);
   expect(C.companionFor("new-pane-2")?.pendingPane).toBe("new-pane");
   expect(calls).toContainEqual(["pane.close", { pane: "new-pane" }]);
-  await C.companionMode(C.companionFor("new-pane-2"), "chat");
-  expect(C.companionFor("new-pane-3")?.mode).toBe("chat");
+  await C.companionMode(C.companionFor("new-pane-2"), "terminal");
+  expect(C.companionFor("new-pane-3")?.mode).toBe("terminal");
   expect(calls).toContainEqual(["pane.close", { pane: "new-pane-2" }]);
   C.closeCompanion("new-pane-3");
   expect(calls.at(-1)).toEqual(["pane.close", { pane: "new-pane-3" }]);
@@ -112,7 +105,7 @@ test("Chat/Terminal replacement nests across the parent axis to preserve pane pr
 test("a replacement performs no work in the disposed old header after closing its pane", async () => {
   await C.openBeside("agent-pane", C.besideChoices("agent-pane")[0]);
   calls = [];
-  await C.companionMode(C.companionFor("new-pane"), "terminal");
+  await C.companionMode(C.companionFor("new-pane"), "chat");
   expect(calls.map(x => x[0])).toEqual(["pane.split", "pane.focus", "pane.close"]);
   expect(C.companionFor("new-pane-2")?.changing).toBeNull();
 });
@@ -122,8 +115,8 @@ test("the persistent tab bar processes a header's view request across the struct
   let tick: any, work: Promise<any> | null = null;
   const cx: any = { timer: { every: (_ms: number, f: any) => { tick = f; } }, notify() {}, spawn: (f: any) => { work = f(cx); } };
   C.watchCompanions(cx, (e: any) => { throw e; });
-  C.requestCompanionMode(C.companionFor("new-pane"), "terminal");
+  C.requestCompanionMode(C.companionFor("new-pane"), "chat");
   tick(cx); await work;
-  expect(C.companionFor("new-pane-2")?.mode).toBe("terminal");
+  expect(C.companionFor("new-pane-2")?.mode).toBe("chat");
   expect(calls.at(-1)).toEqual(["pane.close", { pane: "new-pane" }]);
 });

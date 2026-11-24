@@ -1,3 +1,5 @@
+import { findArtifact } from "@core/artifact-owner.js"
+import { artifactRoute } from "./artifact-route.ts"
 import { actionable, attentionCounts } from './attention.ts'
 // The screen's small kernel: plugin slots, the store (server data + what's on screen), and the link to the server.
 import { useSyncExternalStore, type FC, type ReactNode } from 'react'
@@ -232,7 +234,7 @@ export interface UI {
    *  remembered on this device */
   split: Panes
   /** an artifact open full screen: at a version you picked, or (none) its latest, following its updates */
-  viewer: { artifact: string; v?: number } | null
+  viewer: { artifact: string; v?: number; owner?: string; origin?: string; error?: string } | null
   /** an attached picture opened full screen: a sent one by its message, one still in the message box by its file */
   photo: { chat: string; msg?: string; file?: { name: string; path: string } } | null
   search: boolean
@@ -420,7 +422,7 @@ let state: State = {
     drawer: false,
     sidebars: loadSidebars(),
     split: loadPanes(),
-    viewer: params.get('artifact') ? { artifact: params.get('artifact')! } : null,
+    viewer: params.get('artifact') ? { artifact: params.get('artifact')!, origin: params.get('origin') ?? undefined, ...(Number(params.get('v')) > 0 ? { v: Number(params.get('v')) } : {}) } : null,
     photo: null,
     search: false,
     adding: false,
@@ -516,8 +518,9 @@ export function setUI(patch: Partial<UI> | ((ui: UI) => Partial<UI>)) {
   else if (p.task === null && p.split === undefined && state.ui.task && state.ui.split.pane < 0 && state.ui.split.panes.length) p = { ...splitTo({ ...state.ui.split, pane: 0 }), ...p }
   // nothing changes: nothing redraws
   if ((Object.keys(p) as (keyof UI)[]).every((k) => Object.is(p[k], state.ui[k]))) return
+  const resolvingArtifact = !!state.ui.viewer && !state.ui.viewer.owner && !!p.viewer?.owner
   state = { ...state, ui: { ...state.ui, ...p } }
-  if ((Object.keys(p) as (keyof UI)[]).some((k) => STEP_FIELDS.has(k))) syncUrl()
+  if ((Object.keys(p) as (keyof UI)[]).some((k) => STEP_FIELDS.has(k))) syncUrl(resolvingArtifact)
   // usage insights (usage.ts): the screen shown, and the time on the one before
   noteView(state.ui)
   if (p.sidebars) saveSidebars(p.sidebars)
@@ -711,6 +714,7 @@ addEventListener('popstate', (e) => {
   }
   if (!entry) write('replace')
   stayOnShown()
+  if (state.ui.viewer) openArtifact(state.ui.viewer.artifact, state.ui.viewer.v, undefined, state.ui.viewer.origin)
   // split, the place stepped back to shows in the focused pane (or focuses the pane that has it)
   if (state.ui.place !== before.place) {
     const patch = placeInPane(before, state.ui.place)
@@ -787,7 +791,7 @@ export function connect() {
     pinging = null
     const msg = JSON.parse(ev.data) as ServerEvent
     if (msg.type === 'pong') return
-    if (msg.type === 'show') return openArtifact(msg.artifact)
+    if (msg.type === 'show') return openArtifact(msg.artifact, undefined, msg.machine, msg.origin)
     if (msg.type === 'snapshot') {
       // an add-on switched on or off in Settings › Window: the page starts again with its plugins in or out (main.tsx)
       const booted = (window as { shepherdrOff?: string[] }).shepherdrOff
@@ -797,6 +801,8 @@ export function connect() {
       noteView(state.ui)
       stayOnShown()
       fromOldPin(msg.snapshot)
+      // Deep links wait for ownership, including artifacts arriving from another machine later.
+      if (state.ui.viewer && !state.ui.viewer.owner) openArtifact(state.ui.viewer.artifact, state.ui.viewer.v, undefined, state.ui.viewer.origin)
       // once loaded, the first snapshot with every machine in reach says which chats are gone (one connecting or out
       // of reach may not list its chats yet: then none is dropped); later ones don't, so a failed one left open a day
       // keeps its Retry
@@ -1458,7 +1464,7 @@ export function togglePlaces() {
 }
 
 export function goPlace(id: string) {
-  setUI((ui) => ({ ...placeInPane(ui, id), place: id, task: null, drawer: false, settings: null, tab: 'chat', pick: null, menu: false, cur: 0, archived: null }))
+  setUI((ui) => ({ ...placeInPane(ui, id), place: id, task: null, drawer: false, settings: null, tab: 'chat', pick: null, menu: false, cur: 0, archived: null, viewer: null }))
 }
 
 /** a task opens straight into its agent's chat */
@@ -1498,8 +1504,14 @@ export function goChat(key: string) {
 export type Children = { children?: ReactNode }
 
 /** an artifact full screen, at its latest (following its updates) or at a version */
-export function openArtifact(id: string, v?: number) {
-  setUI({ viewer: { artifact: id, v }, pick: null, plus: null, menu: false })
+export function openArtifact(id: string, v?: number, machine?: string | null, origin?: string) {
+  const key = machine ? `${machine}/${id}` : machine === null ? `/${id}` : id
+  const route = state.snap ? artifactRoute(state.snap, id, machine, origin) : null
+  if (!route?.place) return setUI({ viewer: { artifact: key, v, origin, error: route?.error }, pick: null, plus: null, menu: false })
+  const task = state.ui.task && taskOf(state.snap!, state.ui.task)?.place === route.place ? state.ui.task : null
+  // The owner is selected in the same state change as the viewer; no agent action is sent.
+  setUI({ place: route.place, task, sheet: task ? state.ui.sheet : null,
+    viewer: { artifact: route.artifact!, v, owner: route.place, origin: route.origin }, pick: null, plus: null, menu: false, drawer: false })
 }
 
 /** close it (its step in the history goes too, so Back and the close button agree) */
@@ -1529,7 +1541,7 @@ export const splitClick = (e: { metaKey: boolean; ctrlKey: boolean }) => state.u
 export function placeOfPane(snap: Snapshot, p: Pane): string | null {
   if (p.kind === 'place' || p.kind === 'tasks') return p.id
   if (p.kind === 'task') return taskOf(snap, p.id)?.place ?? null
-  return snap.artifacts?.find((a) => a.id === p.id)?.place ?? null
+  return findArtifact(snap.artifacts, p.id)?.place ?? null
 }
 
 /** the chat a pane shows, if any */
@@ -1569,6 +1581,11 @@ export function roomFor(ui: UI, snap: Snapshot, width = innerWidth) {
 
 /** open in split view (desktop): beside the focused pane, or beside the middle as it shows now */
 export function openSplit(p: Pane) {
+  if (p.kind === 'artifact') {
+    const r = state.snap && artifactRoute(state.snap, p.id)
+    if (!r?.place) return openArtifact(p.id)
+    p = { ...p, id: r.artifact! }
+  }
   setUI((ui) => {
     const snap = state.snap
     if (ui.device !== 'desktop' || !snap) return {}
@@ -1578,8 +1595,8 @@ export function openSplit(p: Pane) {
     // a task leaves the right for its pane (or the middle it was in)
     const task = v.panes.some((x) => x.kind === 'task' && x.id === ui.task) || start.kind === 'task' ? { task: null } : {}
     // no room for two: a place opens as the middle always shows it
-    const place = !v.panes.length && p.kind === 'place' ? { place: p.id } : {}
-    return { ...splitTo(v), ...place, ...task, viewer: p.kind === 'artifact' ? null : ui.viewer, menu: false, taskMenu: false }
+    const place = !v.panes.length && p.kind === 'place' ? { place: p.id } : !v.panes.length && p.kind === 'artifact' ? { place: placeOfPane(snap, p)!, viewer: { artifact: p.id, owner: placeOfPane(snap, p)! } } : {}
+    return { ...splitTo(v), ...task, viewer: p.kind === 'artifact' ? null : ui.viewer, ...place, menu: false, taskMenu: false }
   })
 }
 

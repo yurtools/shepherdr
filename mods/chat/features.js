@@ -3,8 +3,11 @@ import {projectFolder} from './project-folder.js';
 import { appHome, exec, hc, run, shared, setShared, openOverlay } from 'herdr';
 import { spaces, panes, terminals } from './live.js';
 import { readShepherdr, shepherdrFor } from './coordinator.js';
-import { chatLabel, featureViews, isFeatureAssistant } from './core/spaces.js';
+import { featureViews, isFeatureAssistant } from './core/spaces.js';
+import { FIND } from './core/session-find.js';
+import * as agent from './agent.js';
 import { workspaceCall } from './workspace-store.js';
+import { startRole, withRoleView } from './role-launch.js';
 export { workspaceCall } from './workspace-store.js';
 export function featureSettings(cfg) {
  const base=cfg.coordinator??{}, role=cfg.feature;
@@ -53,19 +56,50 @@ export async function openFeature(record) {
  reconcileNames(snapshot,new Map(),record.id);
  if(existing){if(!live&&record.session)setShared('workspace.feature.resume',{record,at:Date.now(),nonce:Math.random()});run('space.select',{id:space.id});run('tab.select',{id:existing.tab});run('pane.focus',{pane:existing.pane});return;}
  const slot=`feature-${record.id}`;
- const out=await app('tab.new',{space:space.id,name:record.name,mod:'chat',props:{role:'feature',template:'feature',space:space.id,folder:record.folder,slot,feature:record.id,settings:record.settings,featureRecord:record}});
+ const terminal=live?.address??await startRole({role:'feature',template:'feature',space,folder:record.folder,slot,settings:record.settings,featureRecord:record});
+ await withRoleView(async()=>{
+ await app('space.select',{id:space.id});
+ const out=await app('terminal.keep',{terminal,place:'tab'});
+ await app('tab.rename',{id:out.tab,name:record.name});
  setShared('coordinator.slots',{...(shared('coordinator.slots')??{}),[slot]:{space:space.id,tab:out.tab,pane:out.pane,folder:record.folder,feature:record.id}});
- if(live)await hc(['label',live.address,`herdr.chat=${chatLabel(out.pane)}`,`herdr.chat.slot=${slot}`,`herdr.chat.origin=slot:${slot}`,`herdr.coordinator.tab=${out.tab}`]);
+ await hc(['label',terminal,'herdr.chat=',`herdr.chat.slot=${slot}`,`herdr.chat.origin=${live?.labels?.['herdr.chat.origin']||`slot:${slot}`}`,`herdr.coordinator.tab=${out.tab}`]);
  await workspaceCall('feature-update',{id:record.id,tab:out.tab,pane:out.pane});
+ });
+}
+// Terminal-first Features must be resumable even if Chat has never been opened. Read the
+// exact running process's log and account, just as Chat does; no transcript is copied.
+export async function captureFeatureSession(record, address) {
+ const result=await hc(['get',address,'--json']);if(result.code)return null;
+ const t=JSON.parse(result.stdout),kind=({'claude-code':'claude',claude:'claude',codex:'codex'})[t.status?.app??t.foreground?.name];
+ if(t.state!=='live'||!kind||!t.foreground?.pid)return null;
+ const found=await exec('sh',['-c',FIND,'chat',kind,String(t.foreground.pid)]);
+ const path=found.stdout.trim().split('\n').pop(),session=agent.sessionOf(kind,path);
+ if(!session)return null;
+ const dflt=await agent.defaults(kind,null,{pid:t.foreground.pid});
+ const raw=t.foreground.argv??t.argv??[],at=raw.findIndex(a=>/^(codex|claude)$/.test(String(a).split('/').pop()));
+ if(at<0)return null;
+ const argv=[...agent.launchPrefix(kind,t.argv??raw,dflt.home),...raw.slice(at+1)];
+ await workspaceCall('feature-update',{id:record.id,kind,session,home:dflt.home,argv,terminal:address});
+ if(kind==='codex'){
+  const row={feature:record.id,kind,home:dflt.home,session,space:record.space,title:record.name,argv:agent.resumeArgv(kind,argv,session)};
+  const saved=await exec('python3',[`${appHome()}/mods/workspace-sessions/bin/herdr-sessions`,'capture',JSON.stringify(row)]);
+  if(saved.code)throw new Error(saved.stderr||'Could not remember the feature session.');
+ }
+ return t.foreground.pid;
 }
 export function watchFeatures(cx,onError) {
  let seen=shared('workspace.feature.request')?.nonce,busy=false,reading=false;
- const attempted=new Map();
+ const attempted=new Map(),captured=new Map();
  const refresh=async()=>{if(reading)return;reading=true;try{const out=await workspaceCall('features'),old=featureRecords();
  if(JSON.stringify(out.features)!==JSON.stringify(old)){
   setShared('workspace.features',out.features);
  }
  reconcileNames(featureViewState(out.features),attempted);
+ for(const k of terminals().filter(k=>isFeatureAssistant(k)&&panes().some(p=>p.terminal===k.address))){
+  if(captured.has(k.address)&&(!k.foreground?.pid||captured.get(k.address)===k.foreground.pid))continue;
+  const record=out.features.find(r=>r.id===k.labels['herdr.feature']);if(!record)continue;
+  const pid=await captureFeatureSession(record,k.address);if(pid)captured.set(k.address,pid);
+ }
  }finally{reading=false;}};
  cx.spawn(async()=>{try{await refresh();}catch(e){onError(e);}});
  cx.timer.every(2000,cx=>{cx.spawn(async()=>{try{await refresh();}catch{};});});

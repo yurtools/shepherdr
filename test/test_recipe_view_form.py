@@ -30,20 +30,23 @@ export const InputState = { new: (o) => {
   if (rendering) throw new Error("InputState.new(...) cannot run during render");
   const s = { o, value: () => "" }; made.push(s); return s; } };
 export const theme = () => new Proxy({}, { get: () => "#000" });
+export const appHome = () => "/unused", window = () => ({platform: "linux"});
+export const exec = async () => { throw new Error("unexpected host execution"); };
 export const asset = (x) => x, reply = async () => true;
 """
 
 HARNESS = r"""
 import RecipeView from "./recipe-view.js";
-import { setRendering, made } from "./stub.js";
+import { setRendering, made, rendering } from "./stub.js";
 const v = new RecipeView();
-v.init();
+const cx = { spawn() { if (rendering) throw new Error("task started in render"); }, notify() {} };
+v.init({}, cx);
 const before = made.length;
 setRendering(true);
 let error = null;
-try { v.render({}); v.render({}); } catch (e) { error = String(e.message || e); }
+try { v.render(cx); v.render(cx); } catch (e) { error = String(e.message || e); }
 setRendering(false);
-console.log(JSON.stringify({ error, made: before, after: made.length, viewError: v.error }));
+console.log(JSON.stringify({ error, made: before, after: made.length, viewError: v.error, pdfs: v.pdfs.size }));
 """
 
 
@@ -55,6 +58,10 @@ def run(recipe):
         with open(os.path.join(d, "recipe-view.js"), "w") as f:
             f.write(src)
         shutil.copy(RECIPE, os.path.join(d, "recipe.js"))
+        with open(os.path.join(ROOT, 'lib', 'pdf-view.js')) as f:
+            pdf = re.sub(r'''from ['"](gpui-kit|gpui-base|herdr)['"]''', 'from "./stub.js"', f.read())
+        with open(os.path.join(d, 'pdf-view.js'), 'w') as f:
+            f.write(pdf)
         with open(os.path.join(d, "stub.js"), "w") as f:
             f.write(STUB)
         with open(os.path.join(d, "recipe-data.js"), "w") as f:
@@ -73,6 +80,11 @@ def run(recipe):
 
 @unittest.skipUnless(shutil.which("node"), "needs node")
 class FormFieldsMadeInInit(unittest.TestCase):
+    def test_pdf_loaders_are_prepared_in_init_without_starting_tasks_in_render(self):
+        out = run({'recipe': 1, 'blocks': [{'type': 'pdf', 'src': 'safe.pdf'}]})
+        self.assertIsNone(out['error'])
+        self.assertEqual(out['pdfs'], 1)
+
     def test_a_form_draws_without_making_state_in_render(self):
         out = run({"recipe": 1, "blocks": [{"type": "form", "fields": [
             {"name": "why", "label": "Why", "kind": "text"}, {"name": "pick", "kind": "select", "options": ["a", "b"]},

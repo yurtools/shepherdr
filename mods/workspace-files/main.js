@@ -138,13 +138,13 @@ export default class Files extends View {
     const space = spaces().find(s => s.active), tab = focused()?.tab ?? space?.tabs?.find(t => t.active)?.id;
     const target = !another && panes().find(p => p.tab === tab && p.mod === "workspace-document");
     if (target) {
-      setShared("workspace.document.open", { pane: target.pane, file: `${this.root}/${path}`, on: this.on, at: Date.now() });
+      setShared("workspace.document.open", { pane: target.pane, file: `${this.root}/${path}`, root: this.root, space: space?.id, on: this.on, at: Date.now() });
       run("pane.focus", { pane: target.pane });
     } else {
       const anchor = panes().find(p => p.tab === tab && p.focused) ?? panes().find(p => p.tab === tab);
       const slot = `doc-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-      const args = anchor ? { pane: anchor.pane, direction: "right", mod: "workspace-document", props: { file: `${this.root}/${path}`, on: this.on, slot } }
-        : { space: space?.id, name: path.split("/").pop(), mod: "workspace-document", props: { file: `${this.root}/${path}`, on: this.on, slot } };
+      const args = anchor ? { pane: anchor.pane, direction: "right", mod: "workspace-document", props: { file: `${this.root}/${path}`, root: this.root, space: space?.id, on: this.on, slot } }
+        : { space: space?.id, name: path.split("/").pop(), mod: "workspace-document", props: { file: `${this.root}/${path}`, root: this.root, space: space?.id, on: this.on, slot } };
       cx.spawn(async cx => {
         try {
           const r = await exec("herdr-app", ["do", anchor ? "pane.split" : "tab.new", JSON.stringify(args)]);

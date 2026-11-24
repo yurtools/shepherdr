@@ -11,6 +11,11 @@ Select a space in the left sidebar. **Features / Sessions** below it follows the
 selected space; the tab bar holds the open tabs. The **Files** button opens the
 project tree. File contents open in a separate document pane.
 
+New native agent views open in **Terminal**, including task workers, space
+Assistants, Feature Assistants, resumed sessions and **Beside** views. Use the
+existing **Chat / Terminal** switch to change views of the same running agent.
+Opening an already-open view focuses it and keeps its current selection.
+
 Feature status includes its live workers, so a waiting Feature Assistant with a
 working worker shows **Working · 1 worker**, rather than Paused. Worker Chat selects
 the main CLI conversation even when Codex also holds internal Auto-review logs.
@@ -50,8 +55,8 @@ Use the worker/task worktree settings to isolate code changes when features run
 in parallel; the feature's recorded project folder remains its starting context.
 
 - **+ → Start feature…** opens a compact form with a **Feature name** field.
-  Press Enter or **Create feature** to open its conversation. Its agent starts
-  with your first message.
+  Press Enter or **Create feature** to start its Assistant in Terminal using
+  its configured account and instructions.
 - The flag beside a reply's Fork action starts a feature with the chosen reply
   as its objective and bounded supporting context up to that point. It starts
   the feature agent, which generates its title using the normal signed-in CLI;
@@ -293,6 +298,10 @@ before closing its tab. The command `workspace-document.close-file` closes the
 active file.
 
 - Markdown: **Source / Preview** switches between the editor and rendered content.
+- PDF: read-only visual pages with previous/next, zoom, Fit, Reload and Open
+  original. Local native rendering needs Python and Poppler on Linux/macOS;
+  remote files and Windows show a fallback. PDFs never enter the text editor or
+  Save path. See [PDF preview](pdf-preview.md) for limits and proof boundaries.
 - CSV / TSV: **Source / Preview** switches between raw text and a table. Choose
   Auto, Comma, Tab or Semicolon for the delimiter. Arrow controls move through rows.
 - Text and code: **Highlight / Edit** for HTML, CSS, TypeScript, JavaScript, Java,
@@ -316,7 +325,7 @@ active file.
 version loaded. Unsaved drafts are kept under `data/document-drafts/` and recovered
 when reopening that file. A conflicting external change leaves the draft intact;
 **Discard draft and reload** explicitly accepts the disk version. Clean views
-refresh automatically. Remote text files are read only. Office files have no Edit or Save action.
+refresh automatically. Remote text files are read only. Office and PDF files have no Edit or Save action.
 
 Ctrl+Shift+P selects Preview; Ctrl+Shift+O selects Source in a document pane.
 The equivalent commands are `workspace-document.preview`,
@@ -441,8 +450,10 @@ agent still ends that session; extra views then show an ended-session notice.
 Extra Chat views have separate drafts. Model/Thinking/Permissions changes apply
 to the same underlying agent and preserve its original Chat ownership; if its
 original tab is in Terminal mode, switch that tab to Chat before applying changes
-from an extra view. A not-yet-started Assistant starts on the first message using
-its configured space account.
+from an extra view. Opening a new Assistant starts it using its configured space
+account and instructions. Older, saved agentless Chat panes still start on their
+first message; opening one beside another pane starts/adopts that same slot in
+Terminal. An already-running Assistant is adopted without launching another.
 
 Settings account/model menus and Chat dropdowns anchor to the control pressed,
 independently of where the previous context menu was opened.
@@ -476,11 +487,11 @@ still running. Search by conversation title, tab name, account or folder. Each
 row identifies its account and last activity; the right side previews recent
 messages without starting an agent or showing thinking/tool output.
 
-**Resume** opens the same conversation in a new Chat tab using its original
+**Resume** opens the same conversation in a new Terminal tab using its original
 Codex account. **Beside** resumes it alongside the pane from which Sessions was
 opened. For an already-running conversation these actions focus its original
 chat or add an extra view, rather than launch another process. Resumed sessions
-are ordinary agent chats and do not replace the space’s current Assistant.
+are ordinary agent views and do not replace the space’s current Assistant.
 
 History includes saved logs that predate this feature, from the primary Codex
 home and the named profiles configured for this machine. Folder history includes

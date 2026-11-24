@@ -21,7 +21,8 @@ const THERE = 'd="${HERDR_APP_HOME:-$HOME/.config/herdr-app}/data/chat-asks"';
 const LIST = `${THERE}
 for f in "$d"/req/*.json; do [ -f "$f" ] || continue; n=\${f##*/}; n=\${n%.json}; [ -f "$d/ans/$n.json" ] && continue
   printf 'req\\t%s\\t' "$n"; tr '\\n\\t' '  ' < "$f"; echo
-  if [ -f "$d/req/$n.status" ]; then printf 'status\\t%s\\t' "$n"; tr '\\n\\t' '  ' < "$d/req/$n.status"; echo; fi; done
+  if [ -f "$d/req/$n.status" ]; then printf 'status\\t%s\\t' "$n"; tr '\\n\\t' '  ' < "$d/req/$n.status"; echo; fi
+  if [ -f "$d/req/$n.advice" ]; then printf 'advice\\t%s\\t' "$n"; tr '\\n\\t' '  ' < "$d/req/$n.advice"; echo; fi; done
 for n in "$@"; do [ -f "$d/end/$n" ] && printf 'end\\t%s\\t%s\\n' "$n" "$(head -n 1 "$d/end/$n")"; done; exit 0`;
 // An answer there, as answer() writes one here: how it went (end/<id>), then the answer (stdin) in place at once.
 const ANSWER = `${THERE}; mkdir -p "$d/ans" "$d/end"; [ -f "$d/req/$1.json" ] || exit 3
@@ -95,19 +96,20 @@ export class Asks {
         const r = await this.hub.call<{ code: number; stdout: string }>("machine.exec", { on: m, argv: ["sh", "-c", LIST, "sh", ...asked, ...late], timeout: 10 }, 15_000).catch(() => null);
         // out of reach: what is open stays as it was
         if (r?.code !== 0) continue;
-        const reqs = new Map<string, string>(), ends = new Map<string, string>(), statuses = new Map<string, string>();
+        const reqs = new Map<string, string>(), ends = new Map<string, string>(), statuses = new Map<string, string>(), advice = new Map<string, string>();
         for (const line of Buffer.from(r.stdout, "base64").toString("utf8").split("\n")) {
           const [kind, id, ...rest] = line.split("\t");
           if (!id || !ID.test(id)) continue;
           if (kind === "req") reqs.set(id, rest.join("\t"));
           else if (kind === "status") statuses.set(id, rest.join("\t"));
+          else if (kind === "advice") advice.set(id, rest.join("\t"));
           else if (kind === "end" && rest.join("\t").trim()) ends.set(id, rest.join("\t").trim());
         }
         for (const [local, body] of reqs) {
           const id = `${m}/${local}`;
           try {
             const req = JSON.parse(body);
-            const old = this.open.get(id), approval = permissionStatus(req, statuses.get(local));
+            const old = this.open.get(id), approval = permissionStatus(req, statuses.get(local), advice.get(local));
             const next = { id, terminal: `${m}/${local.split(".")[0]}`, at: old?.at ?? askAt(local), req, words: words(req), approval, machine: m, local };
             if (JSON.stringify(old) !== JSON.stringify(next)) { this.open.set(id, next); changed = true; }
           } catch {}
@@ -139,8 +141,9 @@ export class Asks {
       try {
         const req = JSON.parse(readFileSync(join(dir(), "req", n), "utf8"));
         let metadata; try { metadata = readFileSync(join(dir(), "req", `${id}.status`), "utf8"); } catch {}
+        let advice; try { advice = readFileSync(join(dir(), "req", `${id}.advice`), "utf8"); } catch {}
         if (existsSync(join(dir(), "ans", n)) || !existsSync(join(dir(), "req", n))) continue;
-        next.set(id, { id, terminal: id.split(".")[0], at: this.open.get(id)?.at ?? statSync(join(dir(), "req", n)).mtimeMs, req, words: words(req), approval: permissionStatus(req, metadata) });
+        next.set(id, { id, terminal: id.split(".")[0], at: this.open.get(id)?.at ?? statSync(join(dir(), "req", n)).mtimeMs, req, words: words(req), approval: permissionStatus(req, metadata, advice) });
       } catch {}
     }
     const changed = next.size !== this.open.size || [...next].some(([k, v]) => JSON.stringify(this.open.get(k)) !== JSON.stringify(v));
@@ -155,6 +158,18 @@ export class Asks {
   }
 
   of(terminal: string) { return [...this.open.values()].filter((a) => a.terminal === terminal); }
+
+  /** Informational requests never go through answer(), nor remove a pending card. */
+  async information(id: string, hash: string, command: 'advice' | 'review', run: (argv: string[]) => Promise<{code: number}>) {
+    const ask = this.open.get(id);
+    if (!ask || ask.machine || ask.words?.kind !== 'permission') throw new Error('Use the original local execution permission card.');
+    const path = join(dir(), 'req', `${id}.json`);
+    let fresh; try { fresh = JSON.parse(readFileSync(path, 'utf8')); } catch {}
+    if (!fresh || hash !== requestHash(ask.req) || hash !== requestHash(fresh) || existsSync(join(dir(), 'ans', `${id}.json`))) throw new Error('That request changed or closed. Refresh the card.');
+    const result = await run(['python3', join(appHome(), 'mods/chat/approval-policy.py'), command, '--request', path, '--terminal', ask.terminal, '--hash', hash]);
+    this.read();
+    if (result.code !== 0) throw new Error('The Assistant could not receive this request. Refresh the card and try again.');
+  }
 
   /** Answers it as the window's card would: a permission or plan allowed or declined, a question's pick. */
   async answer(id: string, a: { choice?: number; choices?: number[]; note?: string; other?: string; answers?: string[]; terminal?: boolean; talk?: boolean; dismiss?: boolean }) {

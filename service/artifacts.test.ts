@@ -15,3 +15,13 @@ test("each version says its kind and its window picture: a converted one was a p
   expect(a.kind).toBe("recipe");
   expect(a.versions.map((x) => [x.n, x.kind, x.picture])).toEqual([[2, "recipe", undefined], [1, "gpui", 5]]);
 });
+
+test("artifact ownership uses the task's saved space, including a deleted space and a remote ID collision", () => {
+  const a = { id: 'proof-1234', task: 'SHOP-4', folder: '/repo', version: 1 };
+  const spaces: any[] = [{ id: 'A', folder: '/a', machine: null }, { id: 'B', folder: '/repo', machine: null }, { id: 'vm/A', folder: '/repo', machine: 'vm' }];
+  const tasks = [{ ref: 'SHOP-4', folder: '/repo', space: 'A', machine: null }, { ref: 'SHOP-4', folder: '/repo', space: 'vm/A', machine: 'vm' }];
+  expect(artifactOf(a, spaces, undefined, tasks).place).toBe('A');
+  expect(artifactOf({ ...a, machine: 'vm' }, spaces, undefined, tasks).place).toBe('vm/A');
+  expect(artifactOf(a, spaces.filter(s => s.id !== 'A'), undefined, tasks).place).toBe('');
+  expect(artifactOf({ ...a, task: null }, spaces).place).toBe('');
+});

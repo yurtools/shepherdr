@@ -30,6 +30,7 @@ const RECIPE = {
 const dir = mkdtempSync(join(tmpdir(), "recipe-copy-"));
 copyFileSync(join(import.meta.dir, "../mods/artifacts/recipe-view.js"), join(dir, "recipe-view.js"));
 copyFileSync(join(import.meta.dir, "../mods/artifacts/core/recipe.js"), join(dir, "recipe.js"));
+copyFileSync(join(import.meta.dir, "../mods/artifacts/pdf-view.js"), join(dir, "pdf-view.js"));
 writeFileSync(join(dir, "recipe-data.js"), `export default ${JSON.stringify(RECIPE)};\n`);
 writeFileSync(join(dir, "artifact.js"), "export const asset = (s) => s; export const reply = async () => true;\n");
 const { default: RecipeView } = await import(join(dir, "recipe-view.js"));

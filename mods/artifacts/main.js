@@ -1,3 +1,4 @@
+import { BoundedWait, TIMEOUT, DISPOSED } from "./bounded-wait.js";
 // Artifacts: recipes agents write to show the person something (a report, a board, a form; rarely
 // a custom panel). Each folder's list is ~/.herdr/artifacts/<slug>.json on the machine the folder is on,
 // changed only through the herdr-artifact CLI (bin/herdr-artifact), which agents use. This panel
@@ -15,7 +16,7 @@ import { v_flex, h_flex, InputState, Input } from "gpui-base";
 import { spaces, panes, agents, readTextFile, watchFolder, home, theme, closeOverlay, props, shared, setShared } from "herdr";
 import { note } from "./usage.js";
 import { showInSidebar, backToList } from "./sidebar.js";
-import { artifactCli as cli, showViewer } from "./artview.js";
+import { artifactCli as cli, showViewer, openViewer } from "./artview.js";
 import { toast, plainError, TEXT, RADIUS } from "./ui.js";
 import { dirs } from "./dirs.js";
 
@@ -85,18 +86,20 @@ export default class Artifacts extends View {
     this.watching = true;
     cx.spawn(async (cx) => {
       try {
-        let w = null;
+        const wait = this.artifactWait = new BoundedWait();
         for (;;) {
-          // At most 5 s per wait, so a reload's old build ends at its next cx use.
-          w ??= watchFolder(dirs().artifacts).then(() => true);
-          if (!(await Promise.race([w, cx.sleep(5000)]))) continue;
-          w = null;
+          const got = await wait.next(cx, dirs().artifacts, () => watchFolder(dirs().artifacts), 5000);
+          if (got === DISPOSED) return;
+          if (got === TIMEOUT) continue;
           if (!this.ctx?.machine) await this.load(cx);
         }
       } catch {}
+      finally { this.artifactWait?.dispose(); }
       this.watching = false;
     });
   }
+
+  close() { this.artifactWait?.dispose(); }
 
   async load(cx) {
     const s = this.store;
@@ -130,29 +133,17 @@ export default class Artifacts extends View {
   }
 
   // Makes sure the artifact's mod is in this app (pulling it from its machine), then calls fn(mod).
-  open(a, how, cx) {
-    const machine = this.store?.machine ?? null;
-    let mod = modOf(machine, a.id);
-    this.opening = a.id;
+  open(a, machine, cx) {
     note("view", { view: "artifact", artifact: a.id });
+    this.opening = a.id;
     cx.notify();
     cx.spawn(async (cx) => {
-      try {
-        // Pulled every time: another machine's copies it, and either way it gets this app's Mark up.
-        mod = (await cli(null, ["pull", a.id, ...(machine ? ["--from", machine] : [])])).mod ?? mod;
-        how(mod);
-      } catch (e) {
-        toast({ title: "Artifact didn't open", body: plainError(e), level: "error" });
-      }
+      await openViewer({ ...a, machine }, null, async (view) => {
+        if (!await showInSidebar(view)) await showViewer(view);
+      });
       this.opening = null;
       cx.notify();
     });
-  }
-
-  // Inside this sidebar; a layout without the drill-in view shows it full window.
-  inPlace(mod, a) {
-    const view = { mod, base: mod, id: a.id, title: a.title, version: a.version, latest: a.version, machine: this.store?.machine ?? null };
-    if (!showInSidebar(view)) showViewer(view);
   }
 
   render(cx) {
@@ -245,7 +236,8 @@ export default class Artifacts extends View {
   }
 
   row(a, t) {
-    const mod = modOf(this.store?.machine ?? null, a.id);
+    const machine = this.store?.machine ?? null;
+    const mod = modOf(machine, a.id);
     const space = spaces().find((s) => s.active);
     const tabs = new Set(space?.tabs.map((x) => x.id) ?? []);
     const open = panes().find((p) => p.mod === mod && tabs.has(p.tab));
@@ -254,7 +246,7 @@ export default class Artifacts extends View {
     return h_flex().id(`art-${a.id}`).flex_none().px(8).py(7).gap(10).items_start().rounded(RADIUS.card).cursor_pointer()
       .when(shown, (el) => el.bg(t.selected))
       .hover((s) => s.bg(shown ? t.selected : t.hover))
-      .on_click((_e, cx) => this.open(a, (m) => this.inPlace(m, a), cx))
+      .on_click((_e, cx) => this.open(a, machine, cx))
       .child(h_flex().h(18).flex_none().items_center()
         .child(svg(ICON).size(14).flex_none().text_color(shown || open ? t.accent : t.dim)))
       .child(v_flex().flex_1().min_w(0).gap(2)
@@ -270,6 +262,12 @@ export default class Artifacts extends View {
   // (markup.js lays its layer over the artifact while shared "artifacts.markup" names it). The
   // full-screen viewer has the same (mods/chat-image/artifact-bar.js; keep the two in step).
   viewHead(cx) {
+    const ownerView = shared("artifacts.view");
+    if (ownerView && spaces().find((s) => s.active)?.id !== ownerView.space) {
+      // The sidebar is shared by spaces; a remembered proof must not follow a later selection.
+      cx.spawn(async () => backToList());
+      return h_flex().size_full().child("Artifacts");
+    }
     const t = theme();
     const v = shared("artifacts.view") ?? null;
     const titles = shared("artifacts.titles") ?? {};
@@ -302,7 +300,7 @@ export default class Artifacts extends View {
         try {
           const out = await cli(null, ["pull", v.id, ...(v.machine ? ["--from", v.machine] : []), ...(n ? ["--version", String(n)] : [])]);
           if (marking) setShared("artifacts.markup", null);
-          await showInSidebar({ mod: out.mod, base, id: v.id, title: v.title, version: n ?? latest, latest, machine: v.machine });
+          await showInSidebar({ mod: out.mod, base, id: v.id, title: v.title, version: n ?? latest, latest, machine: v.machine, space: v.space });
         } catch (e) {
           toast({ title: "That version didn't open", body: plainError(e), level: "error" });
         }

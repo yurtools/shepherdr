@@ -221,6 +221,38 @@ class LaunchSettings(unittest.TestCase):
         self.assertIn('read-only', calls[1])
         self.assertIn('CODEX_HOME=' + str(self.account), self.task['reviewers'][-1]['argv'])
 
+    def test_background_dispatch_has_fresh_session_owned_labels_and_worker_settings(self):
+        for feature in (None, 'feature-one'):
+            with self.subTest(feature=feature):
+                task = {**self.task, 'agents': [], **({'feature': feature} if feature else {})}
+                argv = S.worker_argv(self.s, task)
+                owner = {'state': 'live', 'labels': {'herdr.role': 'feature' if feature else 'coordinator',
+                         'herdr.coordinator.space': 'sp1', **({'herdr.feature': feature} if feature else {})}}
+                with mock.patch.object(L, 'run', return_value=SimpleNamespace(returncode=0, stdout='{"address":"new-worker"}', stderr='')) as run, \
+                     mock.patch.object(L, 'hc_json', return_value=owner), mock.patch.object(L, 'agent_name', return_value='test-worker'), \
+                     mock.patch.object(L, 'track'), mock.patch.object(L, 'own_codex_hooks', return_value={}), \
+                     mock.patch.object(L, 'trust_roots', return_value=[]):
+                    record = L.launch(self.s, task, argv, 'sp1', message='Build and report', parent='owner')
+                words = run.call_args.args[0]
+                self.assertIn('--bg', words)
+                self.assertIn('--outlive-parent', words)
+                self.assertEqual(words[words.index('--parent') + 1], 'owner')
+                self.assertIn('herdr.owner=owner', words)
+                self.assertIn('herdr.role=worker', words)
+                self.assertIn('herdr.task=TEST#1', words)
+                self.assertNotIn('--resume', words)
+                self.assertNotIn('resume', words)
+                self.assertEqual(record['argv'], argv)
+                self.assertIn('CODEX_HOME=' + str(self.account), record['argv'])
+                self.assertIn('space-model', record['argv'])
+                self.assertIn('model_reasoning_effort="low"', record['argv'])
+                self.assertEqual(record['parent'], 'owner')
+                if feature:
+                    self.assertIn('herdr.feature=' + feature, words)
+                    self.assertEqual(task['feature'], feature)
+                else:
+                    self.assertFalse(any(w.startswith('herdr.feature=') for w in words))
+
     def test_same_cli_reviewer_can_use_another_named_account_or_explicit_default(self):
         third = self.root / 'review account'
         third.mkdir()

@@ -18,6 +18,8 @@ const names = ['rows', 'rowPlan', 'spaced', 'spacedPlan', 'foldOf', 'key', 'gues
 export function historyHost(items: any[], sharedRead: (key: string) => any = () => null) {
   const jobs: any[] = [], stats = { items: 0, keys: 0, guesses: 0, lookups: 0, notifies: 0 };
   const dependencies: any = { ...view, ...geometry, ...preparation,
+    // Pending/reply rows belong to "now". Keep calendar arithmetic real and the fixture clock fixed.
+    Date: class extends Date { static now() { return 1795132800000; } },
     dayLabel: (at: number) => `Day ${Math.floor(at / 86400000)}`, dayOf: (at: number) => Math.floor(at / 86400000) * 86400000, pilotLine,
     askAt: () => 1772946000000, openCard: () => null, assistant: () => false,
     linkCtl: (id: string, label: string, fn: any) => ({id,label,fn}),

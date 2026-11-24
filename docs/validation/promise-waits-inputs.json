@@ -1,0 +1,13 @@
+{
+  "helper_sha256": "c11e60be4229865a854b737f6eae568feab2f3beeaa272de7db243476393890f",
+  "driver_sha256": "0d911103c15ed3edf7a593db38fb9d7b83336e176ec4aedfc992fbc7fff44568",
+  "harness_sha256": "de0c5af393fa12d9f3ebe5f12f699bba79787909a7b9ba8035cb085fc50b8cc7",
+  "engine_archive_sha256": "e20d75133c89a9884ec74a82e2655bcd88d3503f88d8ace1dd6d12e06dfbbfe0",
+  "engine_header_sha256": "e407f69c89f806dde1ad7f86801e4116d1bbe9e35c0941669acd3ca04278b517",
+  "engine_source_sha256": "ce9a95d3c011f255c1facb7d4361c71209e71ba58d84acd3281a755d0686a285",
+  "compiler": "gcc (GCC) 16.2.1 20260810",
+  "compile_returncode": 0,
+  "measurement_returncode": 0,
+  "samples": 25,
+  "plateau_tolerance_bytes": 4096
+}

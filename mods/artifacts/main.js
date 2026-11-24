@@ -1,3 +1,4 @@
+import { BoundedWait, TIMEOUT, DISPOSED } from "./bounded-wait.js";
 // Artifacts: recipes agents write to show the person something (a report, a board, a form; rarely
 // a custom panel). Each folder's list is ~/.herdr/artifacts/<slug>.json on the machine the folder is on,
 // changed only through the herdr-artifact CLI (bin/herdr-artifact), which agents use. This panel
@@ -85,18 +86,20 @@ export default class Artifacts extends View {
     this.watching = true;
     cx.spawn(async (cx) => {
       try {
-        let w = null;
+        const wait = this.artifactWait = new BoundedWait();
         for (;;) {
-          // At most 5 s per wait, so a reload's old build ends at its next cx use.
-          w ??= watchFolder(dirs().artifacts).then(() => true);
-          if (!(await Promise.race([w, cx.sleep(5000)]))) continue;
-          w = null;
+          const got = await wait.next(cx, dirs().artifacts, () => watchFolder(dirs().artifacts), 5000);
+          if (got === DISPOSED) return;
+          if (got === TIMEOUT) continue;
           if (!this.ctx?.machine) await this.load(cx);
         }
       } catch {}
+      finally { this.artifactWait?.dispose(); }
       this.watching = false;
     });
   }
+
+  close() { this.artifactWait?.dispose(); }
 
   async load(cx) {
     const s = this.store;

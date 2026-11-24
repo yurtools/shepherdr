@@ -53,13 +53,12 @@ test("missing original account/session information fails without a fallback acco
   expect(() => H.sessionArgv({ session: row.session })).toThrow();
   expect(() => H.sessionArgv({ ...row, session: "--last" })).toThrow();
 });
-test("resume opens the exact conversation in a new Chat without ending existing agents", async () => {
+test("resume opens the exact conversation in Terminal without ending existing agents", async () => {
   await H.openSavedSession({ space: "space", key: "key" });
   expect(calls.find(c => c[0] === "tab.new")[1]).toMatchObject({ space: "space", folder: "/project", name: "Saved chat" });
   expect(calls.find(c => c[0] === "tab.new")[1].argv).toContain("CODEX_HOME=/account-two");
-  expect(calls.find(c => c[0] === "pane.split")[1].direction).toBe("down");
-  expect(calls).toContainEqual(["terminal.park", { terminal: "t5" }]);
-  expect(calls).toContainEqual(["pane.focus", { pane: "new" }]);
+  expect(calls.some(c => c[0] === "pane.split" || c[0] === "terminal.park")).toBe(false);
+  expect(calls).toContainEqual(["pane.focus", { pane: "old" }]);
   expect(calls.some(c => /kill/.test(c[0]))).toBe(false);
 });
 test("an already running session focuses its existing chat instead of launching a duplicate", async () => {

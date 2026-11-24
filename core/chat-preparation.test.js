@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test';
-import { PrefixIndex, PreparedHistory, RecentIndex, sortPlan } from './chat-preparation.js';
+import { Preparation, PrefixIndex, PreparedHistory, RecentIndex, sortPlan } from './chat-preparation.js';
 import { resolveArtifacts, resolveArtifactPlan } from './chat-view.js';
 import { measureOrder } from './chat-layout.js';
 
@@ -34,6 +34,20 @@ test('settling selection matches the old rule without scanning any expired rows'
 });
 
 const finish = plan => { for (;;) { const step = plan.next(); if (step.done) return step.value; } };
+
+test('presentation generations cancel obsolete work while retaining the last complete snapshot', () => {
+  const work=new Preparation(),scope=['session'];
+  const plan=value=>function*(){yield;yield;return value;};
+  work.request(['wide'],[1],plan('displayed'),scope);while(work.busy)work.step(1);
+  work.request(['wide'],[2],plan('streaming'),scope);work.step(1);
+  const old=work.running;
+  work.request(['narrow'],[2],plan('resized'),scope);
+  expect(work.snapshot).toBe('displayed');expect(work.running).toBeNull();
+  expect(finish(old.iterator)).toBe('streaming');expect(work.snapshot).toBe('displayed');
+  while(work.busy)work.step(1);expect(work.snapshot).toBe('resized');
+  work.request(['narrow'],[2],plan('other'),['different session']);expect(work.snapshot).toBeNull();
+  work.close();expect(work.step(1)).toEqual({visits:0,changed:false});expect(work.busy).toBe(false);
+});
 
 test('artifact joins exclude an undated or nonfinite version even when it is the only candidate', () => {
   const at = 1772946000000, items = [{ kind: 'artifact', id: 'call', at }];

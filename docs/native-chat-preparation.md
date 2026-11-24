@@ -38,11 +38,34 @@ previous records and read offsets intact for retry.
 
 ## Invalidation and lifetimes
 
-Presentation changes invalidate the current snapshot immediately. Its inputs
-include route, conversation identity, width/zoom, Find, task/news/mention inputs,
-fold/open/result revisions and request-bound approval presentation. Native event
-callbacks check their snapshot and context again before acting or measuring.
-This includes an event delivered after invalidation but before the next draw.
+Conversation identity and presentation have different lifetimes. Changing the
+agent, log, route or project context discards the snapshot. Width/zoom, Find,
+task/news/mention inputs, fold/open/result revisions and request-bound approval
+changes cancel obsolete preparation but retain the last complete timeline until
+its replacement commits. Cold conversation opens still show the opening notice.
+
+Native action and measurement callbacks require the exact current snapshot and
+presentation, including between invalidation and the next draw. Retaining a card
+on screen does not let an old approval action run. Hover and scrolling remain
+available during preparation. A deferred virtual-list callback paints its captured
+rows even after a successor commits, satisfying the host's one-element-per-row
+contract; only the current presentation updates range/scroll estimates. Reset,
+close and genuine conversation changes also reject that old frame. Row view IDs
+use the captured layout generation and content revisions, not a later frame's.
+
+Quiet task and reach polls used to replace equal objects. Since presentation
+comparison used those identities, the next draw discarded the complete history
+and showed Opening again. A list callback deferred across that invalidation or a
+new snapshot returned an empty array for a nonempty requested range. The focused
+replay in `service/chat-flicker.test.ts` reproduces both failures in the actual
+native methods/callback. It establishes these JavaScript failure paths, not the
+frequency of their interleaving in the live native scheduler.
+
+Task/reach loaders now retain equivalent inputs, comparing their JSON data
+outside render, and reject replies from an abandoned agent/read generation.
+Task progress still updates news/cards; retained linked Markdown depends on task
+references, folders, titles and archive state rather than progress. Renaming a
+task still updates its links. No poll interval or preparation budget changed.
 
 Host `shared()` reads marshal fresh objects. Context comparison therefore uses
 scalar signatures for this conversation's relevant screen cards and machine
@@ -71,6 +94,13 @@ news/artifact joins, cards, action bands, pending and replied messages.
 `service/chat-read-transaction.test.ts` covers read failures, stale reads and
 outbox changes during reconstruction. `core/chat-preparation.test.js` covers
 fractional/nonfinite geometry inputs, selection parity and indexed settling/expiry.
+`service/chat-flicker.test.ts` covers long synthetic history, equivalent real poll
+results, retained timelines during resize/stream/status changes, deferred frame
+cardinality, stale actions/generations, scroll-state preservation and visible
+preparation errors. These tests use inert host handles: they cannot prove native
+layout, paint, pixel anchoring or scheduling. The web chat uses keyed React rows
+and does not consume the native `Preparation` lifecycle; native-only fixes do not
+imply a web behavior change.
 
 Private conversation replays must use the verified agent's authoritative FIND
 result. Keep raw logs, extracted items and full-window captures outside Git and

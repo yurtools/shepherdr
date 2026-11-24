@@ -24,7 +24,7 @@ function host(){
   scanChatLink:(scan:any,limit:number)=>{stats.scans++;const n=links.scanChatLink(scan,limit);stats.chars+=n;return n;},
  };
  const helpers=source.slice(source.indexOf('const wrapLines ='),source.indexOf('const ICONS ='))+'\n'+source.match(/^const typed = .*$/m)![0];
- const methods=['loadSpaceTasks','taskSig','key','findMark','mentionsIn','mentionableTasks','rowBare','clearHistory','reset','close','linkedMarkdownStamp','linkedMarkdownInputs','linkedMarkdownCurrent','retireLinkedMarkdown','drainLinkedMarkdown','disposeLinkedMarkdown','reconcileLinkedMarkdown','clearLinkedMarkdown','prepareLinkedMarkdown','scheduleLinkedMarkdown','stepLinkedMarkdown','linkedMarkdownView'].map(method).join('\n');
+ const methods=['loadTasks','loadSpaceTasks','taskSig','key','findMark','mentionsIn','mentionableTasks','rowBare','clearHistory','reset','close','linkedMarkdownStamp','linkedMarkdownInputs','linkedMarkdownCurrent','retireLinkedMarkdown','drainLinkedMarkdown','disposeLinkedMarkdown','reconcileLinkedMarkdown','clearLinkedMarkdown','prepareLinkedMarkdown','scheduleLinkedMarkdown','stepLinkedMarkdown','linkedMarkdownView'].map(method).join('\n');
  const C=new Function(...Object.keys(dependencies),`${helpers};return class {${methods}}`)(...Object.values(dependencies));
  const v:any=new C();
  Object.assign(v,{measureGen:1,width:1200,zoom:1,columnWidth:1000,opened:new Set(),unfolded:new Set(),rowRevisions:new Map(),results:new Map(),views:{},query:'',route:'pane',end:0,pending:[],replied:[]});
@@ -77,6 +77,19 @@ test('fresh arrays and rebuilt Conversation objects reuse positive and negative 
  const before={...h.stats},view=h.lookup(rows[0]);
  for(let i=0;i<50;i++){h.v.conv={items:[]};h.prepare(rows.map(r=>({...r})));}
  expect(h.jobs.length).toBe(0);expect(h.stats).toEqual(before);expect(h.lookup(rows[0])).toBe(view);
+});
+
+test('real task status polls keep stable linked views mounted while task titles still refresh',async()=>{
+ for(const loader of ['loadTasks','loadSpaceTasks']){
+  const h=host(),row=md('one','[doc](/repo/a.md) [@TEST-1](task:TEST-1)');h.v.t={cwd:'/repo'};
+  const payload=(title:string,status:string)=>loader==='loadTasks'?{folder:'/repo',tasks:[{ref:'TEST-1',title,status}]}:[{folder:'/repo',tasks:[{ref:'TEST-1',title,status}]}];
+  h.reload(payload('Task title','working'));await h.v[loader]();h.prepare([row]);h.drain();
+  const kept=h.lookup(row),before={...h.stats};expect(kept).not.toBeNull();
+  h.reload(payload('Task title','ready'));await h.v[loader]();h.prepare([row]);
+  expect(h.lookup(row)).toBe(kept);expect(h.jobs).toHaveLength(0);expect(h.stats).toEqual(before);
+  h.reload(payload('Renamed task','ready'));await h.v[loader]();h.prepare([row]);expect(h.lookup(row)).toBeNull();h.drain();
+  expect(h.lookup(row).props.text).toContain('Renamed task');expect(kept.released).toBe(1);
+ }
 });
 
 test('same-length href edits and linked/plain transitions replace only the affected row',()=>{

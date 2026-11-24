@@ -97,3 +97,28 @@ test('late task and reach polls cannot publish into another agent context', asyn
     expect(h.v.tasks).toBeUndefined(); expect(h.v.reach).toBeUndefined(); expect(h.v.spaceTasks).toBeUndefined();
   }
 });
+
+test('equivalent real poll results leave a long prepared timeline and its measurements untouched', async () => {
+  const h=historyHost(items()),p=polling();
+  h.v.loadTasks=p.v.loadTasks;h.v.loadReach=p.v.loadReach;
+  await h.v.loadTasks();await h.v.loadReach();h.request();h.drain();
+  const plan=h.v.history.snapshot,stats={...h.stats},key=plan.keys[20];
+  plan.measure(plan.rows[20].id,key,240,1);
+  for(let n=0;n<12;n++){
+    await h.v.loadTasks();await h.v.loadReach();h.request();
+    expect(h.v.historyCurrent(plan)).toBe(true);expect(h.v.history.snapshot===plan).toBe(true);
+  }
+  expect(h.stats).toEqual(stats);expect(h.jobs).toHaveLength(0);expect(plan.sizes[20]).toBe(240);
+});
+
+test('measurement recovery starts a new layout generation, and preparation errors preserve readable rows', () => {
+  const h=historyHost(items());h.request();h.drain();const displayed=h.v.history.snapshot;
+  h.v.measureGen=1;expect(h.v.historyCurrent(displayed)).toBe(false);expect(h.request()===displayed).toBe(true);
+  h.drain();expect(h.v.history.snapshot.generation).toBe(1);
+  const stable=h.v.history.snapshot,original=h.v.rowPlan;
+  h.v.rowPlan=function*(){yield;throw Error('synthetic preparation failure');};h.v.width--;
+  expect(h.request()===stable).toBe(true);h.drain();
+  expect(h.v.error).toBe('synthetic preparation failure');expect(h.v.rows()).toBe(stable.rows);
+  expect(h.v.historyCurrent(stable)).toBe(false);
+  h.v.rowPlan=original;h.request();h.drain();expect(h.v.historyCurrent(h.v.history.snapshot)).toBe(true);
+});

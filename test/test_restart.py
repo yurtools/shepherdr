@@ -150,6 +150,16 @@ class NoTab(unittest.TestCase):
             self.assertIn(label, args)
         self.assertFalse(any(a.startswith("herdr.tab=") for a in args), "no empty tab label")
 
+    def test_a_feature_restart_keeps_its_durable_owner_labels(self):
+        labels = {"herdr.role": "feature", "herdr.feature": "feature-one", "herdr.coordinator.space": "sp1",
+                  "herdr.chat.slot": "feature-feature-one", "herdr.chat.origin": "slot:feature-feature-one",
+                  "herdr.chat": "chat-pane"}
+        r, args = self.restart(labels)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        for key, value in labels.items():
+            self.assertIn(f"{key}={value}", args)
+        self.assertNotIn("herdr.role=coordinator", args)
+
     def test_nowhere_to_go_says_why(self):
         r, args = self.restart({"herdr.role": "coordinator"})
         self.assertEqual(r.returncode, 1)

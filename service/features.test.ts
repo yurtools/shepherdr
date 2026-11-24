@@ -5,7 +5,7 @@ mock.module('gpui-kit',()=>fakeGpuiKit());mock.module('gpui-base',()=>fakeGpuiBa
 let calls:any[],ps:any[],ts:any[],ss:any[],rows:any[],state:Map<string,any>;
 mock.module('herdr',()=>fakeHerdr({appHome:()=>'/app',home:()=>'/person',spaces:()=>ss,panes:()=>ps,terminals:()=>ts,
  shared:(k:string)=>state.get(k),setShared:(k:string,v:any)=>state.set(k,v),run:(cmd:string,args:any)=>calls.push([cmd,args]),openOverlay:(spec:any)=>calls.push(['overlay',spec]),
- hc:async(args:any)=>{calls.push(['hc',args]);return {code:0,stdout:JSON.stringify(args[0]==='run'?{address:'t-new',first_message:{sent:true}}:{})}},
+ hc:async(args:any)=>{calls.push(['hc',args]);return {code:0,stdout:JSON.stringify(args[0]==='run'?{address:'t-new',first_message:{sent:true}}:args[0]==='ls'?{terminals:ts}:args[0]==='get'?ts.find(t=>t.address===args[1])??{}:{})}},
  exec:async(bin:string,args:string[])=>{calls.push([bin,args]);if(args[1]==='feature-update'){const p=JSON.parse(args[2]);rows=rows.map(r=>r.id===p.id?{...r,...p}:r);return {code:0,stdout:JSON.stringify(rows.find(r=>r.id===p.id))};}return {code:0,stdout:bin==='herdr-app'?'{"tab":"feature-tab","pane":"feature-pane"}':JSON.stringify({features:rows}),stderr:''};}}));
 const {openFeature,featureSettings,startFeature,watchFeatures}=await import('../mods/workspace-launchers/features.js');
 beforeEach(()=>{calls=[];ps=[];ts=[];ss=[{id:'space',tabs:[]}];rows=[{...record}];state=new Map();});
@@ -19,14 +19,14 @@ test('a feature opens with its persistent identity, original account and resumab
  expect(state.get('coordinator.slots')['feature-stable-feature']).toMatchObject({feature:'stable-feature',pane:'feature-pane'});
 });
 test('clicking a running feature focuses its existing view without launching a duplicate',async()=>{
- ts=[{address:'t-feature',state:'live',program:{agent:true},labels:{'herdr.feature':'stable-feature','herdr.role':'feature','herdr.chat':'p-feature'}}];
+ ts=[{address:'t-feature',state:'live',program:{agent:true},labels:{'herdr.feature':'stable-feature','herdr.role':'feature','herdr.coordinator.space':'space','herdr.chat':'p-feature'}}];
  ps=[{pane:'p-feature',mod:'chat',tab:'old-tab'}];ss[0].tabs=[{id:'old-tab'}];
  await openFeature(record);expect(calls.some(c=>c[0]==='herdr-app')).toBe(false);expect(calls).toContainEqual(['pane.focus',{pane:'p-feature'}]);
  expect(calls).toContainEqual(['tab.rename',{id:'old-tab',name:record.name}]);
 });
 test('a closed view reattaches the same live Feature Assistant',async()=>{
- ts=[{address:'t-feature',state:'live',program:{agent:true},labels:{'herdr.feature':'stable-feature','herdr.role':'feature'}}];
- await openFeature(record);expect(calls.find(c=>c[0]==='hc')[1]).toContain('t-feature');expect(calls.find(c=>c[0]==='hc')[1]).toContain('herdr.chat=');
+ ts=[{address:'t-feature',state:'live',program:{agent:true},labels:{'herdr.feature':'stable-feature','herdr.role':'feature','herdr.coordinator.space':'space'}}];
+ await openFeature(record);expect(calls.find(c=>c[0]==='hc'&&c[1][0]==='label')[1]).toContain('t-feature');expect(calls.find(c=>c[0]==='hc'&&c[1][0]==='label')[1]).toContain('herdr.chat=');
 });
 test('a stopped feature resumes in its existing pane rather than creating a second tab',async()=>{
  ps=[{pane:'old-pane',mod:'chat',tab:'old-tab'}];ss[0].tabs=[{id:'old-tab',name:'Codex'}];

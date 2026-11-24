@@ -25,6 +25,18 @@ export function chatPane(k) {
 
 // Feature names belong to records, never to a terminal's title or a saved tab/pane address.
 export const isFeatureAssistant = (k) => k?.state === "live" && k.labels?.["herdr.role"] === "feature" && Boolean(k.labels?.["herdr.feature"]) && !k.labels?.["herdr.task"];
+// Ownership survives a reboot even when the agent does not: a kept terminal may be
+// restored as a shell with all its old labels. Never treat that as a running Assistant.
+export function featureOwner(k, record) {
+  return isFeatureAssistant(k) && k.labels["herdr.feature"] === record?.id &&
+    (k.labels["herdr.coordinator.space"] || k.labels["herdr.space"]) === record.space && !machineOf(k.address);
+}
+export function runningFeatureAssistant(k, record) {
+  if (!featureOwner(k, record)) return false;
+  const apps = ["codex", "claude", "claude-code"];
+  if (k.foreground?.name) return apps.includes(k.foreground.name);
+  return apps.includes(k.status?.app ?? k.report?.app ?? k.agent) || k.program?.agent === true;
+}
 export function featureViews({ features = [], spaces = [], panes = [], terminals = [], slots = {}, companions = {} }) {
   const records = new Map(features.map(r => [r.id, r]));
   const locations = new Map(spaces.filter(s => !s.machine).flatMap(s => s.tabs.map(t => [t.id, s.id])));

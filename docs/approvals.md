@@ -318,8 +318,12 @@ whole-chain exact payload to bypass component checks.
 
 Ask Assistant reviews the complete request independently of whether it can become
 a command-prefix rule. Workers belonging to a named feature route that review to
-its Feature Assistant. An expired or unavailable reviewer leaves the decision with
-the person; approval never executes the requested operation as the reviewer.
+its Feature Assistant. Both Advice and Ask Assistant find the running owner by
+the original space and durable feature ID if its terminal address has changed.
+A restored shell is not an Assistant. Neither button starts a new agent or sends
+the request to another feature; reopen the feature to resume its conversation
+before retrying. An expired or unavailable reviewer leaves the decision with the
+person; approval never executes the requested operation as the reviewer.
 
 ## History and future rules
 

@@ -49,3 +49,12 @@ test("no page on screen: nothing to show it on", () => {
 test("no page on screen, another machine's ask: this window opens it from there, in a tab", () => {
   expect(windowArgs({ id: "a1", at: NOW, artifact: "how-to-group-tasks-fa0a", machine: "vm" })).toEqual(["open", "how-to-group-tasks-fa0a", "--from", "vm", "--tab", "--json"]);
 });
+
+test("an explicit source machine survives requests from another terminal", () => {
+  expect(showAsk(term('t1', { id: 'remote', at: NOW, artifact: 'proof-1234', machine: 'vm' }))?.machine).toBe('vm');
+  expect(showAsk(term('t1', { id: 'bad', at: NOW, artifact: 'proof-1234', machine: '../vm' }))).toBeNull();
+  const live = new Live({ on() {} } as any, { on() {} } as any, () => null, '0');
+  const p = page(NOW); (live as any).pages.add(p.ws);
+  live.show('proof-1234', 'vm');
+  expect(JSON.parse(p.sent[0])).toEqual({ type: 'show', artifact: 'proof-1234', machine: 'vm' });
+});

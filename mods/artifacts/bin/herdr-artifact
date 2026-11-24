@@ -243,7 +243,9 @@ def me():
             row = {}
         key = ((row if isinstance(row, dict) else {}).get("labels") or {}).get("herdr.task")
     key = key or os.environ.get("HERDR_BROWSER_TASK") or None
-    return {"terminal": t, "task": task_ref(key)}
+    labels = (row.get("labels") or {}) if t and isinstance(row, dict) else {}
+    return {"terminal": t, "task": task_ref(key), "taskKey": key,
+            "space": labels.get("herdr.task.space") or labels.get("herdr.coordinator.space") or labels.get("herdr.space")}
 
 
 def task_ref(key):
@@ -936,8 +938,41 @@ def review(specs):
 
 # ---- commands ----------------------------------------------------------------------------
 
-def public(a):
-    return {k: a.get(k) for k in ("id", "title", "version", "folder", "publisher", "task", "at", "created", "versions", "files")}
+def ownership_tasks():
+    """One read of the task lists for a show/list operation, including old completed proofs."""
+    out = []
+    tdir = SHEP(".herdr/tasks")
+    for name in sorted(os.listdir(tdir)) if os.path.isdir(tdir) else []:
+        if not name.endswith(".json"):
+            continue
+        try:
+            with open(os.path.join(tdir, name)) as f:
+                d = json.load(f)
+        except (OSError, ValueError):
+            continue
+        for t in d.get("tasks") or []:
+            ref = f"{d.get('prefix')}-{t.get('id')}" if d.get("prefix") else f"#{t.get('id')}"
+            proof = t.get("proof")
+            out.append(dict(key=f"{name[:-5]}#{t.get('id')}", ref=ref, folder=d.get("folder"),
+                            proof=proof.get("id") if isinstance(proof, dict) else proof, space=t.get("space")))
+    return out
+
+
+def owner_space(a, tasks=None):
+    """Recover old proofs from durable task records. Never guess from the artifact's folder alone."""
+    owners = set()
+    for t in ownership_tasks() if tasks is None else tasks:
+        named = t["key"] == a["taskKey"] if a.get("taskKey") else (
+            a.get("task") and t["folder"] == a.get("folder") and t["ref"].upper() == a["task"].upper())
+        if t["proof"] == a.get("id") or named:
+            owners.add(t["space"])
+    return next(iter(owners)) if len(owners) == 1 else None if owners else a.get("space")
+
+
+def public(a, tasks=None):
+    out = {k: a.get(k) for k in ("id", "title", "version", "folder", "publisher", "task", "taskKey", "at", "created", "versions", "files")}
+    out["space"] = owner_space(a, tasks)
+    return out
 
 
 def cmd_publish(o):
@@ -1008,6 +1043,10 @@ def cmd_publish(o):
             if "kind" not in x and version_kind(art["id"], x["v"]):
                 x["kind"] = version_kind(art["id"], x["v"])
         # a conversion keeps the artifact's time and place in the list (only its version is new)
+        # Keep the original owner when another terminal updates the artifact.
+        if fresh:
+            art["taskKey"] = who.get("taskKey") if task == who.get("task") else None
+            art["space"] = owner_space(dict(art, task=task, folder=loc["folder"])) if task else who.get("space")
         art.update(title=title, version=v, folder=loc["folder"], publisher=publisher, task=task, at=art.get("at", at) if as_maker else at, files=files)
         art["versions"].append({"v": v, "at": at, "publisher": publisher, "kind": "custom" if custom else "recipe",
                                 **({"note": o.note} if o.note else {})})
@@ -1090,6 +1129,7 @@ def prune_versions(art, base=None):
 
 
 def cmd_list(o):
+    tasks = ownership_tasks()
     if o.all:
         lists = []
         for f in sorted(os.listdir(STORE)) if os.path.isdir(STORE) else []:
@@ -1100,12 +1140,12 @@ def cmd_list(o):
                 except (OSError, ValueError):
                     pass
         arts = sorted((a for d in lists for a in d.get("artifacts") or []), key=lambda a: -(a.get("at") or 0))
-        out = {"artifacts": [public(a) for a in arts]}
+        out = {"artifacts": [public(a, tasks) for a in arts]}
     else:
         loc = locate(o.folder)
         with Store(loc, write=False) as s:
             out = {"folder": loc["folder"], "name": loc["name"], "store": s.path, "slug": s.slug,
-                   "artifacts": [public(a) for a in s.data["artifacts"]]}
+                   "artifacts": [public(a, tasks) for a in s.data["artifacts"]]}
     if o.json:
         print(json.dumps(out))
         return 0
@@ -1881,9 +1921,9 @@ def web_base():
     return None
 
 
-def web_link(aid):
+def web_link(aid, machine=None):
     base = web_base()
-    return f"{base}?artifact={urllib.parse.quote(aid, safe='')}" if base else None
+    return f"{base}?artifact={urllib.parse.quote(f'{machine}/{aid}' if machine else aid, safe='')}" if base else None
 
 
 NO_LINK = ("No web link is known here yet: Shepherdr's web app isn't served, or the machine serving it hasn't "
@@ -1898,20 +1938,20 @@ def known(aid, machine):
 
 def cmd_link(o):
     known(o.id, o.machine)
-    link = web_link(o.id)
+    link = web_link(o.id, o.machine)
     if not link:
         raise Fail(NO_LINK)
     print(json.dumps({"id": o.id, "link": link}) if o.json else link)
     return 0
 
 
-def ask_screen(aid):
+def ask_screen(aid, machine=None):
     """Asks the web app's page the person uses to open it: the label herdr.show on this agent's own terminal.
     True once asked (whether a page is on screen to show it, only the serving machine knows)."""
     me_ = os.environ.get("HC_TERMINAL_ID")
     if not me_ or not shutil.which("hc"):
         return False
-    ask = {"id": secrets.token_hex(4), "at": now(), "artifact": aid}
+    ask = {"id": secrets.token_hex(4), "at": now(), "artifact": aid, "machine": machine}
     return run(["hc", "label", me_, f"{SHOW}={json.dumps(ask, separators=(',', ':'))}"]).returncode == 0
 
 
@@ -1920,11 +1960,41 @@ def open_window(o):
     Fails when the window refuses it."""
     if not shutil.which("herdr-app"):
         return None
-    mod = pull(o.id, o.machine) if o.machine else local_mod(o.id)
-    if o.tab:
-        args = ["herdr-app", "do", "tab.new", "--mod", mod]
+    # Fetch and pull first, then select the recorded owner immediately before opening.
+    if o.machine:
+        r = run([sys.executable, os.path.realpath(__file__), "--on", o.machine, "show", o.id, "--json"])
+        if r.returncode != 0:
+            raise Fail("Couldn't read the artifact's owner.")
+        a = json.loads(r.stdout.strip().split("\n")[-1])
     else:
-        args = ["herdr-app", "do", "pane.split", "--direction", o.direction, "--mod", mod] + (["--pane", o.beside] if o.beside else [])
+        with Store(find_anywhere(o.id), write=False) as s:
+            a = public(s.find(o.id))
+    space = a.get("space")
+    if not space:
+        raise Fail("This artifact has no recorded owning space.")
+    owner = f"{o.machine}/{space}" if o.machine and not space.startswith(o.machine + "/") else space
+    mod = pull(o.id, o.machine) if o.machine else local_mod(o.id)
+    # Resolve the owner's panes after retrieval, never the focused pane in another space.
+    try:
+        listing = json.loads(run(["herdr-app", "ls"]).stdout)
+        sp = next((x for x in listing.get("spaces", []) if x.get("id") == owner
+                   and (x.get("machine") or None) == (o.machine or None)), None)
+    except (ValueError, AttributeError):
+        sp = None
+    if not sp:
+        raise Fail("The artifact's owning space is unavailable.")
+    targets = [x.get("pane") for t in sp.get("tabs", []) for x in t.get("terminals", []) if x.get("pane")]
+    if o.beside and o.beside not in targets:
+        raise Fail("The requested pane is not in the artifact's owning space.")
+    r = run(["herdr-app", "do", "space.select", "--id", owner])
+    if r.returncode != 0:
+        raise Fail("The artifact's owning space is unavailable.")
+    chosen = next((t for t in sp.get("tabs", []) if t.get("active")), None)
+    pane = o.beside or next((x.get("pane") for x in (chosen or {}).get("terminals", []) if x.get("pane")), None)
+    if o.tab or not pane:
+        args = ["herdr-app", "do", "tab.new", "--space", owner, "--mod", mod]
+    else:
+        args = ["herdr-app", "do", "pane.split", "--direction", o.direction, "--mod", mod, "--pane", pane]
     r = run(args)
     if r.returncode != 0:
         raise Fail(r.stdout.strip() or r.stderr.strip() or "herdr-app couldn't open it")
@@ -1935,8 +2005,8 @@ def cmd_open(o):
     """Shows an artifact to the person wherever they are: the web app's page they use opens it, the Herdr window here
     too (when there is one), and its link is printed, which always works."""
     known(o.id, o.machine)
-    link = web_link(o.id)
-    screen = ask_screen(o.id)
+    link = web_link(o.id, o.machine)
+    screen = ask_screen(o.id, o.machine)
     try:
         window, why = open_window(o), None
     except Fail as e:

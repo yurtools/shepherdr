@@ -1,3 +1,4 @@
+import { artifactChatMachine } from "@client/artifact-route.ts"
 // Chat: every agent, coordinator or reviewer, gets the same chat. Replies render markdown; question cards answer
 // a CLI's own menus; what you send shows at once and goes in at once, even mid-turn; only while the CLI shows a menu
 // or is starting does it wait, and the bubble says why.
@@ -1419,7 +1420,9 @@ const noteBox = clsx('min-h-10 w-full resize-none rounded-row bg-transparent px-
 const CHECKS: Record<MergeEvidence['checks']['state'], string> = { passed: 'text-ready-fg', failed: 'text-need-fg', running: 'text-work-fg', none: 'text-fg2', unknown: 'text-need-fg' }
 
 /** a merge card: what the human approves, and that this card is how */
-function Evidence({ e, open }: { e: MergeEvidence; open: boolean }) {
+function Evidence({ e, open, chat }: { e: MergeEvidence; open: boolean; chat: string }) {
+  const snap = useSnap()
+  const machine = snap ? artifactChatMachine(snap, chat) : undefined
   const label = 'shrink-0 w-14 text-fg2'
   return (
     <div data-evidence className="flex flex-col gap-1 text-[0.875rem] phone:text-[0.9375rem]">
@@ -1435,7 +1438,7 @@ function Evidence({ e, open }: { e: MergeEvidence; open: boolean }) {
         </details>
       ) : <div className="flex gap-2"><span className={label}>Files</span><span className="text-need-fg">Couldn't read the changes</span></div>}
       <div className="flex gap-2"><span className={label}>Checks</span><span data-evidence-checks={e.checks.state} className={CHECKS[e.checks.state]}>{e.checks.text}</span></div>
-      <div className="flex gap-2"><span className={label}>Proof</span>{e.proof ? <LinkButton onClick={() => openArtifact(e.proof!.id)}>{e.proof.title}</LinkButton> : <span className="text-fg2">No proof artifact</span>}</div>
+      <div className="flex gap-2"><span className={label}>Proof</span>{e.proof ? <LinkButton onClick={() => openArtifact(e.proof!.id, undefined, machine)}>{e.proof.title}</LinkButton> : <span className="text-fg2">No proof artifact</span>}</div>
       {open ? <p data-evidence-approve className="mt-1 text-[0.8125rem] text-fg2">Only this card approves the merge: pick Merge, then Send. A yes in the chat doesn't count.</p> : null}
     </div>
   )
@@ -1617,7 +1620,7 @@ function OneQuestionCard({ q, chat, msg, from, source, steady }: { q: Question; 
       {q.approval && !sent ? <PermissionStatus status={q.approval} /> : null}
       {q.screen ? <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-words text-xs text-fg2">{q.press ? q.screen.split(/(https?:\/\/\S+)/).map((part, j) => j % 2 ? <a key={j} href={part} target="_blank" rel="noreferrer" className="text-accent">{part}</a> : part) : q.screen}</pre> : null}
       {q.terminal && !sent && has('terminal') ? <button type="button" className="text-left text-accent" onClick={() => openTerminal(chat.key)}>{WORDS.openTerminal}</button> : null}
-      {q.evidence ? <Evidence e={q.evidence} open={!sent} /> : null}
+      {q.evidence ? <Evidence e={q.evidence} open={!sent} chat={q.by?.chat ?? chat.key} /> : null}
       {q.plan ? <div data-plan className="max-h-96 overflow-auto"><Markdown text={q.plan} /></div> : null}
       {q.steps ? (
         <ol className="flex list-decimal flex-col gap-0.5 pl-5">

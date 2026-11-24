@@ -1,3 +1,4 @@
+import { findArtifact } from "@core/artifact-owner.js"
 // The Accept card (Shepherdr 3's mods/accept-card), in 2.1's dialog: what the person approves before a Ready task
 // merges. Its summary, then Changes (commits and files), Checks, Proof and folded Details, all from
 // `herdr-task show --evidence`; Accept runs `herdr-task accept`, which merges first when there is something to merge.
@@ -106,7 +107,7 @@ function InlineProof({ art }: { art: Artifact }) {
       <div className="flex min-w-0 items-center gap-2">
         <h3 className="shrink-0 text-[0.8125rem] font-medium text-fg3 phone:text-sm">{A.ACCEPT.proof}</h3>
         <p className="min-w-0 flex-1 truncate text-[0.8125rem] text-fg2 phone:text-sm">{A.proofTitle(art.title).replace(/\s*·\s*Proof$/i, '')}</p>
-        <button type="button" onClick={() => openArtifact(art.id)} className="press-dim -my-1 flex h-7 shrink-0 items-center gap-1 rounded-full px-2 text-xs text-fg3 hover:bg-hover hover:text-fg phone:h-9 phone:text-[0.8125rem]">
+        <button type="button" onClick={() => openArtifact(art.id, undefined, art.machine ?? null)} className="press-dim -my-1 flex h-7 shrink-0 items-center gap-1 rounded-full px-2 text-xs text-fg3 hover:bg-hover hover:text-fg phone:h-9 phone:text-[0.8125rem]">
           {A.ACCEPT.open}
           <OpenIcon className="size-3.5 shrink-0" />
         </button>
@@ -121,9 +122,9 @@ function InlineProof({ art }: { art: Artifact }) {
 }
 
 // An artifact (its proof, or another it published) over the card, in the viewer; closing it comes back here
-function ArtifactRow({ a }: { a: { id: string; title: string } }) {
+function ArtifactRow({ a, machine }: { a: { id: string; title: string }; machine: string | null }) {
   return (
-    <button type="button" onClick={() => openArtifact(a.id)} className="press-dim flex h-9 w-full items-center gap-2 rounded-[var(--row-radius)] bg-well px-2.5 text-left shadow-soft hover:bg-hover phone:h-11">
+    <button type="button" onClick={() => openArtifact(a.id, undefined, machine)} className="press-dim flex h-9 w-full items-center gap-2 rounded-[var(--row-radius)] bg-well px-2.5 text-left shadow-soft hover:bg-hover phone:h-11">
       <span className="min-w-0 flex-1 truncate">{A.proofTitle(a.title)}</span>
       <span className="shrink-0 text-xs text-fg3">{A.ACCEPT.open}</span>
       <OpenIcon className="size-3.5 shrink-0 text-fg3" />
@@ -134,8 +135,11 @@ function ArtifactRow({ a }: { a: { id: string; title: string } }) {
 function IndividualAcceptCard() {
   const task = useOpen()
   const named = useStore((s) => (task && s.snap ? taskOf(s.snap, task)?.name : undefined))
+  const ownerTask = useStore((s) => task && s.snap ? taskOf(s.snap, task) : undefined)
+  const machine = ownerTask?.reviewMachine ?? null
   const artifacts = useStore((s) => s.snap?.artifacts)
-  const [t, setT] = useState<Shown | null>(null)
+  const [loaded, setT] = useState<{ task: string; value: Shown } | null>(null)
+  const t = loaded?.task === task ? loaded.value : null
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const locked = useRef(false)
@@ -145,7 +149,7 @@ function IndividualAcceptCard() {
     setT(null); setError(null); setBusy(false); setDetails(false)
     if (!task) return
     let gone = false
-    act({ type: 'evidence', task }).then((x) => !gone && setT(x as Shown), (e) => !gone && setError(String(e?.message ?? e)))
+    act({ type: 'evidence', task }).then((x) => !gone && setT({ task, value: x as Shown }), (e) => !gone && setError(String(e?.message ?? e)))
     return () => { gone = true }
   }, [task])
 
@@ -153,7 +157,7 @@ function IndividualAcceptCard() {
   const ready = t?.state === 'ready' && (!t.status || ['ready', 'deferred'].includes(t.status))
   const e = t?.evidence ?? {}
   // its proof as the app knows it, to draw in the card; one it doesn't know (yet) stays a row that opens it
-  const proofArt = e.proof ? artifacts?.find((a) => a.id === e.proof!.id) : undefined
+  const proofArt = e.proof ? findArtifact(artifacts, e.proof.id, machine) : undefined
 
   const accept = async () => {
     if (!ready || busy || locked.current || !e.decision_token || e.decision_error) return
@@ -169,7 +173,7 @@ function IndividualAcceptCard() {
       setError(String((err as Error)?.message ?? err))
       // accepted (or changed) from elsewhere meanwhile: show where it is now, not the refusal
       const now = (await act({ type: 'evidence', task }).catch(() => null)) as Shown | null
-      if (now && now.state !== 'ready') { setT(now); setError(null) }
+      if (now && now.state !== 'ready') { setT({ task, value: now }); setError(null) }
       setBusy(false)
     } finally { locked.current = false }
   }
@@ -199,12 +203,12 @@ function IndividualAcceptCard() {
       </Section>
       {proofArt ? null : (
         <Section label={A.ACCEPT.proof}>
-          {e.proof ? <ArtifactRow a={e.proof} /> : <p className="text-fg3">{A.ACCEPT.noProof}</p>}
+          {e.proof ? <ArtifactRow machine={machine} a={e.proof} /> : <p className="text-fg3">{A.ACCEPT.noProof}</p>}
         </Section>
       )}
       {e.artifacts?.length ? (
         <Section label={A.ACCEPT.artifacts}>
-          <div className="flex flex-col gap-1.5">{e.artifacts.map((a) => <ArtifactRow key={a.id} a={a} />)}</div>
+          <div className="flex flex-col gap-1.5">{e.artifacts.map((a) => <ArtifactRow key={a.id} machine={machine} a={a} />)}</div>
         </Section>
       ) : null}
       {w.details ? (

@@ -2893,7 +2893,7 @@ export default class Chat extends View {
       if (nav.kind === "tasks" && nav.search) setShared("tasks.searchreq", { q: String(nav.search), at });
       return { ok: true };
     }
-    if (nav.kind === "artifact") { openViewer({ id: nav.artifact, title: nav.title, version: nav.v, latest: nav.v, machine: nav.machine ?? null }); return { ok: true }; }
+    if (nav.kind === "artifact") { openViewer({ id: nav.artifact, title: nav.title, version: nav.v, machine: nav.machine ?? null }); return { ok: true }; }
     if (nav.kind === "settings") { run("app.settings", nav.section ? { section: String(nav.section).toLowerCase() } : {}); return { ok: true }; }
     return no("the window can't show that");
   }

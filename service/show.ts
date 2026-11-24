@@ -18,8 +18,9 @@ export function showAsk(t: { address?: string; labels?: Record<string, string> |
   let a: any = null;
   try { a = JSON.parse(t?.labels?.[SHOW] ?? "null"); } catch { return null; }
   if (!a || typeof a.id !== "string" || !a.id || typeof a.artifact !== "string" || !/^\w[\w.-]{0,119}$/.test(a.artifact)) return null;
+  if (a.machine != null && (typeof a.machine !== "string" || !/^[\w.-]{1,64}$/.test(a.machine))) return null;
   const cut = t?.address?.indexOf("/") ?? -1;
-  return { id: a.id.slice(0, 64), at: Number(a.at) || 0, artifact: a.artifact, machine: cut > 0 ? t!.address!.slice(0, cut) : null };
+  return { id: a.id.slice(0, 64), at: Number(a.at) || 0, artifact: a.artifact, machine: typeof a.machine === "string" && /^[\w.-]{1,64}$/.test(a.machine) ? a.machine : cut > 0 ? t!.address!.slice(0, cut) : null };
 }
 
 /** Follows the terminals' asks: each new, fresh one once (an ask already set when it starts is never shown). */

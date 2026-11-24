@@ -102,11 +102,11 @@ export class Live {
 
   /** Shows an artifact where the person is (herdr-artifact open, service/show.ts): the page on screen they used
    *  last opens it. False: no page is on screen. */
-  show(artifact: string) {
+  show(artifact: string, machine?: string | null) {
     let best: WS | null = null;
     for (const ws of this.pages) if (ws.data.visible !== false && ws.readyState === 1 && (!best || (ws.data.seen ?? 0) > (best.data.seen ?? 0))) best = ws;
     if (!best) return false;
-    best.send(JSON.stringify({ type: "show", artifact }));
+    best.send(JSON.stringify({ type: "show", artifact, ...(machine !== undefined ? { machine } : {}) }));
     return true;
   }
 

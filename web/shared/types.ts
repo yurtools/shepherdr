@@ -1266,9 +1266,9 @@ export type Action =
   | { type: 'page-note'; chat: string; page: string; note: string; target?: string }
   /** an artifact's page sent something, you noted on it, or wrote about it in its viewer: to its keeper. By its place,
       so another machine's goes there */
-  | { type: 'artifact-send'; place: string; artifact: string; v: number; text: string }
-  | { type: 'artifact-note'; place: string; artifact: string; v: number; note: string; target?: string }
-  | { type: 'artifact-say'; place: string; artifact: string; v: number; text: string }
+  | { type: 'artifact-send'; place: string; artifact: string; machine?: string | null; v: number; text: string }
+  | { type: 'artifact-note'; place: string; artifact: string; machine?: string | null; v: number; note: string; target?: string }
+  | { type: 'artifact-say'; place: string; artifact: string; machine?: string | null; v: number; text: string }
   | { type: 'artifact-delete'; place: string; artifact: string }
   /** Mark up's notes from the shared browser, sent together into the task's chat */
   | { type: 'browser-notes'; cid?: string; chat: string; url: string; title?: string; viewport?: { w: number; h: number }; notes: BrowserNote[] }
@@ -1353,7 +1353,7 @@ export type ServerEvent =
   /** the answer to a screen's ping: its link still works */
   | { type: 'pong' }
   /** an agent shows the person an artifact (herdr-artifact open): this screen, the one they used last, opens it */
-  | { type: 'show'; artifact: string }
+  | { type: 'show'; artifact: string; machine?: string | null }
 
 /** how Shepherdr's last update of itself went (update.json in its folder, written by the supervisor) */
 export interface UpdateStatus {

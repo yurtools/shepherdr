@@ -52,7 +52,7 @@ function step(view, a, v, cx) {
       const latest = latestOf(a, view.art.versions);
       if (shared(MARKUP)?.mod === a.mod) setShared(MARKUP, null);
       closeOverlay(props().overlay);
-      showViewer({ ...a, mod: out.mod, base: a.base ?? a.mod, version: v ?? latest, latest });
+      await showViewer({ ...a, mod: out.mod, base: a.base ?? a.mod, version: v ?? latest, latest });
     } catch (e) {
       toast({ title: "That version didn't open", body: plainError(e), level: "error" });
       view.art.busy = false;

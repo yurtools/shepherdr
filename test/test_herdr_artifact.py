@@ -206,7 +206,7 @@ class WhoPublishes(unittest.TestCase):
     def test_its_label_names_its_task(self):
         with mock.patch.dict(os.environ, {"HC_TERMINAL_ID": "t5"}, clear=False), self.hc({"herdr.task": "dev-shop#4"}) as run:
             os.environ.pop("HERDR_BROWSER_TASK", None)
-            self.assertEqual(A.me(), {"terminal": "t5", "task": "SHOP-4"})
+            self.assertEqual(A.me(), {"terminal": "t5", "task": "SHOP-4", "taskKey": "dev-shop#4", "space": None})
             self.assertEqual(run.call_args[0][0], ["hc", "get", "t5", "--json"])
 
     def test_no_label_then_its_task_env(self):
@@ -219,7 +219,7 @@ class WhoPublishes(unittest.TestCase):
         self.assertIsNone(A.task_ref("nonsense"))
         with mock.patch.dict(os.environ, {"HC_TERMINAL_ID": "t5"}), self.hc({}, code=1):
             os.environ.pop("HERDR_BROWSER_TASK", None)
-            self.assertEqual(A.me(), {"terminal": "t5", "task": None})
+            self.assertEqual(A.me(), {"terminal": "t5", "task": None, "taskKey": None, "space": None})
 
 
 class ReadOnlySandbox(unittest.TestCase):

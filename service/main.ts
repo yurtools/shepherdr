@@ -145,7 +145,7 @@ live.onVisible = (v) => { push.visible = v; };
 const shows = new Shows();
 hub.on((e) => {
   if (e.type !== "reset" && e.type !== "labels" && e.type !== "created") return;
-  for (const a of shows.take(hub.terminals.values())) if (host.serving() && !live.show(a.artifact) && a.machine) void showInWindow(a).catch(() => {});
+  for (const a of shows.take(hub.terminals.values())) if (host.serving() && !live.show(a.artifact, a.machine) && a.machine) void showInWindow(a).catch(() => {});
 });
 // what was already waiting or ready when the service started: no alert for it
 let alerted: Set<string> | null = null;

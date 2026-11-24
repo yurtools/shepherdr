@@ -1,3 +1,4 @@
+import { artifactOwner } from "../core/artifact-owner.js";
 // The web app is Shepherdr 2.1's screen (its design, phone layout and motion, kept as they were), fed with
 // Shepherdr 3's data: this turns what the service builds with the shared core (spaces, tasks, chats) into the
 // shapes 2.1's screen reads (web/shared/types.ts: Snapshot, Chat), and its chat keys back into terminals.
@@ -165,13 +166,10 @@ export function unreadMarks(spaces: Space[], keyOf: (id: string) => string) {
   return { last, read };
 }
 
-export function artifactOf(a: any, spaces: Space[], program: (addr: string) => string | null = () => null): Artifact {
-  // its store is a folder: the space it is kept for (its own folder first, then a worktree of its repo), else none
-  // (it shows with All)
-  // (it shows with All). Another machine's (service/artifacts.ts reads them there) belongs to that machine's spaces.
+export function artifactOf(a: any, spaces: Space[], program: (addr: string) => string | null = () => null, tasks: any[] = []): Artifact {
   const m = a.machine ?? null;
-  const mine = spaces.filter((s) => (s.machine ?? null) === m && artifactStore(s as any).folder === a.folder);
-  const place = (mine.find((s) => s.folder === a.folder) ?? mine[0])?.id ?? "";
+  const owner = artifactOwner(a, tasks);
+  const place = spaces.some((s) => s.id === owner && (s.machine ?? null) === m) ? owner! : "";
   // 3.0's row: "v3 · Claude Code · 2h ago": the program of the agent that published it while it runs, else nothing;
   // Mark up writes to that agent ("the agent" when it isn't known)
   const by = (a.publisher && program(m ? `${m}/${a.publisher}` : a.publisher)) || "";
@@ -258,7 +256,7 @@ export class Compat {
   reader: ((addr: string) => any) | null = null;
 
   /** This machine's artifacts (service/artifacts.ts), set by main: notes and answers go through it. */
-  artifacts: { say(id: string, v: number, text: string, spot?: string): Promise<unknown> } | null = null;
+  artifacts: { say(id: string, v: number, text: string, spot?: string, machine?: string | null): Promise<unknown> } | null = null;
 
   /** Open hook asks (service/asks.ts), set by main: they show as cards in their chat and in Needs you. */
   asks: { of(terminal: string): any[]; open: Map<string, any>; information?: Asks['information'] } | null = null;
@@ -477,7 +475,7 @@ export class Compat {
     this.chats = chats;
     this.last = {
       terminalTransport: "core", name: "Shepherdr", host, user: input.user, places, machines, tasks, automations: automationsBySpace(input.automations ?? [], spaces, (s) => places.find((p) => p.id === s.id)?.name ?? s.name), asks: {}, needs, settings: [...(input.settings ?? []), ...notify],
-      artifacts: (input.artifacts ?? []).map((a) => artifactOf(a, spaces, (addr) => { const k = kindOfTerm((this as any).terminalsOf?.(addr)); return k ? CLI_NAMES[k] ?? k : null; })),
+      artifacts: (input.artifacts ?? []).map((a) => artifactOf(a, spaces, (addr) => { const k = kindOfTerm((this as any).terminalsOf?.(addr)); return k ? CLI_NAMES[k] ?? k : null; }, rows)),
       sections, last, read, off: input.offPlugins ?? [],
       // the Window page's look switches (shared keys the window reads too): the web follows the same ones
       look: lookOf((k) => this.shared?.value(k)),

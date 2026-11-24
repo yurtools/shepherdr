@@ -189,6 +189,14 @@ test('a restored slot with no session cannot silently start a different conversa
  expect(launches()).toEqual([]);
 });
 
+test('a failed recovery cannot forget a previous launch and start a fresh Feature on retry',async()=>{
+ const record={id:'feature-one',space:'space',folder:'/project',name:'One',settings:cfg.everywhere.coordinator};
+ const request={...spec(),role:'feature',template:'feature',slot:'feature-feature-one',featureRecord:record};
+ state.set('workspace.role.starts',{':feature-feature-one':{token:'before-reboot',address:'gone',at:1}});
+ for(let i=0;i<2;i++)await expect(R.startRole(request)).rejects.toThrow(/session/i);
+ expect(launches()).toEqual([]);
+});
+
 test('a disappeared Feature Chat is restored as Chat, not a shell or an unrelated pane',async()=>{
  const record={id:'feature-one',space:'space',folder:'/project',name:'One',kind:'codex',session:'saved-session',home:'/account-two',argv:['env','CODEX_HOME=/account-two','codex'],terminal:'old',pane:'missing-chat',tab:'missing-tab'};
  const shell={address:'old',state:'live',argv:['bash'],foreground:{name:'bash',pid:90,argv:['bash']},labels:{'herdr.feature':record.id,'herdr.role':'feature','herdr.coordinator.space':'space','herdr.chat':'missing-chat'}};

@@ -74,17 +74,18 @@ export async function startRole(spec) {
   }
   // Reserve before the first await: the old lazy Chat and the tab owner share this claim.
   const token = `${Date.now()}-${Math.random()}`;
+  const hadPreviousStart = Boolean(prior?.address || prior?.pending || prior?.hadPreviousStart);
   setShared(STARTS, { ...(shared(STARTS) ?? {}), [key]: { token, pending: true, at: Date.now() } });
   try {
-    const { address, started } = await launchRole(spec, prior?.address || prior?.pending);
+    const { address, started } = await launchRole(spec, hadPreviousStart);
     setShared(STARTS, { ...(shared(STARTS) ?? {}), [key]: { token, address, ...(started && !spec.featureRecord?.session ? { task: spec.task } : {}), at: Date.now() } });
     return address;
   } catch (error) {
-    setShared(STARTS, { ...(shared(STARTS) ?? {}), [key]: { token, pending: !!error.uncertain, error: String(error.message ?? error), at: Date.now() } });
+    setShared(STARTS, { ...(shared(STARTS) ?? {}), [key]: { token, pending: !!error.uncertain, ...(spec.featureRecord&&(hadPreviousStart||error.hadPreviousStart)?{hadPreviousStart:true}:{}), error: String(error.message ?? error), at: Date.now() } });
     throw error;
   }
 }
-async function launchRole(spec, previousAddress) {
+async function launchRole(spec, hadPreviousStart) {
   const { slot, space, folder, role, featureRecord: record } = spec;
   const machine = space?.machine ?? null;
   const existing = () => terminals().find(k => k.state === 'live' && k.labels?.['herdr.chat.slot'] === slot &&
@@ -105,6 +106,7 @@ async function launchRole(spec, previousAddress) {
     for (const address of addresses) {
       const result = await hc(['get', address, '--json']);
       let terminal; try { terminal = JSON.parse(result.stdout); } catch {}
+      if (result.code && /not_found|no terminal|not found/i.test(`${result.stdout}\n${result.stderr}`)) continue;
       if (result.code || !terminal) throw new Error('Cannot check the running Feature Assistant. Try again once connected.');
       const candidate = {...terminal,address};
       if (featureOwner(candidate,record)) owners.push(candidate);
@@ -132,8 +134,8 @@ async function launchRole(spec, previousAddress) {
     const running = owners.filter(k => runningFeatureAssistant(k,record));
     if (running.length > 1) throw new Error('More than one agent owns this feature. Resolve the duplicate before reopening it.');
     if (!running.length && owners.some(k => !k.foreground?.name)) throw new Error('The Feature Assistant may still be starting. Try again in a moment.');
-    if (!running.length && !record.session && (owners.length || record.terminal || record.tab || record.pane || previousAddress))
-      throw new Error('This feature has no saved session to resume. Its conversation will not be replaced.');
+    if (!running.length && !record.session && (owners.length || record.terminal || record.tab || record.pane || hadPreviousStart))
+      throw Object.assign(new Error('This feature has no saved session to resume. Its conversation will not be replaced.'),{hadPreviousStart:true});
     if(running[0]?.restoreLabels){
       const result=await hc(['label',running[0].address,'herdr.role=feature',`herdr.feature=${record.id}`]);
       if(result.code)throw new Error('Could not restore the Feature Assistant identity.');

@@ -852,19 +852,19 @@ def launch(s, task, argv, space, message=None, parent=None, resume=None, role=No
     if message:
         cmd = cmd + [message]
     labels = ["--label", f"herdr.task={key}", "--label", f"herdr.task.space={bare(space)}",
-              "--label", f"herdr.agent={agent_key(argv)}"]
+              "--label", f"herdr.agent={agent_key(argv)}", "--label", f"herdr.role={role or 'worker'}",
+              "--label", f"herdr.owner={parent or ''}"]
     parent_meta = hc_json("get", parent) if parent else None
-    feature = ((parent_meta or {}).get("labels") or {}).get("herdr.feature") or task.get("feature")
+    # A durable task owner wins over stale terminal metadata after an Assistant restarts.
+    feature = task.get("feature") or ((parent_meta or {}).get("labels") or {}).get("herdr.feature")
     if feature:
         task["feature"] = feature
-        labels += ["--label", f"herdr.feature={feature}", "--label", f"herdr.owner={parent or ''}"]
+        labels += ["--label", f"herdr.feature={feature}"]
     ctab = coordinator_tab(parent)
     if approval_mode:
         labels += ["--label", f"herdr.approval.mode={approval_mode}"]
     if ctab:
         labels += ["--label", f"herdr.coordinator={ctab}"]
-    if role:
-        labels += ["--label", f"herdr.role={role}"]
     rel = ["--parent", parent, "--outlive-parent"] if parent else ["--no-parent"]
     name = agent_name(s, task, "review" if role else None)
     # HERDR_BROWSER_TASK: which task's browser herdr-browser drives (HERD-57), for it and its children.
@@ -919,23 +919,35 @@ def coordinator_in(space):
         return None
     for addr in coordinators():
         k = hc_json("get", addr) or {}
-        labels = k.get("labels") or {}
-        if k.get("state") == "live" and bare(space) in (labels.get("herdr.space"), labels.get("herdr.coordinator.space")):
+        if owns_tasks(k, space):
             return addr
     return None
 
 
-def parent_for(parent, space, feature=None):
-    """A task agent's parent: `parent` while it's live, else the space's coordinator."""
-    if live_parent(parent): return parent
-    labels = caller_labels()
-    feature = feature or labels.get('herdr.feature')
+def owns_tasks(meta, space, feature=None):
+    """Only the live interactive Assistant of this space/feature may own its workers."""
+    labels = (meta or {}).get("labels") or {}
+    if not meta or meta.get("state") != "live" or not space:
+        return False
+    if bare(space) not in (labels.get("herdr.space"), labels.get("herdr.coordinator.space")):
+        return False
     if feature:
-        if labels.get('herdr.feature') == feature and os.environ.get('HC_TERMINAL_ID'):
-            return live_parent(os.environ['HC_TERMINAL_ID'])
+        return labels.get("herdr.role") == "feature" and labels.get("herdr.feature") == feature
+    role = labels.get("herdr.role")
+    return (role == "coordinator" or not role and meta.get("template") in ASSISTANT_TEMPLATES) and not labels.get("herdr.feature")
+
+
+def parent_for(parent, space, feature=None):
+    """Resolve ownership again at dispatch/resume; never adopt a worker or another feature."""
+    if parent and owns_tasks(hc_json('get', parent), space, feature):
+        return parent
+    if feature:
+        caller = os.environ.get('HC_TERMINAL_ID')
+        if caller and owns_tasks(hc_json('get', caller), space, feature):
+            return caller
         for k in (hc_json('ls', '--label', 'herdr.feature=' + feature) or {}).get('terminals', []):
             meta=hc_json('get', k['address']) or {}
-            if meta.get('state') == 'live' and (meta.get('labels') or {}).get('herdr.role') == 'feature': return k['address']
+            if owns_tasks(meta, space, feature): return k['address']
         return None  # Never silently transfer feature work to the space Assistant.
     return coordinator_in(space)
 

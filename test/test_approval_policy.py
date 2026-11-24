@@ -298,7 +298,7 @@ class ApprovalLifecycle(unittest.TestCase):
   else:
    for key in ('herdr.feature','herdr.owner'):self.meta['labels'].pop(key,None)
   worker=self.meta.copy()
-  reviewer={'state':'live','labels':{'herdr.role':kind if kind=='feature' else 'coordinator','herdr.feature':'feature-one','herdr.coordinator.space':'space'}}
+  reviewer={'state':'live','labels':{'herdr.role':kind if kind=='feature' else 'coordinator','herdr.coordinator.space':'space',**({'herdr.feature':'feature-one'} if kind=='feature' else {})}}
   A.hc_get.side_effect=lambda terminal:reviewer if terminal=='assistant' else worker
   with mock.patch.object(A.subprocess,'run',return_value=mock.Mock(returncode=delivery,stdout='{}')):
    if mode=='manual':
@@ -539,7 +539,7 @@ class AssistantReviewRegression(unittest.TestCase):
    with self.subTest(cli=cli):
     self.path.with_suffix('.context').unlink(missing_ok=True);(A.store()/'pending'/self.path.name).unlink(missing_ok=True)
     self.meta['labels'].update({'herdr.feature':'owned-feature','herdr.owner':'stale-space-assistant'})
-    owner={'state':'live','argv':[cli,'--model','fixture-model'],'labels':{'herdr.role':'feature','herdr.feature':'owned-feature'}}
+    owner={'state':'live','argv':[cli,'--model','fixture-model'],'labels':{'herdr.role':'feature','herdr.feature':'owned-feature','herdr.coordinator.space':'space'}}
     A.hc_get.side_effect=lambda terminal:owner if terminal=='feature-owner' else self.meta if terminal=='worker' else {'state':'gone'}
     self.mode('assistant')
     def hc(argv,**kwargs):return mock.Mock(returncode=0,stdout=json.dumps({'terminals':[{'address':'feature-owner'}]}) if argv[1]=='ls' else '')

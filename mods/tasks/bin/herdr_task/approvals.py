@@ -547,9 +547,10 @@ def review_guard(req,ctx):
 def reviewer_type(meta,ctx):
  if meta.get('state')!='live':return ''
  labels=meta.get('labels') or {}
+ if not ctx.get('space') or labels.get('herdr.coordinator.space')!=ctx['space']:return ''
  if ctx.get('feature'):
   return 'feature' if labels.get('herdr.feature')==ctx['feature'] and labels.get('herdr.role')=='feature' else ''
- return 'space' if ctx.get('space') and labels.get('herdr.coordinator.space')==ctx['space'] and labels.get('herdr.role')=='coordinator' else ''
+ return 'space' if not labels.get('herdr.feature') and labels.get('herdr.role')=='coordinator' else ''
 
 def review_ticket(path, req, ctx, force=False):
  ticket_path=store()/'pending'/(Path(path).stem+'.json')

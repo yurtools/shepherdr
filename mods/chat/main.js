@@ -846,7 +846,7 @@ export default class Chat extends View {
     cx.notify();
     // A task worker's ask may show in its Assistant's chat too: that copy reads how it went.
     const where = howAnswered(ask, text, this.thread || this.t?.labels?.["herdr.task"] ? "in the task's chat" : "in its chat");
-    if (permission) cx.spawn(async () => this.replyPermission(ask, text, where, cx));
+    if (permission) cx.spawn(async cx => this.replyPermission(ask, text, where, cx));
     else cx.spawn(async () => ask.machine ? answerRemote(ask.machine, ask.id, text, where, ask.req) : answerAsk(this.askDir, ask.id, text, where, ask.req));
   }
 
@@ -961,7 +961,7 @@ export default class Chat extends View {
     }
     cx.notify();
     const where = howAnswered(ask, text, "in the Assistant's chat");
-    if (permission) cx.spawn(async () => this.replyPermission(ask, text, where, cx, true));
+    if (permission) cx.spawn(async cx => this.replyPermission(ask, text, where, cx, true));
     else cx.spawn(async () => answerAsk(this.askDir, ask.id, text, where, ask.req));
   }
 

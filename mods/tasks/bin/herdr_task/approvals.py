@@ -10,6 +10,9 @@ DEFAULT_POLICY = ('Approve only reversible local work inside the stated project 
                   'Ask the user about publishing, deployment, financial actions, credential access, destructive data changes, '
                   'changes outside the project, or unclear intent. Never approve plan or product-choice questions here.')
 
+class RequestContextUnavailable(ValueError):
+ """Core has not supplied the requesting terminal's ownership yet."""
+
 def app_home(): return Path(os.environ.get('HERDR_APP_HOME') or Path.home()/'.config/herdr-app')
 def store(): return app_home()/'data/approvals'
 def read(path, default=None):
@@ -305,7 +308,7 @@ def summary(req):
 def rule_seed(req,ctx):
  # Retain enough bounded, non-secret evidence to create a future rule even after
  # the request and terminal have gone. Never retain the full tool input.
- if not is_permission(req) or '[redacted]' in summary(req) or '[redacted]' in redact(json.dumps(req.get('tool_input'),ensure_ascii=False)):
+ if not ctx.get('account') or not ctx.get('cwd') or not is_permission(req) or '[redacted]' in summary(req) or '[redacted]' in redact(json.dumps(req.get('tool_input'),ensure_ascii=False)):
   return None
  stages=request_stages(req)
  if stages and len(json.dumps(stages))>4000:stages=None
@@ -437,9 +440,25 @@ def request_context(path, terminal=None):
  path=Path(path);req=read(path)
  if not isinstance(req,dict):raise ValueError('This approval request is no longer available.')
  # Metadata is captured by the hook, not accepted from the requesting tool's arguments.
- side=path.with_suffix('.context');ctx=read(side)
- if not ctx or ctx.get('request_key')!=request_key(req):
-  ctx=context(req,terminal);ctx['request_key']=request_key(req);write(side,ctx)
+ side=path.with_suffix('.context');key=request_key(req);ctx=read(side)
+ if not ctx or ctx.get('request_key')!=key:
+  # A transient core failure is not evidence of an unowned agent. Do not cache
+  # guessed account/space/Feature fields and apply policy to them for the rest
+  # of this request. A subsequent poll or explicit click can retry the lookup.
+  terminal=terminal or os.environ.get('HC_TERMINAL_ID') or ''
+  meta=hc_get(terminal)
+  if not isinstance(meta,dict) or meta.get('state')!='live' or not isinstance(meta.get('labels'),dict):
+   raise RequestContextUnavailable('Could not read the requesting terminal. Try again when the core is available.')
+  answer=path.parent.parent/'ans'/path.name
+  if read(path)!=req or answer.exists():raise ValueError('This request has changed, closed or already been answered.')
+  # A concurrent hook poll may already have captured the original context.
+  ctx=read(side)
+  if not ctx or ctx.get('request_key')!=key:
+   ctx=context(req,terminal,meta);ctx['request_key']=key;write(side,ctx)
+   if read(path)!=req or answer.exists():
+    if read(side)==ctx:
+     with contextlib.suppress(FileNotFoundError):side.unlink()
+    raise ValueError('This request has changed, closed or already been answered.')
  return req,ctx
 
 def pending_request(path,terminal=None,expected=None):
@@ -710,14 +729,16 @@ def own_feature_name(req,ctx):
 def evaluate(path, terminal=None, audit_decision=True):
  req=read(path)
  if not isinstance(req,dict):raise ValueError('This approval request is no longer available.')
- if is_permission(req):
-  old=read(Path(path).with_suffix('.status')) or {}
-  if old.get('request_hash')!=status_key(req):status(path,req,'checking')
+ if not is_permission(req):return {'action':'wait','reason':'Plans and questions require their own answer.'}
+ old=read(Path(path).with_suffix('.status')) or {}
+ if old.get('request_hash')!=status_key(req):status(path,req,'checking')
  try:
   out=_evaluate(path,terminal)
   if audit_decision and (out.get('source')=='rule' or out['action']=='native'):
    with contextlib.suppress(OSError,ValueError):audit_result(req,request_context(path,terminal)[1],out)
   return out
+ except RequestContextUnavailable as error:
+  return waiting(path,req,'context-unavailable',str(error))
  except Exception:
   if is_permission(req):status(path,req,'person','policy-error')
   raise

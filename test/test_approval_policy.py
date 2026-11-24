@@ -109,6 +109,43 @@ class ApprovalAdvice(unittest.TestCase):
  def click(self,command):
   spec=importlib.util.spec_from_file_location('feature_approval_ui',ROOT/'mods/chat/approval-policy.py');ui=importlib.util.module_from_spec(spec);spec.loader.exec_module(ui)
   return ui.main(ui.parser().parse_args([command,'--request',str(self.path),'--terminal','worker','--hash',A.status_key(A.read(self.path))]))
+ def test_both_buttons_recover_after_requester_metadata_temporarily_disappears(self):
+  self.owner(True)
+  self.owner_meta.update(argv=['codex'],foreground={'name':'codex','pid':42,'argv':['codex']},status={'app':'codex','state':'done'})
+  lookup=A.hc_get.side_effect
+  A.hc_get.side_effect=lambda t:{} if t=='worker' else lookup(t)
+  with mock.patch.object(A.subprocess,'run',return_value=mock.Mock(returncode=0,stdout='{}')) as hc:
+   self.assertEqual(A.evaluate(self.path)['action'],'wait')
+   self.assertEqual(A.read(self.path.with_suffix('.status'))['reason'],'context-unavailable')
+   self.assertFalse(self.path.with_suffix('.context').exists())
+   for command in ('advice','review'):
+    with self.assertRaisesRegex(ValueError,'requesting terminal'):
+     self.click(command)
+   hc.assert_not_called()
+   self.assertFalse(D.ticket_path(self.path.stem).exists())
+   self.assertFalse((A.store()/'pending'/self.path.name).exists())
+   A.hc_get.side_effect=lookup
+   self.assertEqual(self.click('advice')['state'],'pending')
+   self.click('review')
+   self.assertEqual([c.args[0][:3] for c in hc.call_args_list],[['hc','send','assistant'],['hc','send','assistant']])
+  ctx=A.read(self.path.with_suffix('.context'))
+  self.assertEqual((ctx['feature'],ctx['space'],ctx['task'],ctx['reviewer']),('feature-one','space','TASK-1','assistant'))
+  self.assertFalse((self.path.parent.parent/'ans'/self.path.name).exists())
+ def test_context_lookup_cannot_create_a_sidecar_after_the_request_closes(self):
+  def closed(_terminal):
+   self.path.unlink();return self.meta
+  A.hc_get.side_effect=closed
+  with self.assertRaisesRegex(ValueError,'changed, closed or already'):
+   A.request_context(self.path)
+  self.assertFalse(self.path.with_suffix('.context').exists())
+ def test_manually_answering_does_not_require_requester_metadata(self):
+  A.hc_get.side_effect=lambda _t:{}
+  spec=importlib.util.spec_from_file_location('missing_context_ui',ROOT/'mods/chat/approval-policy.py');ui=importlib.util.module_from_spec(spec);spec.loader.exec_module(ui)
+  args=ui.parser().parse_args(['answer','--request',str(self.path),'--hash',A.status_key(self.req),'--answer',json.dumps(A.response('deny')['response'])])
+  self.assertEqual(ui.main(args)['action'],'answered')
+  self.assertEqual(A.read(self.path.parent.parent/'ans'/self.path.name),A.response('deny')['response'])
+  self.assertFalse(self.path.with_suffix('.context').exists())
+  row=A.history_rows()[-1];self.assertEqual(row['decision'],'deny');self.assertFalse(row.get('account'));self.assertNotIn('rule_seed',row)
  def test_both_buttons_follow_the_restored_feature_not_its_shell_or_stale_address(self):
   self.owner(True)
   shell={**self.owner_meta,'argv':['bash'],'foreground':{'name':'bash','pid':42,'argv':['bash']},'status':None}

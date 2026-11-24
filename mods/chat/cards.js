@@ -1,4 +1,4 @@
-import { rememberedControls } from "./approval-cards.js";
+import { rememberedControls, adviceControl } from "./approval-cards.js";
 // The card that answers what Claude asks through the PermissionRequest hook (asks.js): a
 // permission or a plan (Allow / Deny), or questions (AskUserQuestion: steps, options, "Other…",
 // "Chat about this", one Submit). The chat shows it in the conversation where it was asked, as
@@ -56,6 +56,15 @@ export class AskCards {
     if (status) {
       out.push({ key: "status", kind: "status", text: status.text, state: status.state, attention: status.attention });
       if (status.detail) out.push({ key: "status-detail", kind: "text", tone: "muted", text: status.detail });
+      if (status.advice) {
+        const advice=status.advice, key=`advice-${id}`, expanded=this.open.has(key);
+        out.push({key:'advice-summary',kind:'text',text:`Advice: ${advice.text}`});
+        if(advice.detail){
+          out.push({key:'advice-more',kind:'controls',ctls:[linkCtl(`advice-more-${id}`,expanded?'Less advice':'More advice',()=>{this.revision++;if(expanded)this.open.delete(key);else this.open.add(key);})]});
+          if(expanded)out.push({key:'advice-detail',kind:'text',text:advice.detail});
+        }
+        out.push({key:'advice-note',kind:'text',tone:'muted',text:advice.note});
+      }
     }
     if (w.detail) out.push({ key: "detail", kind: "detail", lines: w.detail.split("\n"), clip: long && !open ? SHORT : null });
     if (w.cut) out.push({ key: "cut", kind: "text", tone: "dim", text: "Some of it is too long for the chat; the terminal shows it all." });
@@ -69,7 +78,9 @@ export class AskCards {
       if (!w.unread) ctls.push({ id: `ask-allow-${id}`, label: w.kind === "plan" ? "Approve" : "Allow once", look: "primary", fn: (cx) => this.host.reply(ask,allow(),cx) });
       ctls.push({ id: `ask-deny-${id}`, label: w.kind === "plan" ? "Keep planning" : "Deny", look: "secondary",
         fn: (cx) => this.host.reply(ask,w.kind === "plan" ? deny("The person didn't approve this plan yet. Ask them what to change.") : deny(),cx) });
+      if(status&&!w.unread)ctls.push(adviceControl(ask,this.host));
       out.push({ key: "actions", kind: "controls", align: "start", ctls });
+      if(w.kind==='permission'&&(ask.machine??this.host.machine?.()))out.push({key:'advice-remote',kind:'text',tone:'muted',text:'Advice and Assistant review require the original machine’s compatible permission card.'});
       const remembered=rememberedControls(ask,this.host);
       if(remembered.length){out.push({key:"rule-actions",kind:"controls",align:"start",ctls:remembered.slice(0,2)});out.push({key:"review-action",kind:"controls",align:"start",ctls:remembered.slice(2)});}
     }

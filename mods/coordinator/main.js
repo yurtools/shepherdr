@@ -1,3 +1,4 @@
+import { BoundedWait, TIMEOUT, DISPOSED } from "./bounded-wait.js";
 // Coordinator views, by props().view:
 //   "close"         dialog: close a coordinator that has live workers ({ tab })
 //   "agents"        popup: restart an agent tab as another installed agent ({ terminal })
@@ -44,17 +45,16 @@ export default class Coordinator extends View {
       this.load(cx);
       // Someone else edited the file (another pane, an editor): show theirs unless we're mid-edit.
       cx.spawn(async (cx) => {
-        let w = null;
-        for (;;) {
-          // At most 5 s per wait, so a reload's old build ends at its next cx use.
-          w ??= watchFolder(DIR());
-          const changed = await Promise.race([w, cx.sleep(5000)]);
-          if (!changed) continue;
-          w = null;
+        const wait = this.instructionWait = new BoundedWait();
+        try { for (;;) {
+          const got = await wait.next(cx, DIR(), () => watchFolder(DIR()), 5000);
+          if (got === DISPOSED) return;
+          if (got === TIMEOUT) continue;
+          const changed = got.value;
           if (!changed.some((p) => p === FILE() || p === DIR()) || this.pending) continue;
           const text = await readTextFile(FILE());
           if (text !== null && text !== this.saved) { this.raw = text; this.saved = text; this.code?.set_value(text); cx.notify(); }
-        }
+        } } finally { wait.dispose(); }
       });
     }
   }
@@ -99,6 +99,7 @@ export default class Coordinator extends View {
   }
 
   async close(cx) {
+    this.instructionWait?.dispose();
     if (this.pending && this.code && this.code.value() !== this.saved) await writeTextFile(FILE(), this.code.value(), this.raw === null ? null : this.saved).catch(() => {});
   }
 

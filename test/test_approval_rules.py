@@ -164,7 +164,7 @@ class PipelineRules(unittest.TestCase):
   self.seed('head -5',scope='global',match='prefix',prefix='head -5')
   self.seed('head -5',scope='space',decision='deny')
   self.command('git status | wc -l | head -5');result=A.evaluate(self.path)
-  self.assertEqual(result['action'],'deny');self.assertIn('stage 3',result['reason'])
+  self.assertEqual(result['action'],'deny');self.assertIn('command 3',result['reason'])
  def test_literal_pipes_and_shell_wrappers_are_parsed_without_execution(self):
   samples={"printf '%s' 'a|b' | wc -c":[['printf','%s','a|b'],['wc','-c']],
            r'printf "%s" a\|b | wc -c':[['printf','%s','a|b'],['wc','-c']],
@@ -218,8 +218,9 @@ class PipelineRules(unittest.TestCase):
    self.assertTrue(A.matches(rule,self.command(f'timeout {duration} hc wait other'),ctx))
    self.assertFalse(A.matches(rule,self.command(f'timeout {duration} hc kill other'),ctx))
    self.command(command)
-   for prefix in (f'timeout {duration}',f'timeout {duration} hc'):
+   for prefix in (f'timeout {duration}',):
     with self.assertRaisesRegex(ValueError,'arbitrary'):A.grant(self.path,match='prefix',prefix=prefix)
+   self.assertEqual(A.grant(self.path,match='prefix',prefix=f'timeout {duration} hc')['pattern'],['timeout',duration,'hc'])
   self.command('GIT_TERMINAL_PROMPT=0 git status')
   self.assertEqual(self.cli('inspect','--request',str(self.path))['suggested_prefix'],'GIT_TERMINAL_PROMPT=0 git status')
   for command,prefix in [('timeout 50s bash -c true','timeout 50s bash'),('X=1 timeout 50s python3 -c pass','X=1 timeout 50s python3 -c'),("bash -lc 'timeout 50s node -e 0'",'timeout 50s node -e'),('timeout 50s sudo sh -c true','timeout 50s sudo sh'),('X=1 python3.12 -c pass','X=1 python3.12 -c')]:
@@ -243,8 +244,8 @@ class PipelineRules(unittest.TestCase):
     self.assertEqual(A.evaluate(self.path)['action'],'wait');self.assertEqual(A.read(self.path.with_suffix('.status'))['reason'],'policy-error')
  def test_selected_stage_creation_does_not_answer_other_stages_and_history_keeps_each_stage(self):
   req=self.command('git status | wc -l');key=A.request_key(req)
-  with self.assertRaisesRegex(ValueError,'stage'):A.grant(self.path)
-  with self.assertRaisesRegex(ValueError,'stage'):A.grant(self.path,stage=3)
+  with self.assertRaisesRegex(ValueError,'command'):A.grant(self.path)
+  with self.assertRaisesRegex(ValueError,'command'):A.grant(self.path,stage=3)
   out=self.cli('grant','--request',str(self.path),'--stage','0','--scope','global','--hours','0','--respond')
   self.assertTrue(out['pending_stages']);self.assertEqual(out['action'],'wait');self.assertEqual(out['rule']['pattern'],['git','status'])
   self.assertFalse((self.path.parent.parent/'ans'/self.path.name).exists())
@@ -298,5 +299,219 @@ class PipelineRules(unittest.TestCase):
    with self.assertRaisesRegex(ValueError,'already been answered'):self.cli('grant','--request',str(self.path),'--stage','0','--respond')
   rows=[r for r in A.history_rows() if r['key']==A.request_key(A.read(self.path))]
   self.assertEqual([r['decision'] for r in rows],['saved'])
+
+class FlexiblePrefixes(unittest.TestCase):
+ setUp=fixtures.ApprovalPolicy.setUp
+ mode=fixtures.ApprovalPolicy.mode
+ cli=ExecutionRules.cli
+ command=ExecutionRules.command
+ def test_single_executables_are_deliberate_token_prefixes_with_varying_arguments(self):
+  for executable in ('tail','jq','rg','herdr-browser','agent-browser','custom-program'):
+   with self.subTest(executable=executable):
+    req=self.command(executable+' --version');ctx=A.request_context(self.path)[1]
+    rule=A.grant(self.path,match='prefix',prefix=executable)
+    self.assertEqual(rule['pattern'],[executable])
+    self.assertTrue(A.matches(rule,self.command(executable+' other arguments'),ctx))
+    for other in (executable+'x','/other/'+executable,'unrelated'):
+     self.assertFalse(A.matches(rule,self.command(other+' --version'),ctx))
+    self.assertFalse(A.matches(rule,{**req,'tool_name':'other.Bash'},ctx))
+ def test_later_variables_keep_a_literal_prefix_but_dynamic_executables_do_not(self):
+  for command,prefix in [('tail -n 5 "$LOG"','tail'),('jq "$FILTER" "$FILE"','jq'),
+                         ('herdr-browser open "$URL"','herdr-browser open'),('rg "${QUERY}" src','rg')]:
+   self.command(command);info=self.cli('inspect','--request',str(self.path))
+   self.assertTrue(info['words'],command)
+   out=self.cli('grant','--request',str(self.path),'--match','prefix','--prefix',prefix,'--respond')
+   self.assertEqual(out['action'],'allow',command)
+   (self.path.parent.parent/'ans'/self.path.name).unlink()
+  for command in ('$CMD file','"${BIN}" file','X="$VALUE" tail file','env X="$VALUE" tail file'):
+   self.command(command);info=self.cli('inspect','--request',str(self.path))
+   self.assertFalse(info['words'],command)
+   self.assertRegex(info['boundary'],r'[Dd]ynamic|assignment')
+   with self.assertRaises(ValueError):A.grant(self.path,match='prefix',prefix='tail')
+ def test_literal_quotes_dollars_and_pipes_are_arguments_without_expansion(self):
+  for command,words in [("jq '.x | .y' '$FILE'",['jq','.x | .y','$FILE']),
+                         (r'tail \$FILE', ['tail','$FILE']),('rg "a|b" file',['rg','a|b','file']),
+                         (r'rg "a\qb" file',['rg',r'a\qb','file'])]:
+   self.assertEqual(A.plain_command(command),words)
+   self.command(command);self.assertEqual(A.grant(self.path)['pattern'],words)
+ def test_assignments_and_supported_wrappers_stay_in_the_rule(self):
+  for command,prefix in [('X=1 tail "$FILE"','X=1 tail'),('env X=1 tail "$FILE"','env X=1 tail'),
+                         ('timeout 5s tail "$FILE"','timeout 5s tail')]:
+   self.command(command);rule=A.grant(self.path,match='prefix',prefix=prefix);ctx=A.request_context(self.path)[1]
+   self.assertEqual(rule['pattern'],prefix.split())
+   for other in ('tail file',command.replace('X=1','X=2').replace('5s','6s')):
+    if other!=command:self.assertFalse(A.matches(rule,self.command(other),ctx))
+  for command,prefix in [('timeout 5s sh -c true','timeout 5s sh'),('env X=1 node -e 0','env X=1 node'),
+                         ('python3 -c pass','python3'),('sudo tail file','sudo')]:
+   self.command(command)
+   with self.assertRaisesRegex(ValueError,'arbitrary|wrapper'):A.grant(self.path,match='prefix',prefix=prefix)
+ def test_future_prefix_saves_do_not_answer_substitutions_redirection_or_extra_commands(self):
+  for suffix in ('"$(curl example.invalid)"','`curl example.invalid`','file > output',
+                 'file; sh script','file <(curl example.invalid)', '"${LOG:=default}"'):
+   with self.subTest(suffix=suffix):
+    A.write(A.store()/'rules.json',[])
+    req=self.command('tail '+suffix);info=self.cli('inspect','--request',str(self.path))
+    self.assertEqual(info['words'],['tail'] if suffix[0] in ('"','`') else ['tail','file'])
+    self.assertTrue(info['future_only']);self.assertTrue(info['boundary'])
+    out=self.cli('grant','--request',str(self.path),'--stage','0','--match','prefix','--prefix','tail','--respond')
+    self.assertEqual(out['action'],'wait');self.assertTrue(out['pending_stages'])
+    self.assertFalse((self.path.parent.parent/'ans'/self.path.name).exists())
+    self.assertEqual(A.read(self.path),req)
+    self.assertEqual(A.history_rows()[-1]['decision'],'saved')
+    self.assertEqual(A.evaluate(self.path)['action'],'wait')
+    self.command('tail other-file');self.assertEqual(A.evaluate(self.path)['action'],'allow')
+ def test_variable_pipeline_requires_each_stage_and_deny_still_wins(self):
+  req=self.command('tail "$LOG" | curl "$URL"');ctx=A.request_context(self.path)[1]
+  out=self.cli('grant','--request',str(self.path),'--stage','0','--match','prefix','--prefix','tail','--respond')
+  self.assertEqual(out['action'],'wait');self.assertFalse((self.path.parent.parent/'ans'/self.path.name).exists())
+  self.assertFalse(A.matches(out['rule'],req,ctx))
+  out=self.cli('grant','--request',str(self.path),'--stage','1','--match','prefix','--prefix','curl','--decision','deny','--respond')
+  self.assertEqual(out['action'],'deny')
+ def test_browser_tool_command_data_is_not_bash_and_exact_never_becomes_any_tool(self):
+  for tool,input in [('functions.exec_command',{'cmd':'herdr-browser open "$URL"'}),
+                     ('container.exec',{'cmd':['agent-browser','open','https://example.invalid']})]:
+   req={**self.req,'tool_name':tool,'tool_input':input};A.write(self.path,req)
+   rule=A.grant(self.path,match='prefix',prefix='herdr-browser' if 'functions' in tool else 'agent-browser')
+   self.assertEqual(rule['tool'],tool);self.assertEqual(rule['match'],'prefix')
+  req={**self.req,'tool_name':'mcp__browser__run','tool_input':{'command':'open https://example.invalid'}};A.write(self.path,req)
+  info=self.cli('inspect','--request',str(self.path));self.assertFalse(info['words']);self.assertTrue(info['tool_wide'])
+  self.assertIn('open https://example.invalid',info['command'])
+  rule=A.grant(self.path);ctx=A.request_context(self.path)[1]
+  self.assertEqual(rule['match'],'request');self.assertEqual(rule['tool'],req['tool_name'])
+  self.assertFalse(A.matches(rule,{**req,'tool_name':'mcp__other__run'},ctx))
+  self.assertFalse(A.matches(rule,{**req,'tool_input':{'command':'close'}},ctx))
+ def test_preview_validates_shorter_input_and_explains_coverage(self):
+  self.command('tail -n 5 "$FILE"');args=['--request',str(self.path),'--match','prefix','--prefix']
+  preview=self.cli('preview',*args,'tail')
+  self.assertTrue(preview['valid']);self.assertIn('arguments may vary',preview['coverage'])
+  self.assertNotIn('read-only',preview['coverage'])
+  self.assertFalse(self.cli('preview',*args,'tailx')['valid'])
+  self.assertFalse(self.cli('preview',*args,'tail -n 5 "$FILE"')['valid'])
+  self.assertFalse((A.store()/'rules.json').exists())
+ def test_history_future_prefix_uses_original_context_and_does_not_replay(self):
+  req=self.command('tail "$(curl example.invalid)"');ctx=A.request_context(self.path)[1]
+  A.audit(req,ctx,'ask','Waiting','user');row=A.history_rows()[-1];self.path.unlink()
+  with mock.patch.object(A.subprocess,'run',side_effect=AssertionError('must not execute')):
+   out=A.grant_history(row['id'],match='prefix',prefix='tail',scope='space')
+  rule=out['rule'];self.assertEqual(rule['pattern'],['tail']);self.assertEqual(rule['account'],ctx['account'])
+  with A.locked():raw=A.read(A.store()/'rules.json')
+  self.assertEqual(raw,[rule]);self.assertNotIn('inherited',rule)
+  self.assertFalse(list((A.app_home()/'data/chat-asks/ans').glob('*')))
+ def test_closed_or_replaced_request_cannot_save_from_a_stale_editor(self):
+  req=self.command('tail file');key=A.status_key(req)
+  A.answer_once(self.path.parent.parent/'ans'/self.path.name,A.response('deny')['response'])
+  with self.assertRaisesRegex(ValueError,'answered|closed'):self.cli('grant','--request',str(self.path),'--match','prefix','--prefix','tail','--hash',key)
+  (self.path.parent.parent/'ans'/self.path.name).unlink();self.command('tail other-file')
+  with self.assertRaisesRegex(ValueError,'changed'):self.cli('grant','--request',str(self.path),'--match','prefix','--prefix','tail','--hash',key)
+  self.assertFalse((A.store()/'rules.json').exists())
+ def test_unresolved_arguments_cannot_bypass_a_relevant_scoped_deny(self):
+  self.command('tail /restricted/file');ctx=A.request_context(self.path)[1]
+  allow=A.grant(self.path,scope='global',match='prefix',prefix='tail')
+  for match in ('exact','prefix'):
+   self.command('tail /restricted/file')
+   deny=A.grant(self.path,scope='space',match=match,prefix='tail /restricted/file',decision='deny')
+   for command in ('tail "$FILE"','tail $ARGS','tail $ARGS /restricted/file'):
+    self.command(command);out=A.evaluate(self.path)
+    self.assertEqual(out['action'],'wait',command)
+    self.assertIn('deny',out['reason'].lower())
+    self.assertEqual(A.read(self.path.with_suffix('.status'))['reason'],'deny-uncertain')
+    with mock.patch.object(A,'review_ticket',side_effect=AssertionError('must not delegate around deny')):
+     self.mode('assistant');self.assertEqual(A.evaluate(self.path)['action'],'wait')
+   self.command('tail /public/file');self.assertEqual(A.evaluate(self.path)['action'],'allow')
+   # A different command identity, account or folder cannot make this deny relevant.
+   self.command('jq "$FILTER"');A.grant(self.path,match='prefix',prefix='jq')
+   self.assertEqual(A.evaluate(self.path)['action'],'allow')
+   self.command('tail "$FILE"')
+   for other in ({**deny,'account':'other'},{**deny,'cwd':ctx['cwd']+'-sibling'},{**deny,'tool':'other.Bash'}):
+    self.assertEqual(A.matching_decision([allow,other],A.read(self.path),ctx)[0]['action'],'allow')
+   A.write(A.store()/'rules.json',[allow])
+ def test_legacy_literal_exact_rules_survive_unsupported_prefix_wrapper_options(self):
+  for command in ('env -u FOO tail file','env -i tail file','timeout -k 2s 5s tail file','timeout --signal=KILL 5s tail file'):
+   with self.subTest(command=command):
+    req=self.command(command);ctx=A.request_context(self.path)[1];words=command.split()
+    rule={'id':'legacy','scope':'space','space':ctx['space'],'account':ctx['account'],'cwd':ctx['cwd'],'tool':'Bash','match':'exact','pattern':words,'expires':0,'decision':'allow'}
+    A.write(A.store()/'rules.json',[rule]);self.mode('rules')
+    self.assertEqual(A.request_stages(req),[words])
+    self.assertTrue(A.matches(rule,req,ctx));self.assertEqual(A.evaluate(self.path)['action'],'allow')
+    deny={**rule,'decision':'deny'};A.write(A.store()/'rules.json',[deny])
+    self.assertEqual(A.evaluate(self.path)['action'],'deny')
+    with A.locked():self.assertEqual(A.read(A.store()/'rules.json'),[deny])
+    self.command(command+' || tail other-file')
+    self.assertEqual(A.evaluate(self.path)['action'],'deny')
+    self.command(command)
+    info=self.cli('inspect','--request',str(self.path));self.assertTrue(info['stage_exact'][0]);self.assertFalse(info['prefix_available'])
+    self.assertIn('wrapper',info['boundary'])
+    self.assertEqual(A.grant(self.path)['match'],'exact')
+    with self.assertRaisesRegex(ValueError,'wrapper'):A.grant(self.path,match='prefix',prefix=command)
+
+class CommandChains(unittest.TestCase):
+ setUp=fixtures.ApprovalPolicy.setUp
+ mode=fixtures.ApprovalPolicy.mode
+ cli=ExecutionRules.cli
+ command=ExecutionRules.command
+ def test_every_operator_requires_every_component_and_any_branch_deny_wins(self):
+  for operator in ('|','&&','||',';','\n','|&'):
+   with self.subTest(operator=operator):
+    A.write(A.store()/'rules.json',[])
+    req=self.command('tail "$FILE" '+operator+' curl "$URL"')
+    first=self.cli('grant','--request',str(self.path),'--stage','0','--match','prefix','--prefix','tail','--respond')
+    self.assertEqual(first['action'],'wait');self.assertFalse((self.path.parent.parent/'ans'/self.path.name).exists())
+    self.assertFalse(self.cli('inspect','--request',str(self.path))['future_only'])
+    second=self.cli('grant','--request',str(self.path),'--stage','1','--match','prefix','--prefix','curl','--respond')
+    self.assertEqual(second['action'],'allow');(self.path.parent.parent/'ans'/self.path.name).unlink()
+    self.command('curl /restricted');A.grant(self.path,scope='space',decision='deny')
+    self.command('tail file '+operator+' curl /restricted');self.assertEqual(A.evaluate(self.path)['action'],'deny')
+    # Old whole-request hashes must not bypass either component grants or denies.
+    A.write(A.store()/'rules.json',[{**first['rule'],'match':'request','action_key':A.action_key(A.read(self.path))}])
+    self.assertEqual(A.evaluate(self.path)['action'],'wait')
+ def test_mixed_precedence_keeps_structure_and_checks_all_branches(self):
+  command='tail file && jq . || curl URL; rg needle file |& wc -l\nprintf done'
+  req=self.command(command);parsed=A.request_analysis(req)
+  self.assertTrue(parsed['complete']);self.assertEqual(parsed['operators'],['&&','||',';','|&','\n'])
+  self.assertEqual(len(parsed['stages']),6)
+  for i,prefix in enumerate(('tail','jq','curl','rg','wc','printf')):
+   self.cli('grant','--request',str(self.path),'--stage',str(i),'--match','prefix','--prefix',prefix)
+  self.assertEqual(A.evaluate(self.path)['action'],'allow')
+  self.command('curl URL');A.grant(self.path,decision='deny');self.command(command)
+  self.assertEqual(A.evaluate(self.path)['action'],'deny')
+ def test_valid_terminators_blank_lines_and_operator_continuations(self):
+  for command in ('tail file;','tail file\n','\n\ntail file\n\n','\ntail file','tail file;\n\ncurl URL;\n',
+                  'tail file &&\n\ncurl URL','tail file ||\ncurl URL','tail file |\ncurl URL','tail file |&\ncurl URL'):
+   req=self.command(command);parsed=A.request_analysis(req)
+   self.assertTrue(parsed['complete'],command)
+   self.assertEqual([s['argv'][0] for s in parsed['stages']],['tail','curl'] if 'curl' in command else ['tail'])
+ def test_malformed_chains_are_future_only_and_cannot_use_payload_hashes(self):
+  for command in ('tail file &&','tail file ||','tail file |','tail file |&','tail file && || curl URL',
+                  'tail file;;curl URL',';tail file','tail file | | curl URL','tail file & curl URL',
+                  'tail file && (curl URL)','tail file\r\ncurl URL'):
+   req=self.command(command);ctx=A.request_context(self.path)[1];parsed=A.request_analysis(req)
+   self.assertFalse(parsed['complete'],command);self.assertTrue(parsed['boundary'])
+   rule={'id':'legacy','scope':'task','space':ctx['space'],'task':ctx['task'],'account':ctx['account'],'cwd':ctx['cwd'],'tool':'Bash','match':'request','action_key':A.action_key(req),'decision':'allow','expires':0}
+   A.write(A.store()/'rules.json',[rule]);self.mode('rules');self.assertEqual(A.evaluate(self.path)['action'],'wait',command)
+ def test_quoted_and_escaped_operators_are_literal_arguments(self):
+  self.assertEqual(A.shell_stages("printf '%s' 'a&&b||c;d|&e'"),[['printf','%s','a&&b||c;d|&e']])
+  self.assertEqual(A.shell_stages(r'printf a\&\&b\;c\|\&d'),[['printf','a&&b;c|&d']])
+  self.assertEqual(A.shell_stages('printf "line\nbreak"'),[['printf','line\nbreak']])
+  self.assertEqual(A.shell_stages("bash -lc 'tail file && curl URL'"),[['tail','file'],['curl','URL']])
+ def test_history_keeps_mixed_operators_and_creates_future_rules_without_replay(self):
+  req=self.command('tail file && curl URL; jq . |& wc -l');ctx=A.request_context(self.path)[1]
+  A.audit(req,ctx,'ask','Waiting','user');row=A.history_rows()[-1];self.path.unlink()
+  with mock.patch.object(A.subprocess,'run',side_effect=AssertionError('must not replay')):
+   info=A.history_inspect(row['id']);self.assertEqual(info['operators'],['&&',';','|&'])
+   rule=A.grant_history(row['id'],stage=0,match='prefix',prefix='tail')['rule']
+  self.assertEqual(rule['pattern'],['tail']);self.assertEqual(rule['account'],ctx['account'])
+  self.assertFalse(list((A.app_home()/'data/chat-asks/ans').glob('*')))
+ def test_legacy_whole_request_denies_beat_component_allows_without_broadening_scope(self):
+  self.command('tail file');tail=A.grant(self.path,scope='space',match='prefix',prefix='tail')
+  self.command('curl URL');curl=A.grant(self.path,scope='space',match='prefix',prefix='curl')
+  for operator in ('&&',';','\n','||','|','|&'):
+   req=self.command('tail file '+operator+' curl URL');ctx=A.request_context(self.path)[1]
+   deny={**tail,'id':'legacy-request-deny','match':'request','action_key':A.action_key(req),'pattern':['original summary'],'decision':'deny'}
+   self.assertTrue(A.matches(deny,req,ctx));self.assertEqual(A.matching_decision([tail,curl,deny],req,ctx)[0]['action'],'deny')
+   for different in ({**deny,'tool':'other.Bash'},{**deny,'account':'other'},{**deny,'cwd':ctx['cwd']+'-sibling'},
+                     {**deny,'space':'other'},{**deny,'action_key':'different'},{**deny,'expires':time.time()-1}):
+    self.assertEqual(A.matching_decision([tail,curl,different],req,ctx)[0]['action'],'allow')
+   # The same payload identity as an allow never replaces component coverage.
+   self.assertEqual(A.matching_decision([tail,{**deny,'decision':'allow'}],req,ctx)[0],None)
 
 if __name__=='__main__':unittest.main()

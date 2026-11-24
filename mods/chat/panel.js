@@ -32,6 +32,7 @@ import { artifactCli } from "./artview.js";
 import { GREP, publishedIds, taskArtifacts } from "./core/task-artifacts.js";
 import { SH } from "./core/paths.js";
 import { dirs } from "./dirs.js";
+import { openWorkerView } from './task-view.js';
 
 // The task header's shared left edge, and task ids in the Tasks list's monospace (mods/tasks).
 const EDGE = 12, ID_FONT = "JetBrains Mono";
@@ -65,20 +66,18 @@ export function hasTaskThread(node) {
   return (node.children ?? []).some(hasTaskThread);
 }
 
-export function openTaskThread(terminal, task, title) {
-  setShared("tasks.thread", { terminal, task: task ?? null, title: title ?? null, at: Date.now() });
-  run("layout.select", { stack: "panel-body", child: STACK });
-  run("layout.select", { stack: STACK, child: THREAD });
-  // A task opens on its chat; the header's switch shows its terminal.
-  if (find(layout(), BODY)) run("layout.select", { stack: BODY, child: CHAT });
-  run("layout.show", { id: "panel" });
+export function openTaskThread(terminal, task, title, mode = null) {
+  openWorkerView({ terminal, task: task ?? null, title: title ?? null }, { mode });
 }
 
 export const backToTasks = () => run("layout.select", { stack: STACK, child: LIST });
 
 // Chat / Terminal: which the view shows now (the body stack's child).
 export const terminalShown = () => find(layout(), BODY)?.active === TERM;
-export const showWorkerChat = () => run("layout.select", { stack: BODY, child: CHAT });
+export const showWorkerChat = () => {
+  setShared('tasks.thread.termreq', null);
+  run("layout.select", { stack: BODY, child: CHAT });
+};
 // Asks the header for the worker's terminal (the chat's own "Open terminal", a slash menu): it
 // has the timers the swap waits on. Shared "tasks.thread.termreq" = { terminal, at }.
 export const requestWorkerTerminal = (terminal) => setShared("tasks.thread.termreq", { terminal, at: Date.now() });
@@ -108,7 +107,7 @@ export class PanelHost {
   constructor(Chat, head) {
     this.Chat = Chat;
     this.head = head === true;
-    this.termReqAt = shared("tasks.thread.termreq")?.at ?? null;
+    this.termReqAt = null;
     this.restartReqAt = shared("chat.restartreq")?.at ?? null;
     this.busy = false;     // the header's swap to the terminal, under way
     this.cur = null;
@@ -258,8 +257,10 @@ export class PanelHost {
     cx.spawn(async (cx) => {
       try {
         if (find(layout(), TERM)?.content?.terminal !== addr) await pointTerm(addr, cx);
-        run("layout.select", { stack: BODY, child: TERM });
-        run("pane.focus", { terminal: addr });
+        if (shared('tasks.thread')?.terminal === addr) {
+          run("layout.select", { stack: BODY, child: TERM });
+          run("pane.focus", { terminal: addr });
+        }
       } catch (e) {
         toast({ title: "Terminal didn't open", body: plainError(e), level: "error" });
       }
@@ -355,7 +356,7 @@ export class PanelHost {
     if (term && !live && !this.busy) cx.timer.after(0, () => showWorkerChat());
     // The chat's own way to the terminal (requestWorkerTerminal()).
     const rq = shared("tasks.thread.termreq");
-    if (rq && rq.at !== this.termReqAt && rq.terminal === addr && live && Date.now() - rq.at < 5000) {
+    if (!this.busy && rq && rq.at !== this.termReqAt && rq.terminal === addr && live && Date.now() - rq.at < 5000) {
       this.termReqAt = rq.at;
       cx.timer.after(0, (cx) => this.toTerminal(addr, cx));
     }

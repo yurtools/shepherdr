@@ -24,6 +24,8 @@ How to run, build and lay out the code: [docs/develop.md](docs/develop.md).
   `git archive` of the tree, since `herdr_task` lives beside `bin/`.
 - Run full Python installer discovery after the web build finishes: it copies `web/dist`, and Vite replaces
   that directory during builds, so running both at once can break the copy.
+- If sandbox-injected `.agents`/`.codex`/`.aws` entries break installer source copies, test a clean `git archive`
+  of the tested commit without `node_modules`; do not copy injected entries or weaken home guards.
 - herdr-browser's library check: `test/test_herdr_browser_libs.py` fakes ldd and agent-browser; a real missing-library
   Chrome needs gcc, linking a library built with `-Wl,-soname` and then deleted.
 - herdr-browser's AppArmor case: test with `HERDR_BROWSER_USERNS_SYSCTL` and `HERDR_BROWSER_APPARMOR_D` stand-ins; a real

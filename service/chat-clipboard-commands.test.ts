@@ -6,8 +6,10 @@ function method(name:string){const a=source.indexOf(`  ${name}(`);return source.
 const originalWindow=(globalThis as any).window;
 afterEach(()=>{if(originalWindow===undefined)delete (globalThis as any).window;else (globalThis as any).window=originalWindow;});
 let notes:any[]=[];
-const Controls=new Function('toast',`return class { ${method('clipboardAction')} }`)((n:any)=>notes.push(n));
-function view(value:string){const v:any=new Controls();let text=value,range:any={start:0,end:0};v.box={value:()=>text,set_selected_range:(r:any)=>{range=r},replace:(next:string)=>{text=text.slice(0,range.start)+next+text.slice(range.end)},focus(){}};v.saveSoon=()=>{};return v;}
+const Controls=new Function('toast','attach',`return class { ${method('clipboardAction')} ${method('clipboardOwner')} ${method('pasteClipboard')} }`)((n:any)=>notes.push(n),{fromClipboard:async()=>[],drop(){}});
+function view(value:string){const v:any=new Controls();let text=value,range:any={start:0,end:0};v.jobs=[];v.files=[];v.box={value:()=>text,selected_range:()=>range,set_selected_range:(r:any)=>{range=r},replace:(next:string)=>{text=text.slice(0,range.start)+next+text.slice(range.end)},focus(){}};v.saveSoon=()=>{};return v;}
+function pasteCx(v:any,text:string){const cx:any={notify(){},read_from_clipboard:()=>text,spawn:(fn:any)=>{v.jobs.push(fn(cx))}};return cx;}
+
 test('Cut edits only the captured selection as one native edit and copies its Unicode text',()=>{
  const v=view('hello 😀 world');let copied="";v.clipboardAction({kind:'input',action:'cut',value:'hello 😀 world',range:{start:6,end:8}},{write_to_clipboard:(s:string)=>{copied=s}});
  expect(copied).toBe('😀');expect(v.box.value()).toBe('hello  world');
@@ -15,8 +17,8 @@ test('Cut edits only the captured selection as one native edit and copies its Un
 test('a stale clipboard menu does not delete a changed draft',()=>{
  const v=view('new draft');notes=[];v.clipboardAction({kind:'input',action:'cut',value:'old draft',range:{start:0,end:3}},{});expect(v.box.value()).toBe('new draft');expect(notes[0].title).toBe('Text changed');
 });
-test('Paste inserts clipboard text into the captured selection, retaining newlines and one undoable replacement',()=>{
- const v=view('hello world');v.clipboardAction({kind:'input',action:'paste',value:'hello world',range:{start:6,end:11}},{read_from_clipboard:()=> 'two\nlines'});expect(v.box.value()).toBe('hello two\nlines');
+test('Paste inserts clipboard text into the captured selection, retaining newlines and one undoable replacement',async()=>{
+ const v=view('hello world');v.clipboardAction({kind:'input',action:'paste',value:'hello world',range:{start:6,end:11}},pasteCx(v,'two\nlines'));await Promise.all(v.jobs);expect(v.box.value()).toBe('hello two\nlines');
 });
 test('Copy message copies the reply rather than the composer draft',()=>{
  const v=view('unsent draft');let copied='';v.clipboardAction({kind:'reply',action:'message',text:'complete reply'},{write_to_clipboard:(s:string)=>{copied=s}});expect(copied).toBe('complete reply');expect(v.box.value()).toBe('unsent draft');
@@ -76,10 +78,10 @@ test('a stale menu or another chat cannot apply an action to the current draft',
  h.v.clipboardMenu('input',{position:{x:1,y:2}},{stop_propagation(){}});let applied=0;h.v.clipboardAction=()=>applied++;
  h.v.takeClipboardRequest(old,{notify(){}});h.choose('cut');h.v.takeClipboardRequest({...h.request,target:'other-pane'},{notify(){}});expect(applied).toBe(0);
 });
-test('a Paste chosen from the menu replaces the original composer selection',()=>{
+test('a Paste chosen from the menu replaces the original composer selection',async()=>{
  const h=menuHost({start:0,end:6}),input=view('unsent draft');h.v.clipboardAction=input.clipboardAction.bind(input);
  h.v.clipboardMenu('input',{position:{x:1,y:2}},{stop_propagation(){}});h.choose('paste');
- h.v.takeClipboardRequest(h.request,{notify(){},read_from_clipboard:()=> 'new'});expect(input.box.value()).toBe('new draft');
+ h.v.takeClipboardRequest(h.request,pasteCx(input,'new'));await Promise.all(input.jobs);expect(input.box.value()).toBe('new draft');
 });
 
 test('reply menus offer Copy message and an honest keyboard hint; composer menus retain all edit actions',()=>{

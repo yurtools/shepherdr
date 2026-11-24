@@ -51,7 +51,7 @@ describe("attach and paste on macOS (GitHub #774)", () => {
     expect(calls[0].join(" ")).toContain("osascript -l JavaScript");
     expect(got).toHaveLength(1);
     expect(got[0]).toMatchObject({ image: true, temp: true });
-    expect(got[0].path).toMatch(/^\/app\/data\/chat-attach\/pasted-\d{8}T\d{6}\.png$/);
+    expect(got[0].path).toMatch(/^\/app\/data\/chat-attach\/pasted-[a-z0-9-]+\.png$/);
   });
 
   test("pasted Finder files become attachments", async () => {

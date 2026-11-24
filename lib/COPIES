@@ -100,3 +100,4 @@ task-view.js: chat tasks jump spaces-chat tabs-tasks workspace-status-chat
 core/session-find.js: chat tabs-tasks workspace-sessions workspace-launchers new-menu-tasks
 
 bounded-wait.js: chat tabs-tasks tasks spaces-chat coordinator artifacts workspace-status-chat
+clipboard.js: chat

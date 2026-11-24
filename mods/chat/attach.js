@@ -6,57 +6,7 @@
 import { exec, hc, appHome, window } from "herdr";
 import * as fs from "fs/promises";
 
-const IMAGE = /\.(png|jpe?g|gif|webp|bmp|tiff?)$/i;
-const base = (p) => String(p).split("/").filter(Boolean).pop() ?? p;
-export const isImage = (p) => IMAGE.test(p);
-
-// macOS's clipboard (JXA, osascript): its copied files, one "file\t<path>" line each; else its image (a screenshot is
-// PNG or TIFF) written as a PNG to argv[0], "image"; else nothing.
-export const MAC_CLIPBOARD = `ObjC.import("AppKit");
-function run(argv) {
-  const pb = $.NSPasteboard.generalPasteboard;
-  const urls = pb.readObjectsForClassesOptions($([$.NSURL]), $({ NSPasteboardURLReadingFileURLsOnlyKey: true }));
-  if (urls && !urls.isNil() && urls.count > 0) {
-    const out = [];
-    for (let i = 0; i < urls.count; i++) out.push("file\\t" + urls.objectAtIndex(i).path.js);
-    return out.join("\\n");
-  }
-  let png = pb.dataForType($.NSPasteboardTypePNG);
-  if (!png || png.isNil()) {
-    const tiff = pb.dataForType($.NSPasteboardTypeTIFF);
-    if (tiff && !tiff.isNil()) png = $.NSBitmapImageRep.imageRepWithData(tiff).representationUsingTypeProperties($.NSBitmapImageFileTypePNG, $({}));
-  }
-  if (png && !png.isNil() && png.writeToFileAtomically(argv[0], true)) return "image";
-  return "";
-}`;
-
-const pastedName = (ext) => `pasted-${new Date().toISOString().replace(/[-:]/g, "").replace(/\..*/, "")}.${ext}`;
-
-// The clipboard's files or image, here: Wayland's (wl-paste), or macOS's (osascript). [{ path, name, image, temp }],
-// [] when it holds neither; throws when it can't be read at all (no wl-paste), so the chat can say so.
-export async function fromClipboard(os = window()?.platform) {
-  const dir = `${appHome()}/data/chat-attach`;
-  if (os === "macos") {
-    const name = pastedName("png");
-    const r = await exec("sh", ["-c", 'mkdir -p "$1" && exec osascript -l JavaScript -e "$2" "$1/$3"', "x", dir, MAC_CLIPBOARD, name]);
-    if (r.code !== 0) throw new Error("Couldn't read the clipboard.");
-    const out = r.stdout.trim();
-    if (out === "image") return [{ path: `${dir}/${name}`, name, image: true, temp: true }];
-    return paths(out.split("\n").filter((l) => l.startsWith("file\t")).map((l) => l.slice(5)));
-  }
-  const listed = await exec("sh", ["-c", "command -v wl-paste >/dev/null || exit 127; wl-paste --list-types 2>/dev/null; true"]);
-  if (listed.code === 127) throw new Error("Couldn't read the clipboard: pasting files here needs wl-paste (wl-clipboard).");
-  const types = listed.stdout.split("\n");
-  if (types.includes("text/uri-list")) {
-    const r = await exec("sh", ["-c", "wl-paste -n -t text/uri-list 2>/dev/null"]);
-    return paths(r.stdout.split(/\r?\n/).filter((l) => l.startsWith("file://")).map((l) => decodeURIComponent(l.slice(7))));
-  }
-  const type = types.find((t) => /^image\/(png|jpeg|gif|webp|bmp)$/.test(t));
-  if (!type) return [];
-  const name = pastedName(type.split("/")[1].replace("jpeg", "jpg"));
-  const r = await exec("sh", ["-c", 'mkdir -p "$1" && wl-paste -n -t "$2" > "$1/$3" && [ -s "$1/$3" ] && echo ok', "x", dir, type, name]);
-  return r.stdout.trim() === "ok" ? [{ path: `${dir}/${name}`, name, image: true, temp: true }] : [];
-}
+export { fromClipboard, MAC_CLIPBOARD, filePaths, isImage, paths } from "./clipboard.js";
 
 // macOS's own file picker, several files at once (AppleScript's choose file, over the window in front): each chosen
 // path on its own line; nothing when cancelled.
@@ -84,9 +34,6 @@ export async function pick(title = "Attach files", os = window()?.platform) {
     : await exec("sh", ["-c", 'P=/usr/bin/python3; [ -x "$P" ] || P=python3; exec "$P" -I "$1" "$2"', "x", `${appHome()}/mods/chat/pick-files.py`, title]).catch(() => null);
   return { code: r ? r.code : 1, paths: (r?.stdout ?? "").split("\n").map((l) => l.replace(/\r$/, "")).filter(Boolean) };
 }
-
-// Dropped or pasted file paths as attachments.
-export const paths = (list) => list.filter(Boolean).map((p) => ({ path: p, name: base(p), image: isImage(p), temp: false }));
 
 // The message's file lines: each file's path where the agent is. For another machine, a copy
 // lands beside the agent's terminal.

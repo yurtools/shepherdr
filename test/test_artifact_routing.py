@@ -108,3 +108,25 @@ class Ownership(unittest.TestCase):
             with self.assertRaisesRegex(A.Fail, 'not in.*owning space'):
                 A.open_window(self.opts(beside='pane-b'))
         self.assertFalse(any('space.select' in c.args[0] or 'pane.split' in c.args[0] for c in run.call_args_list))
+
+    def test_remote_viewer_name_collision_is_refused_without_renaming_mods(self):
+        app = os.path.join(self.root, 'app')
+        mod = 'art-vm-a-proof-1234'
+        path = os.path.join(app, 'mods', mod)
+        os.makedirs(path)
+        with open(os.path.join(path, 'artifact.js'), 'w') as f:
+            f.write('export const machine = "vm.a";\n')
+        with mock.patch.object(A, 'APP', app):
+            A.remote_viewer_owner(mod, 'vm.a')
+            with self.assertRaisesRegex(A.Fail, 'another machine'):
+                A.remote_viewer_owner(mod, 'vm-a')
+
+            # Exercise pull itself: a cached equal version must not bypass that ownership check.
+            def transfer(argv, **kwargs):
+                if argv[0] == 'tar':
+                    with open(os.path.join(argv[2], '.record.json'), 'w') as f:
+                        json.dump(dict(self.a, publisher=None), f)
+                return types.SimpleNamespace(returncode=0, stdout=b'pack', stderr=b'')
+            with mock.patch.object(A.subprocess, 'run', side_effect=transfer), mock.patch.object(A, 'current', return_value=True):
+                with self.assertRaisesRegex(A.Fail, 'another machine'):
+                    A.pull(self.a['id'], 'vm-a')

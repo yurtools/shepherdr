@@ -1233,6 +1233,22 @@ def current(mod, version):
     return got == [str(version), h] if h else got[:1] == [str(version)]
 
 
+def remote_viewer_owner(mod, machine):
+    """Old mod names sanitize machine punctuation. Refuse a collision rather than reuse another owner's viewer."""
+    folder = os.path.join(APP, "mods", mod)
+    if not os.path.isdir(folder):
+        return
+    try:
+        with open(os.path.join(folder, "artifact.js")) as f:
+            text = f.read()
+        match = re.search(r"^export const machine = (.+);$", text, re.M)
+        owner = json.loads(match.group(1)) if match else None
+    except (OSError, ValueError):
+        owner = None
+    if owner != machine:
+        raise Fail("This artifact's cached viewer belongs to another machine or has no recorded owner; it can't be opened safely here.")
+
+
 def pull(aid, machine, version=None):
     """Copies another machine's artifact into this window's app as art-<machine>-<id> (an older
     version as art-<machine>-<id>--v<n>), unless it's already there. Returns the mod name."""
@@ -1253,6 +1269,7 @@ def pull(aid, machine, version=None):
             art = json.load(f)
         latest = art.get("latest") or art["version"]
         mod = base if art["version"] == latest else version_mod(base, art["version"])
+        remote_viewer_owner(mod, machine)
         if current(mod, art["version"]):
             return mod
         _, files = gather(d)

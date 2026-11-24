@@ -132,14 +132,14 @@ test('folder trust keeps instructions pending across view disposal and sends the
  const sends=calls.filter(c=>c[0]==='hc'&&c[1][0]==='send');expect(sends).toHaveLength(1);expect(sends[0][1][2]).toContain('Only this space.');
 });
 test('a Feature start retains feature, slot, account, instructions and bounded parent context',async()=>{
- const record={id:'feature-one',name:'Feature one',context:'Parent handoff',autoName:true};
+ const record={id:'feature-one',name:'Feature one',space:'space',context:'Parent handoff',autoName:true,started:false};
  await R.startRole({...spec(),role:'feature',template:'feature',slot:'feature-feature-one',featureRecord:record});
  const args=launches()[0][1];expect(args).toContain('herdr.feature=feature-one');expect(args).toContain('herdr.chat.slot=feature-feature-one');
  expect(args.at(-1)).toContain('Parent handoff');expect(args.at(-1)).toContain('feature-name');expect(files[0]).toContain('Only this feature.');
 });
 test('opening a lazy Feature beside starts its exact slot and keeps the original Chat owner',async()=>{
  ss[0].tabs=[{id:'source-tab'},{id:'feature-tab'}];ps=[{pane:'source-pane',tab:'source-tab',terminal:'ordinary'},{pane:'feature-pane',tab:'feature-tab',mod:'chat'}];
- state.set('workspace.features',[{id:'feature-one',space:'space',folder:'/project',name:'One',settings:cfg.everywhere.coordinator}]);
+ state.set('workspace.features',[{id:'feature-one',space:'space',folder:'/project',name:'One',settings:cfg.everywhere.coordinator,started:false}]);
  state.set('coordinator.slots',{'feature-feature-one':{space:'space',tab:'feature-tab',pane:'feature-pane',feature:'feature-one',folder:'/project'}});
  const choice=B.besideChoices('source-pane')[0];await B.openBeside('source-pane',choice);
  expect(launches()[0][1]).toContain('herdr.feature=feature-one');expect(core.get('t1').labels['herdr.chat']).toBe('feature-pane');
@@ -158,7 +158,7 @@ test('ordinary and terminal-only launcher menu actions remain Terminal launches'
 });
 
 test('a Terminal-only Feature saves the exact process log and owning account without opening Chat',async()=>{
- const record={id:'feature-one',space:'space',name:'One'};
+ const record={id:'feature-one',space:'space',name:'One',started:false};
  await R.startRole({...spec(),role:'feature',template:'feature',slot:'feature-feature-one',featureRecord:record});
  await F.captureFeatureSession(record,'t1');
  const update=calls.find(c=>c[0]==='workspace'&&c[1][1]==='feature-update');
@@ -190,10 +190,16 @@ test('a restored slot with no session cannot silently start a different conversa
 });
 
 test('a failed recovery cannot forget a previous launch and start a fresh Feature on retry',async()=>{
- const record={id:'feature-one',space:'space',folder:'/project',name:'One',settings:cfg.everywhere.coordinator};
+ const record={id:'feature-one',space:'space',folder:'/project',name:'One',settings:cfg.everywhere.coordinator,started:false};
  const request={...spec(),role:'feature',template:'feature',slot:'feature-feature-one',featureRecord:record};
  state.set('workspace.role.starts',{':feature-feature-one':{token:'before-reboot',address:'gone',at:1}});
  for(let i=0;i<2;i++)await expect(R.startRole(request)).rejects.toThrow(/session/i);
+ expect(launches()).toEqual([]);
+});
+
+test('a legacy Feature record missing all session associations is not mistaken for a newly created feature',async()=>{
+ const record={id:'feature-one',space:'space',folder:'/project',name:'One',context:'Old feature context',settings:cfg.everywhere.coordinator};
+ await expect(F.openFeature(record)).rejects.toThrow(/saved session/i);
  expect(launches()).toEqual([]);
 });
 

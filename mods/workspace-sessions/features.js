@@ -93,7 +93,7 @@ async function bindFeature(record,terminal,slot,view,chat,candidates) {
  const slots=shared('coordinator.slots')??{},previous=slots[slot];
  const legacyTerminal=chat&&(previous?.pane===view.pane?previous.legacyTerminal:null) || (chat?candidates.find(k=>chatPane(k)===view.pane)?.address:null);
  setShared('coordinator.slots',{...slots,[slot]:{space:record.space,tab:view.tab,pane:view.pane,folder:record.folder,feature:record.id,...(legacyTerminal?{legacyTerminal}:{})}});
- await workspaceCall('feature-update',{id:record.id,tab:view.tab,pane:view.pane,terminal,view:chat?'chat':'terminal'});
+ await workspaceCall('feature-update',{id:record.id,tab:view.tab,pane:view.pane,terminal,view:chat?'chat':'terminal',started:true});
  // Leave old shells intact, but retire their obsolete ownership and view labels.
  // Recheck with core: never strip labels from an agent that started in the meantime.
  for(const old of candidates.filter(k=>k.address!==terminal&&!runningFeatureAssistant(k,record))){

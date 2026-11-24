@@ -134,7 +134,7 @@ async function launchRole(spec, hadPreviousStart) {
     const running = owners.filter(k => runningFeatureAssistant(k,record));
     if (running.length > 1) throw new Error('More than one agent owns this feature. Resolve the duplicate before reopening it.');
     if (!running.length && owners.some(k => !k.foreground?.name)) throw new Error('The Feature Assistant may still be starting. Try again in a moment.');
-    if (!running.length && !record.session && (owners.length || record.terminal || record.tab || record.pane || hadPreviousStart))
+    if (!running.length && !record.session && (record.started!==false || owners.length || record.terminal || record.tab || record.pane || hadPreviousStart))
       throw Object.assign(new Error('This feature has no saved session to resume. Its conversation will not be replaced.'),{hadPreviousStart:true});
     if(running[0]?.restoreLabels){
       const result=await hc(['label',running[0].address,'herdr.role=feature',`herdr.feature=${record.id}`]);

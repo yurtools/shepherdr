@@ -75,6 +75,8 @@ in parallel; the feature's recorded project folder remains its starting context.
   If a reboot leaves the old terminal at a shell, reopening the feature resumes
   the saved conversation with its original account and restores its last view
   when known. A missing saved session or account is reported rather than replaced.
+  Older records with no recoverable session are not treated as newly created
+  features; creating a new feature is an explicit separate action.
   Feature task news and delegated approval reviews return to the owning feature,
   including after a feature agent restarts. Space Autopilot continues to belong
   to the main Assistant. Existing tasks are not transferred when a feature starts.

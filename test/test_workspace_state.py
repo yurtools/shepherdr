@@ -33,10 +33,12 @@ class WorkspaceState(unittest.TestCase):
   a=self.call('feature-create',{'space':'one','name':'A','settings':{'agent':'codex','profile':'secondary'}})
   b=self.call('feature-create',{'space':'one','name':'A'})
   self.assertNotEqual(a['id'],b['id'])
+  self.assertFalse(a['started'])
   self.call('feature-update',{'id':a['id'],'session':'saved-session','argv':['env','CODEX_HOME=/second','codex'],'home':'/second'})
   rec=self.call('feature-get',{'id':a['id']});self.assertEqual(rec['session'],'saved-session');self.assertEqual(rec['settings']['profile'],'secondary')
-  self.call('feature-update',{'id':a['id'],'terminal':'recovered','pane':'chat-pane','tab':'feature-tab','view':'chat'})
+  self.call('feature-update',{'id':a['id'],'terminal':'recovered','pane':'chat-pane','tab':'feature-tab','view':'chat','started':True})
   rec=self.call('feature-get',{'id':a['id']});self.assertEqual((rec['session'],rec['home'],rec['terminal'],rec['view']),('saved-session','/second','recovered','chat'))
+  self.assertTrue(rec['started'])
   self.assertEqual(len(self.call('features')['features']),2)
  def test_ai_title_never_overwrites_manual_rename(self):
   a=self.call('feature-create',{'space':'one','autoName':True})

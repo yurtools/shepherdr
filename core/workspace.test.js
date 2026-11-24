@@ -4,7 +4,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync, spawn } from "node:child_process";
 import { DEFAULTS, parseDefaults, effortForModel, launchPrefix, argvFor, resumeArgv, freshArgv, forkArgv } from "./agents.js";
-import { parseCSV, delimiterFor, language, fileLocation, saveState } from "./documents.js";
+import { parseCSV, delimiterFor, language, fileLocation, saveState, documentKind } from "./documents.js";
+
+test('PDFs are visual read-only documents, including uppercase file extensions', () => {
+  expect(documentKind('/space-a/report.pdf')).toBe('pdf');
+  expect(documentKind('/space-b/report.PDF')).toBe('pdf');
+});
 
 test("account survives model restart, resume, fresh recovery and fork", () => {
   const old = { agent: "codex", argv: ["/opt/bin/codex", "--no-daemon"], home: "/tmp/profile with space", session: "SESSION" };

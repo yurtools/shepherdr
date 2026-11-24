@@ -8,6 +8,7 @@ import { ArrowUpRightIcon } from '@heroicons/react/16/solid'
 import { Markdown } from '@plugins/chat/markdown.tsx'
 import { Primary } from '../ui.tsx'
 import * as R from '@core/recipe.js'
+import { Pdf } from '../Pdf'
 
 type Block = any
 type Props = { recipe: { blocks: Block[] }; asset: (src: string) => string; reply?: (text: string) => Promise<unknown> }
@@ -148,19 +149,6 @@ function Sound({ src, caption, asset }: { src: string; caption?: string; asset: 
   )
 }
 
-/** a PDF inline: its own pages in a frame, with a link to open it whole (phones often can't show one in a frame) */
-function Pdf({ src, caption, asset }: { src: string; caption?: string; asset: (src: string) => string }) {
-  return (
-    <figure className="flex min-w-0 flex-col gap-1.5">
-      <iframe src={asset(src)} title={caption ?? 'PDF'} className="h-[70vh] min-h-[320px] w-full rounded-box bg-well shadow-box" />
-      <figcaption className="flex flex-wrap items-center gap-x-3 text-fg2">
-        {caption ? <span>{caption}</span> : null}
-        <a className="underline" href={asset(src)} target="_blank" rel="noopener noreferrer">Open the PDF</a>
-      </figcaption>
-    </figure>
-  )
-}
-
 /** A picture at its own size, never wider than its column (a flex column would stretch it: #954). One that fails to
  *  load (a version still being copied, a hiccup reaching another machine) is asked for again a few times, under a
  *  new address so no cached failure answers (#983). */
@@ -231,7 +219,7 @@ export function Recipe({ recipe, asset, reply }: Props) {
       case 'image': return <figure className="flex flex-col gap-1.5"><Pic src={asset(b.src)} alt={b.caption ?? ''} w={b.w} h={b.h} />{b.caption ? <figcaption className="text-fg2">{b.caption}</figcaption> : null}</figure>
       case 'video': return <Clip src={b.src} poster={b.poster} caption={b.caption} loop={b.loop} muted={b.muted} autoplay={b.autoplay} asset={asset} />
       case 'audio': return <Sound src={b.src} caption={b.caption} asset={asset} />
-      case 'pdf': return <Pdf src={b.src} caption={b.caption} asset={asset} />
+      case 'pdf': return <Pdf src={asset(b.src)} caption={b.caption} />
       case 'pair': return <Pair b={b} asset={asset} />
       case 'code': return <pre data-selectable className="overflow-x-auto rounded-box bg-well p-3 font-mono text-[0.8125rem] shadow-soft"><code>{b.text}</code></pre>
       case 'callout': return <div className={clsx('rounded-box p-3.5', TONE[b.tone ?? 'info'])}>{b.title ? <p className="font-medium">{b.title}</p> : null}{b.md ? <Markdown text={b.md} /> : null}</div>

@@ -71,6 +71,7 @@ MARKUP_HELPERS = ("dirs.js", os.path.join("core", "paths.js"))
 # A recipe artifact (recipe.json, Shepherdr 3.1) is drawn by the shared recipe view: copied into its installed mod.
 RECIPE_VIEW = os.path.join(os.path.dirname(os.path.realpath(__file__)), "..", "recipe-view.js")
 RECIPE_CORE = os.path.join(os.path.dirname(os.path.realpath(__file__)), "..", "core", "recipe.js")
+PDF_HELPERS = ("pdf-view.js", "pdf-render.py")
 RECIPE_TYPES = {"heading", "text", "list", "table", "chart", "stats", "image", "video", "audio", "pdf", "pair", "code", "callout",
                 "columns", "tabs", "details", "divider", "choice", "form", "button", "buttons"}
 NOTES = os.path.join(STORE, "notes")
@@ -398,6 +399,8 @@ def recipe_parts(dst):
     """The shared recipe view in an installed (or checked) recipe artifact: main.js draws recipe.json natively."""
     shutil.copyfile(RECIPE_VIEW, os.path.join(dst, "recipe-view.js"))
     shutil.copyfile(RECIPE_CORE, os.path.join(dst, "recipe.js"))
+    for helper in PDF_HELPERS:
+        shutil.copyfile(os.path.join(os.path.dirname(RECIPE_VIEW), helper), os.path.join(dst, helper))
     # the recipe as a module the view imports at once (a check then draws every block, not an empty panel)
     with open(os.path.join(dst, "recipe.json")) as f:
         data = f.read()
@@ -2076,8 +2079,8 @@ PREVIEW_TYPES = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg
                  ".mp4": "video/mp4", ".m4v": "video/mp4", ".webm": "video/webm", ".mov": "video/quicktime",
                  ".mp3": "audio/mpeg", ".m4a": "audio/mp4", ".wav": "audio/wav", ".ogg": "audio/ogg", ".pdf": "application/pdf"}
 # the page: its own inline script and styles, its fonts inside; it asks only this server (its clips, sounds and PDFs too)
-VIEWER_CSP = ("default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; font-src data:; "
-              "img-src 'self' data:; media-src 'self'; frame-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'; "
+VIEWER_CSP = ("default-src 'none'; script-src 'unsafe-inline' data: 'wasm-unsafe-eval'; worker-src blob:; style-src 'unsafe-inline'; font-src data:; "
+              "img-src 'self' data:; media-src 'self'; frame-src 'self'; connect-src 'self' data:; base-uri 'none'; form-action 'none'; "
               "frame-ancestors 'none'")
 # an artifact's own file, as the service sends it (service/artifacts.ts)
 FILE_CSP = "sandbox; default-src 'none'; img-src 'self'; media-src 'self'; style-src 'unsafe-inline'"

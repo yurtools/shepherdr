@@ -2552,7 +2552,7 @@ export default class Chat extends View {
     if(target.kind==='web'){cx.open_url(target.url);return;}
     if(target.kind!=='file'){toast({title:'Link could not be opened',body:'Use a website URL or a local project-file path.'});return;}
     const doc=panes().find(p=>p.tab===tab&&p.mod==='workspace-document');
-    const file={file:target.file,on:this.machine??null,line:target.line,column:target.column};
+    const file={file:target.file,on:this.machine??null,line:target.line,column:target.column,root:folder,space:space?.id};
     if(doc){setShared('workspace.document.open',{...file,pane:doc.pane,at:Date.now()});run('pane.focus',{pane:doc.pane});return;}
     const slot=`doc-link-${Date.now()}-${Math.random().toString(36).slice(2)}`;
     const args=origin?{pane:origin.pane,direction:'right',mod:'workspace-document',props:{...file,slot}}

@@ -78,6 +78,11 @@ class Preview(unittest.TestCase):
         code, headers, body = get(link)
         self.assertEqual((code, body.decode()), (200, PAGE))
         self.assertIn("connect-src 'self'", headers["content-security-policy"])
+        policy = headers['content-security-policy']
+        self.assertIn('worker-src blob:', policy)
+        self.assertIn("script-src 'unsafe-inline' data: 'wasm-unsafe-eval'", policy)
+        self.assertNotIn("'unsafe-eval'", policy)
+        self.assertNotIn('https:', policy)
         code, _, body = get(f"{base}/api/artifacts/{self.aid}")
         meta = json.loads(body)
         self.assertEqual((code, meta["title"], meta["version"], meta["kind"]), (200, "How to group tasks", 1, "recipe"))

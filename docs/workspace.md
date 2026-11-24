@@ -298,6 +298,10 @@ before closing its tab. The command `workspace-document.close-file` closes the
 active file.
 
 - Markdown: **Source / Preview** switches between the editor and rendered content.
+- PDF: read-only visual pages with previous/next, zoom, Fit, Reload and Open
+  original. Local native rendering needs Python and Poppler on Linux/macOS;
+  remote files and Windows show a fallback. PDFs never enter the text editor or
+  Save path. See [PDF preview](pdf-preview.md) for limits and proof boundaries.
 - CSV / TSV: **Source / Preview** switches between raw text and a table. Choose
   Auto, Comma, Tab or Semicolon for the delimiter. Arrow controls move through rows.
 - Text and code: **Highlight / Edit** for HTML, CSS, TypeScript, JavaScript, Java,
@@ -321,7 +325,7 @@ active file.
 version loaded. Unsaved drafts are kept under `data/document-drafts/` and recovered
 when reopening that file. A conflicting external change leaves the draft intact;
 **Discard draft and reload** explicitly accepts the disk version. Clean views
-refresh automatically. Remote text files are read only. Office files have no Edit or Save action.
+refresh automatically. Remote text files are read only. Office and PDF files have no Edit or Save action.
 
 Ctrl+Shift+P selects Preview; Ctrl+Shift+O selects Source in a document pane.
 The equivalent commands are `workspace-document.preview`,

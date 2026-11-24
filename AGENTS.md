@@ -98,6 +98,8 @@ How to run, build and lay out the code: [docs/develop.md](docs/develop.md).
   `cd test && python3 -m unittest test_herdr_task.ClassName` (from the repo root the module import fails).
 - If full Python discovery prints `OK` but its tool session exits 143, run the suite through
   `subprocess.run(..., start_new_session=True)` and record its actual return code; `OK` alone does not verify a clean exit.
+- If a restricted Codex sandbox blocks isolated loopback or Unix socket test fixtures, request access for the
+  guarded rerun; keep `home_guard` enabled rather than weakening fixture isolation.
 - herdr-task tests that need a real task list on disk plus a faked `begin()`: reuse Scheduled's setUp/run_cmd/tick_at as class
   attributes (see DoubleStart) instead of subclassing, which reruns Scheduled's tests.
 - Before-checks against main: `git archive origin/main | tar -x -C <scratch>`, copy the branch's new tests in, run there

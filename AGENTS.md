@@ -126,6 +126,8 @@ How to run, build and lay out the code: [docs/develop.md](docs/develop.md).
   service/spaces-sidebar.test.ts.
 - Native render fixtures that import tabs-tasks should run in a separate Bun process: dirs/local/bridge cache fake
   paths across test suites under the CI-pinned Bun version (see service/feature-titles.test.ts).
+- Retained native `InputState.new()` cannot run during render; allocate it in init, load or event callbacks.
+  A scratch loaded-state `herdr-app check --print-spec` exercises eager materialization, not pixels.
 - Check `herdr-app status` before deciding native UI proof is unavailable; `herdr-app shot <absolute path>` captures an
   existing window. Never start another window for a test. No ImageMagick here: crop proof screenshots with python3 PIL.
   Stop a background stub with `kill $(lsof -t -i:<port>)`, never

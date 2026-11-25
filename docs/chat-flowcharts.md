@@ -112,3 +112,26 @@ the built app and a minimal chat WebSocket, not the real service. The
 message, exercising the real update path. Check **Show source**, **Copy** and
 **Show preview**, horizontal scroll, light/dark media and a phone-sized
 viewport. No live account, log or data is used.
+
+## SHEP-44 validation
+
+On Linux with Herdr App 0.1.16 and Bun 1.4.4, the final implementation passed
+shared-copy, JavaScript, shell, JSON and TypeScript helper checks, TypeScript
+typechecking and both Vite builds. The full guarded Bun run passed all 1,131
+tests; Python discovery ran 876 tests with two skips and exited zero.
+Scratch-root installer dry-run, install, doctor and uninstall passed. The
+first sandboxed Bun run could not open its isolated loopback/Unix sockets;
+the same suite passed on the guarded rerun without removing test isolation.
+
+The native synthetic fixture passed the actual Herdr hidden check. The
+production web build rendered the agent's branching flowchart and the user's
+wide graph, retained ordinary fenced code, displayed malformed and incomplete
+source, and changed the incomplete block into a diagram on the WebSocket
+update. At 390 px width, an emulated touch swipe scrolled the graph to its
+right edge without widening the page. Light/dark and desktop/phone resize
+were inspected; switching source and pasting the Copy result into the
+synthetic composer reproduced the original 123 characters exactly.
+
+Native on-screen paint, native pointer scrolling/copy in an actual
+conversation, macOS and physical phone hardware remain unverified. The
+branch was not installed in the live window.

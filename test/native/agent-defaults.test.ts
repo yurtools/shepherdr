@@ -324,7 +324,8 @@ test('SHEP-42: a kept shell, exited terminal and missing terminal are still stop
  owner.foreground={name:'bash',pid:52,argv:['bash'],cwd:'/project'};
  // Even stale Codex status and launch arguments cannot make Bash an Assistant.
  await locate();expect(chat.phase).toBe('unsupported');expect(chat.path).toBeNull();
- chat.phase='finding';owner.state='exited';await locate();expect(chat.phase).toBe('unsupported');
+ chat.phase='finding';owner.state='finished';owner.foreground={name:'codex',pid:52,argv:owner.argv,cwd:'/project'};
+ await locate();expect(chat.phase).toBe('unsupported');
  chat.phase='finding';
  getResults.set(owner.address,{code:3,stdout:'',stderr:JSON.stringify({error:{kind:'not_found',message:'no terminal "owner"'}})});
  await locate();expect(chat.phase).toBe('unsupported');

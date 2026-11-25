@@ -30,7 +30,7 @@ import { typing, working } from './typing.ts'
 import { suggestionOf, suggestionsOn } from './suggest.ts'
 import { JobsSheet, JobsTag, NeedsYou, openSubagent, TurnLine, useSubagent, WorkingLine } from './activity.tsx'
 import { ClockIcon, CpuChipIcon, ExclamationTriangleIcon } from '@heroicons/react/16/solid'
-import { AskedRow, Band, BriefRow, Chips, EndedRow, ErrorRow, NoteRow, Notice, HeadRow, ImagesLine, NewsRow, onTerminal, PilotRow, PublishingRow, questionsBelow, ReplyLine, Thumbs, WORDS } from './rows.tsx'
+import { AskedRow, Band, BriefRow, Chips, DiscardDialog, EndedRow, ErrorRow, NoteRow, Notice, HeadRow, ImagesLine, NewsRow, onTerminal, PilotRow, PublishingRow, questionsBelow, ReplyLine, Thumbs, WORDS } from './rows.tsx'
 import { AgentLine, openModelMenu, openRestart, RestartSheet } from '@client/restart.tsx'
 import { Sheet, SheetClose } from '@client/Stack.tsx'
 import { expandPicked, forMarkdown, mentionItems, MentionList, pickable, takeItem, useReach, withChips, type Item } from './mentions.tsx'
@@ -3072,7 +3072,7 @@ export default definePlugin({
     reg.composerAbove.push({ order: 5, View: WorkingLine }, { order: 6, View: NeedsYou }, { order: 8, View: Held })
     reg.composerAbove.push({ order: 10, View: JobsTag })
     onTerminal(openTerminal)
-    reg.overlays.push(JobsSheet, SubagentSheet)
+    reg.overlays.push(JobsSheet, SubagentSheet, DiscardDialog)
     reg.messageParts.push({ order: 60, View: ({ msg, chat, from }) => (msg.question ? <QuestionCard q={msg.question} chat={chat} msg={msg.id} from={from} /> : null) })
     reg.messageParts.push({ order: 61, View: ({ msg, chat }) => (msg.secret ? <SecretCard ask={msg.secret} chat={chat} source={msg.secret.by ? { id: msg.secret.by.ref, title: msg.secret.by.title } : undefined} /> : null) })
     reg.composerPlus = PlusMenu

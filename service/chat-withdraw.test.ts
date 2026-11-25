@@ -1,9 +1,14 @@
 import { expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
+import { readFileSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { act } from "./actions.ts";
 import { forgetAll } from "./send-once.ts";
 
 test("only the exact still-held chat message can be withdrawn; history receives nothing", async () => {
+  const data = mkdtempSync(join(tmpdir(), "shep-withdraw-")), before = process.env.SHEPHERDR_DATA;
+  process.env.SHEPHERDR_DATA = data; forgetAll();
+  try {
   const sent: string[] = [];
   const terminals = new Map([
     ["t55", { state: "live", status: { state: "working", app: "codex" } }],
@@ -24,6 +29,11 @@ test("only the exact still-held chat message can be withdrawn; history receives 
   terminals.get("t55")!.status.state = "idle";
   await Bun.sleep(1200);
   expect(sent).toEqual([]);
+  } finally {
+    if (before === undefined) delete process.env.SHEPHERDR_DATA; else process.env.SHEPHERDR_DATA = before;
+    forgetAll();
+    rmSync(data, { recursive: true, force: true });
+  }
 });
 
 test("native stale held row cannot resend or pretend an already claimed entry was withdrawn", () => {

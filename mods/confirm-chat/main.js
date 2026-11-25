@@ -6,7 +6,7 @@
 
 import { View, div } from "gpui-kit";
 import { v_flex } from "gpui-base";
-import { run, props, closeOverlay, theme } from "herdr";
+import { run, props, closeOverlay, theme, setShared } from "herdr";
 import { dialogFooter, TEXT } from "./ui.js";
 
 export default class Confirm extends View {
@@ -18,6 +18,9 @@ export default class Confirm extends View {
   yes() {
     const p = props();
     closeOverlay(p.overlay);
+    // The chat revalidates the selected provider turn before opening its
+    // Terminal. The dialog itself never rewinds or sends a CLI key.
+    if (p.discard) { setShared("chat.discardreq", { ...p.discard, at: Date.now() }); return; }
     run(p.command.name, p.command.args ?? {});
   }
 

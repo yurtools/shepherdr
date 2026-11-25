@@ -8,6 +8,7 @@ import { appendFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { sendBody, steerNow, messageBody, refusal, reactionLine, mentionedIn, taskTag } from "../core/send.js";
 import { kindOf } from "../core/chat-reader.js";
+import { discardableTurn, FIND, LOG, records } from "../core/chat-log.js";
 import { WORDS } from "../core/chat-view.js";
 import { settle } from "../core/pending.js";
 import * as AGa from "../core/agents.js";
@@ -541,6 +542,33 @@ export async function act(hub: Hub, b: any, compat: Compat): Promise<unknown> {
       if (next !== bar) await compat.shared.set("spaces-chat", next);
     }
     return { ok: true };
+  }
+  if (b?.type === "discard-latest" && typeof b.chat === "string" && typeof b.message === "string" && typeof b.token === "string") {
+    // The person confirms the actual rewind in Codex's own terminal. No keys
+    // or history writes here: verify the exact latest turn and original writer,
+    // then let the page open that terminal, not a second agent.
+    const a = chat(b.chat), reader = compat.reader?.(a), path = reader?.path;
+    const pid = reader?.pid, session = sessionOf("codex", path);
+    if (reader?.kind !== "codex" || reader.pinned || !pid || !session || !path) throw new Error("That Codex conversation isn't live.");
+    if (reader.historyMode !== "paginated") throw new Error("This Codex history format does not support native turn revert.");
+    const check = async () => {
+      if (chat(b.chat) !== a || held.some(m => m.addr === a && m.hub === hub)) throw new Error("The chat changed or has queued messages. Try again once they are withdrawn or settled.");
+      const r = await hc(["get", a, "--json"]);
+      let t: any = null; try { t = JSON.parse(r.stdout); } catch {}
+      if (r.code || t?.state !== "live" || kindOf(t) !== "codex" || t.foreground?.pid !== pid ||
+          !["idle", "done"].includes(t.status?.state)) throw new Error("Stop the original agent and wait until it is idle.");
+    };
+    await check();
+    const machine = a.includes("/") ? a.split("/")[0] : null;
+    const f = await exec(hub, ["sh", "-c", FIND, "chat", "codex", String(pid)], machine);
+    if (f.code || f.stdout.trim() !== path) throw new Error("The active session changed. Select the latest prompt again.");
+    const log = await exec(hub, ["sh", "-c", LOG, "log", "page", path, "999999999999999", "200"], machine);
+    const parsed = records(log.stdout);
+    const latest = !log.code && parsed.head[3] === "paginated" && discardableTurn(parsed.records, session);
+    if (!latest || !latest.closed || latest.id !== b.message || latest.token !== b.token)
+      throw new Error("That is no longer the latest completed or interrupted turn.");
+    await check();
+    return { ok: true, terminal: true };
   }
   if (b?.type === "rewind" && typeof b.chat === "string" && typeof b.message === "string") {
     // the CLI's own rewind on that message, as the window's: Claude Code's /rewind lists the prompts newest last (Up

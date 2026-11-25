@@ -391,9 +391,10 @@ export function argvFor(pick, old) {
   return { argv: [...prefix, ...a], resume: false, base: [...prefix, ...a] };
 }
 
-// The conversation's id, from its log's file name.
+// The logical conversation's id, not the physical generation id after a
+// paginated Codex revert (rollout-…-<thread>_<generation>.jsonl).
 export function sessionOf(kind, path) {
-  const m = kind === "claude" ? /([0-9a-f-]{36})\.jsonl$/.exec(path ?? "") : /([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$/.exec(path ?? "");
+  const m = kind === "claude" ? /([0-9a-f-]{36})\.jsonl$/.exec(path ?? "") : /([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?:_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})?\.jsonl$/.exec(path ?? "");
   return m ? m[1] : null;
 }
 

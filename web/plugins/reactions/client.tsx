@@ -24,6 +24,7 @@ export const RewindIcon = (p: { className?: string }) => (
 import type { Message } from '@shared/types.ts'
 import { canReply, startReply } from '@plugins/chat/reply.ts'
 import { forkChat } from '@plugins/chat/fork.ts'
+import { discardChat } from '@plugins/chat/rows.tsx'
 import { frequent, loadEmoji, quickRow, remember, search, setTone, tone, TONES, withTone, type Emoji, type Group } from './emoji.ts'
 import { setDown } from './leave.ts'
 
@@ -374,7 +375,7 @@ function Lifted({ msg, chat }: { msg: Message; chat: string }) {
         <Row msg={msg} chat={chat} pick={pick} />
       </div>
       {canReply(msg) ? (
-        <div ref={menu} role="menu" aria-label="Message" className={clsx('popover absolute w-56', you ? 'origin-top-right' : 'origin-top-left')}>
+        <div ref={menu} role="menu" aria-label="Message" className={clsx('popover absolute', msg.discard ? 'w-72 max-w-[calc(100vw-24px)]' : 'w-56', you ? 'origin-top-right' : 'origin-top-left')}>
           <MenuItem icon={<ReplyIcon className={ic} />} onClick={() => startReply(chat, msg)}>
             Reply
           </MenuItem>
@@ -395,6 +396,10 @@ function Lifted({ msg, chat }: { msg: Message; chat: string }) {
               {msg.card || (msg.who !== 'agent' && msg.text?.trimStart().startsWith('/')) ? null : msg.who === 'agent' ? (
                 <MenuItem icon={<ForkIcon className={ic} />} onClick={() => leave(() => void forkChat(chat).catch((e) => alert(e.message)))}>
                   Fork
+                </MenuItem>
+              ) : msg.discard ? (
+                <MenuItem icon={<RewindIcon className={ic} />} onClick={() => leave(() => void discardChat(chat, msg))}>
+                  Discard mistaken turn…
                 </MenuItem>
               ) : (
                 <MenuItem icon={<RewindIcon className={ic} />} onClick={() => leave(() => void act({ type: 'rewind', chat, message: msg.id } as never).catch((e) => alert(e.message)))}>

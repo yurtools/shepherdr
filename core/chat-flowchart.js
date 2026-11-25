@@ -2,18 +2,10 @@
 // never Mermaid directives, HTML, CSS, callbacks, links or external resources.
 // Dagre is the same pinned, DOM-free layout engine in both Chat clients.
 import dagre from './vendor/dagre.js';
+import { FLOW_WORDS, FLOW_LINE } from './chat-flowchart-geometry.js';
+export * from './chat-flowchart-geometry.js';
 
 export const FLOW_LIMITS = Object.freeze({ source: 4000, nodes: 20, edges: 28, label: 100, extent: 3600, points: 240, sourceLines: 120, perMessage: 12 });
-export const FLOW_WORDS = Object.freeze({
-  source: 'Show source', preview: 'Show preview',
-  incomplete: 'Preview waits for a closing fence.',
-  unsupported: 'This Mermaid syntax is not supported in Chat. Edit or copy the source below.',
-  invalid: 'Could not read this flowchart. Check the syntax or copy the source below.',
-  large: 'This flowchart is too large to preview. Copy the source to view it elsewhere.',
-  many: 'This message has too many diagrams to preview them all. Copy the source below.',
-  scroll: 'Scroll to see the rest of the diagram.',
-  shortened: 'Source display shortened. Copy gets the full source.',
-});
 
 const fail = reason => { throw reason; };
 const space = s => s.replace(/^\s+/, '');
@@ -151,7 +143,6 @@ function labelLines(text, max = 19) {
   return lines;
 }
 
-export const FLOW_FONT = 13, FLOW_LINE = 18;
 const textWidth = lines => Math.max(1, ...lines.map(s => [...s].reduce((n,c) => n + (c.codePointAt(0) > 255 ? 14 : 8), 0)));
 const point = p => ({ x: p.x, y: p.y });
 function shapePoint(n, p) {
@@ -223,38 +214,6 @@ export function flowchart(source, closed = true) {
   cache.set(source, result);
   if (cache.size > CACHE_MAX) cache.delete(cache.keys().next().value);
   return result;
-}
-
-// Arrowheads are triangles, not executable SVG markers. Both surfaces draw the
-// same immutable points with their own theme colors.
-export function arrowTriangle(tip, previous) {
-  const dx = tip.x - previous.x, dy = tip.y - previous.y, l = Math.hypot(dx, dy);
-  if (!l) return [];
-  const x = dx/l, y = dy/l;
-  return [tip, { x: tip.x-9*x+4*y, y: tip.y-9*y-4*x }, { x: tip.x-9*x-4*y, y: tip.y-9*y+4*x }];
-}
-export function nodePolygon(n) {
-  const x = n.x, y = n.y, w = n.width/2, h = n.height/2;
-  if (n.shape === 'diamond') return [{x,y:y-h},{x:x+w,y},{x,y:y+h},{x:x-w,y}];
-  if (n.shape === 'hexagon') return [{x:x-w+14,y:y-h},{x:x+w-14,y:y-h},{x:x+w,y},{x:x+w-14,y:y+h},{x:x-w+14,y:y+h},{x:x-w,y}];
-  return [];
-}
-export const FLOW_VIEW_HEIGHT = 420;
-export function fitFlowchart(drawing, width) {
-  const scale = Math.max(0.85, Math.min(1, Math.max(1,width) / drawing.width));
-  return { scale, width: Math.ceil(drawing.width*scale), height: Math.ceil(drawing.height*scale) };
-}
-
-export function chartSize(drawing, available) {
-  const fit = fitFlowchart(drawing, available);
-  const width = Math.min(available, fit.width);
-  const height = Math.min(FLOW_VIEW_HEIGHT, fit.height);
-  return { ...fit, viewportWidth: width, viewportHeight: height, scroll: fit.width > width || fit.height > height };
-}
-
-export function chartHeight(drawing, available) {
-  const fit = chartSize(drawing, available);
-  return fit.viewportHeight + (fit.scroll ? 22 : 0);
 }
 
 // Enormous unsupported diagrams must still copy in full, without creating

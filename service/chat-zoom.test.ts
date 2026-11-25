@@ -5,6 +5,7 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 import { fakeHerdr } from "./fake-herdr";
 import { fakeGpuiBase, fakeGpuiKit } from "./fake-gpui";
+import { flowchart, chartHeight, fitCamera, FLOW_MAX_ZOOM } from "../core/chat-flowchart.js";
 
 let zoom = 1;
 let comfortable = false;
@@ -38,6 +39,7 @@ mock.module("gpui-base", () => fakeGpuiBase({ v_flex: el, h_flex: el, v_virtual_
 (globalThis as any).localStorage ??= { getItem: () => null, setItem: () => {}, removeItem: () => {} };
 
 const { default: Chat } = await import("../mods/chat/main.js");
+const { default: FlowchartViewer } = await import("../mods/chat-flowchart/main.js");
 const chat = () => {
   const c: any = Object.create(Chat.prototype);
   Object.assign(c, { heights: new Map(), measuredAt: new Map(), measureGen: 0, width: 600, range: null, pinned: false, cardW: new Map() });
@@ -181,6 +183,50 @@ test("native flowchart source and copy controls route separately at the pane's z
  c.clickRow(row.id,[row],cx,[34]);
  expect(c.diagramSources.has(row.id)).toBe(false);
  expect(c.historyRevision).toBe(2);
+});
+
+test("native historical diagram expands the prepared geometry at narrow widths and zoom without moving chat",()=>{
+  zoom=1.7;comfortable=false;const c=chat();
+  const code='graph LR; '+Array.from({length:13},(_,i)=>`N${i}[Stage ${i+1}]`).join(' --> ')+'  ';
+  const drawing=flowchart(code).drawing!;
+  const rows=[{id:'old:c0',kind:'diagram',side:'user',code,drawing,result:{drawing},bot0:true},
+    {id:'old:c1',kind:'diagram',side:'agent',code,drawing,result:{drawing},bot0:true}];
+  c.paneSize({width:320*zoom,height:800*zoom});c.scrollTop=404;c.pinned=false;c.historyRevision=7;
+  const right=c.edges().right;
+  projectOverlay=undefined;
+  c.notePress({local_position:{x:(right-270)*zoom,y:100*zoom}});
+  c.clickRow(rows[0].id,rows,cx,[100,100]);expect(projectOverlay).toBeUndefined();
+  c.notePress({local_position:{x:(right-40)*zoom,y:100*zoom}});
+  c.pressMoved=true;c.clickRow(rows[0].id,rows,cx,[100,100]);expect(projectOverlay).toBeUndefined();
+  c.pressMoved=false;c.clickRow(rows[0].id,rows,cx,[100,100]);
+  expect(projectOverlay).toMatchObject({mod:'chat-flowchart',kind:'dialog',modal:true,props:{drawing,code}});
+  expect(projectOverlay.props.drawing).toBe(drawing);
+  expect(c.scrollTop).toBe(404);expect(c.pinned).toBe(false);expect(c.historyRevision).toBe(7);
+  expect(c.guessBare(rows[0])).toBe(18+chartHeight(drawing,214));
+  // Find targets the selected diagram, including when the fenced source is shown.
+  c.findQuery=()=> 'Stage 13'; c.findIdx=1;
+  const sourceRow={...rows[1],kind:'code',drawing:undefined};
+  expect(c.findDiagram([rows[0],sourceRow])).toBe(sourceRow);
+  c.expandFindDiagram([rows[0],sourceRow]);expect(projectOverlay.props.drawing).toBe(drawing);
+});
+
+test("native expanded viewer owns wheel, keyboard, drag and zoom; resize clamps the camera",()=>{
+  zoom=1.7;const v:any=Object.create(FlowchartViewer.prototype);
+  v.code='graph LR; '+Array.from({length:13},(_,i)=>`N${i}[Stage ${i+1}]`).join(' --> ')+'  ';
+  v.drawing=flowchart(v.code).drawing;v.room={width:260,height:60};v.camera=fitCamera();
+  let stops=0,notifies=0,copied='',closed=0;v.dismiss=()=>closed++;v.handle={focus(){}};
+  const eventCx={stop_propagation(){stops++},notify(){notifies++},write_to_clipboard(s:string){copied=s},timer:{after(){return {cancel(){}}}}};
+  v.key({key:'1'},eventCx);expect(v.view().scale).toBe(1);
+  v.key({key:'home'},eventCx);expect(v.view().left).toBeCloseTo(0);
+  v.wheel({delta:{x:0,y:-100*zoom},modifiers:{shift:true}},eventCx);expect(v.view().left).toBeCloseTo(-100);
+  v.down({position:{x:200,y:100}},eventCx);v.move({position:{x:100,y:80}},eventCx);expect(v.view().left).toBeLessThan(-150);
+  v.key({key:'end'},eventCx);expect(v.view().left+v.view().width).toBeCloseTo(v.room.width);
+  v.size({width:600*zoom,height:200*zoom},eventCx);expect(v.view().left+v.view().width).toBeCloseTo(600);
+  v.key({key:'0'},eventCx);expect(v.view().width).toBeLessThanOrEqual(v.room.width);
+  for(let i=0;i<25;i++)v.key({key:'+'},eventCx);expect(v.view().scale).toBe(FLOW_MAX_ZOOM);
+  v.key({key:'c',modifiers:{control:true}},eventCx);expect(copied).toBe(v.code);
+  v.key({key:'escape'},eventCx);expect(closed).toBe(1);
+  expect(stops).toBeGreaterThan(30);expect(notifies).toBeGreaterThan(30);
 });
 
 test("a long reply keeps its estimated space until native Markdown finishes, even after the old settling deadline",()=>{

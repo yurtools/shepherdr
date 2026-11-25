@@ -6,7 +6,7 @@ import { startRole, roleStart, featureTask } from './role-launch.js';
 import {readShepherdr} from './coordinator.js';
 import LinkedMarkdown from './linked-markdown.js';
 import { fencedParts, isMermaid, mermaidParts } from './core/chat-fences.js';
-import { flowchart, sourceForDisplay, chartHeight, FLOW_LIMITS, FLOW_WORDS, FLOW_VIEW_HEIGHT } from './core/chat-flowchart.js';
+import { flowchart, sourceForDisplay, chartHeight, FLOW_LIMITS, FLOW_WORDS } from './core/chat-flowchart.js';
 import { nativeFlowchart } from './flowchart.js';
 import { chatLink, chatLinkScan, scanChatLink } from './core/chat-links.js';
 import { startFeature, featureRequest, workspaceCall } from "./features.js";
@@ -271,7 +271,10 @@ function codeRows(p,id,n,clip,side) {
     drawing:p.preview?p.drawing:undefined,result:p.result,closed:p.closed,eligible:p.eligible,display:p.display,error:p.error,clip:p.preview?undefined:clip };
   return [head,body];
 }
-const diagramAvailable = (width,column,side) => Math.max(1,Math.min(width-36,column,side==='user'?Math.max(240,Math.floor(Math.min(width,column)*0.8)):Infinity)-24);
+// col() leaves 18 px on each side; a user's right-aligned card is further
+// limited by most. The body has two 12 px pads and two 1 px borders.
+const diagramCardWidth = (width,column,side) => Math.max(1,Math.min(width-36,column,side==='user'?Math.max(240,Math.floor(Math.min(width,column)*0.8)):Infinity));
+const diagramAvailable = (width,column,side) => Math.max(1,diagramCardWidth(width,column,side)-26);
 const DIAGRAM_SOURCE_W=100, DIAGRAM_COPY_W=72;
 
 let bound = false;
@@ -418,6 +421,7 @@ export default class Chat extends View {
           { keystroke: "escape", action: "chat_find_close", context: `chat_find > ${ctx}` },
           { keystroke: "enter", action: "chat_find_next", context: `chat_find > ${ctx}` },
           { keystroke: "shift-enter", action: "chat_find_prev", context: `chat_find > ${ctx}` },
+          { keystroke: "ctrl-enter", action: "chat_find_expand", context: `chat_find > ${ctx}` },
           { keystroke: "up", action: "chat_recall_up", context: `chat_recall > ${ctx}` },
           { keystroke: "down", action: "chat_recall_down", context: `chat_recall > ${ctx}` });
       }
@@ -2124,6 +2128,7 @@ export default class Chat extends View {
     const total = this.history?.snapshot?.found===matches?this.history.snapshot.findTotal:matches.reduce((n,m)=>n+m.n,0);
     const q = this.findQuery();
     const count = !q ? "" : total ? `${Math.min(this.findIdx, total - 1) + 1} of ${total}` : WORDS.noMatches;
+    const matchingDiagram = this.findDiagram(rows, matches);
     const icon = (id, path, fn) => div().id(id).size(22).flex_none().flex().items_center().justify_center().rounded(6).cursor_pointer()
       .text_color(t.dim).hover((s) => s.bg(t.hover).text_color(t.foreground))
       .on_click((_e, cx) => { cx.stop_propagation(); fn(cx); cx.notify(); })
@@ -2134,6 +2139,7 @@ export default class Chat extends View {
       .on_action("chat_find_close", take((cx) => this.closeFind(cx)))
       .on_action("chat_find_next", take((cx) => this.findStep(1, rows, cx)))
       .on_action("chat_find_prev", take((cx) => this.findStep(-1, rows, cx)))
+      .on_action("chat_find_expand", take(() => this.expandFindDiagram(rows)))
       .child(svg("mods/chat/search.svg").size(14).flex_none().text_color(t.dim))
       .child(Input.new(this.findBox).flex_1().text_size(13).text_color(t.foreground))
       .child(div().flex_none().font_family(settings().font_family ?? "JetBrains Mono").text_size(11.5).text_color(t.dim).child(count))
@@ -2143,6 +2149,9 @@ export default class Chat extends View {
         .child(this.loadingEarlier ? "Loading…" : WORDS.searchEarlier)))
       .child(icon("find-prev", "mods/chat/chevron-up.svg", (cx) => this.findStep(-1, rows, cx)))
       .child(icon("find-next", "mods/chat/chevron-down.svg", (cx) => this.findStep(1, rows, cx)))
+      .when(!!matchingDiagram,el=>el.child(div().id("find-expand-diagram").h(24).px(6).flex_none().rounded(6)
+        .cursor_pointer().text_size(12).text_color(t.accent).accessibility_label("Expand diagram (Ctrl+Enter)")
+        .hover(st=>st.bg(t.hover)).on_click(take(()=>this.expandFindDiagram(rows))).child("Expand ↗")))
       .child(icon("find-x", "mods/chat/x.svg", (cx) => this.closeFind(cx)));
   }
 
@@ -3640,7 +3649,7 @@ export default class Chat extends View {
     const q = this.findQuery().toLowerCase();
     if (q && String(x.text).toLowerCase().includes(q)) return null;
     const w = Math.max(240, Math.floor(Math.min(this.width, this.column()) * 0.8)) - 24;
-    const est = ps.map((p) => (p.type === "md" ? wrapLines(p.text, w) * LINE_H : p.preview ? 50 + Math.min(FLOW_VIEW_HEIGHT, p.drawing.height) : 34 + 16 + (p.error?44:0) + (p.display??p.code).split("\n").length * 19));
+    const est = ps.map((p) => (p.type === "md" ? wrapLines(p.text, w) * LINE_H : p.preview ? 52 + chartHeight(p.drawing,diagramAvailable(this.width,this.column(),x.kind)) : 34 + 16 + (p.error?44:0) + (p.display??p.code).split("\n").length * 19));
     if (est.reduce((a, b) => a + b, 0) <= FOLD_TALL * LINE_H) return null;
     if (this.unfolded.has(x.id)) return { open: true, clips: new Map(), last: ps.length - 1 };
     const clips = new Map();
@@ -3781,7 +3790,7 @@ export default class Chat extends View {
       case "video": return 24;
       case "codehead": return 34;
       case "code": return 16 + (x.error?44:0) + (x.clip ?? String(x.display??x.code).split("\n").length * 19);
-      case "diagram": return 16 + chartHeight(x.drawing,diagramAvailable(this.width,this.column(),x.side));
+      case "diagram": return 18 + (x.bot0?0:6) + chartHeight(x.drawing,diagramAvailable(this.width,this.column(),x.side));
       case "fold": case "queued": return 26;
       case "day": return 18;
       case "user": case "pending": return 30 + (x.clip??lines(x.text, w * 0.8 - 24) * 20) + (x.from ? 17 : 0) + ((x.images || x.files?.length) ? 20 : 0);
@@ -4306,6 +4315,12 @@ export default class Chat extends View {
         this.pinned=false;
       }else this.copy(row.code,row.id,cx);
     }
+    else if (row.kind === "diagram") {
+      // The preview and its Expand action are one list-routed target, not a
+      // nested scrolling/focus surface. Ignore the blank beside a user card.
+      const right=this.edges().right, left=right-diagramCardWidth(this.width,this.column(),row.side);
+      if(!this.pressMoved&&this.press?.x>=left&&this.press.x<=right)this.openDiagram(row);
+    }
     else if (row.kind === "queued" && this.kind === "claude" && !this.steering) this.sendQueuedNow(cx);
     else if (row.kind === "pending" && row.failed) { const p = this.pending.find((x) => x.id === row.id); if (p?.msg) this.retry(p, cx); }
     else if (row.kind === "artifact" && row.art) this.openArtifact(row);
@@ -4823,6 +4838,26 @@ export default class Chat extends View {
       }
       cx.notify();
     }));
+  }
+
+  findDiagram(rows,matches=this.findMatches(rows)) {
+    const match=this.findRow(matches),row=match&&rows[match.index];
+    return row?.result?.drawing?row:null;
+  }
+
+  expandFindDiagram(rows) {
+    if(this.history?.snapshot&&(!this.historyCurrent(this.history.snapshot)||this.history.snapshot.rows!==rows))return;
+    const row=this.findDiagram(rows);
+    if(row)this.openDiagram(row);
+  }
+
+  openDiagram(row) {
+    const drawing=row.drawing??row.result?.drawing;
+    if(!drawing)return;
+    // The modal owns its input and camera; the conversation/list remains where
+    // it is. Pass prepared plain geometry, not a second parsing/layout job.
+    openOverlay({mod:"chat-flowchart",kind:"dialog",modal:true,frame:"none",width:0.92,height:0.9,
+      props:{drawing,code:row.code}});
   }
 
   // The viewer (mods/chat-image) on these images, from the i-th.

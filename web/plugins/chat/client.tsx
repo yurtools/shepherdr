@@ -24,7 +24,7 @@ import { dayLabel } from './days.ts'
 import { FindBar, openFind } from './find.tsx'
 import { Fold } from './fold.tsx'
 import { Markdown } from './markdown.tsx'
-import { MermaidMessage } from './flowchart.tsx'
+import { MermaidMessage, FlowchartOverlay } from './flowchart.tsx'
 import { answeredBy, cancelReply, canReply, isArtifact, jumpTo, startReply } from './reply.ts'
 import { typing, working } from './typing.ts'
 import { suggestionOf, suggestionsOn } from './suggest.ts'
@@ -3059,7 +3059,7 @@ export default definePlugin({
     reg.composerAbove.push({ order: 5, View: WorkingLine }, { order: 6, View: NeedsYou }, { order: 8, View: Held })
     reg.composerAbove.push({ order: 10, View: JobsTag })
     onTerminal(openTerminal)
-    reg.overlays.push(JobsSheet, SubagentSheet)
+    reg.overlays.push(JobsSheet, SubagentSheet, FlowchartOverlay)
     reg.messageParts.push({ order: 60, View: ({ msg, chat, from }) => (msg.question ? <QuestionCard q={msg.question} chat={chat} msg={msg.id} from={from} /> : null) })
     reg.messageParts.push({ order: 61, View: ({ msg, chat }) => (msg.secret ? <SecretCard ask={msg.secret} chat={chat} source={msg.secret.by ? { id: msg.secret.by.ref, title: msg.secret.by.title } : undefined} /> : null) })
     reg.composerPlus = PlusMenu

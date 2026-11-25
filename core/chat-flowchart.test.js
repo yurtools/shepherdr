@@ -2,7 +2,7 @@ import { expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { fencedParts, mermaidParts, isMermaid } from './chat-fences.js';
 import { mediaIn } from './chat-view.js';
-import { flowchart, FLOW_LIMITS, FLOW_WORDS, chartSize, chartHeight, arrowTriangle, sourceForDisplay } from './chat-flowchart.js';
+import { flowchart, FLOW_LIMITS, FLOW_WORDS, fitFlowchart, chartHeight, fitCamera, flowCamera, panFlowchart, zoomFlowchart, FLOW_OPEN_HEIGHT, FLOW_VIEW_HEIGHT, FLOW_MAX_ZOOM, arrowTriangle, sourceForDisplay } from './chat-flowchart.js';
 
 const fence = (s, lang='mermaid', ticks='```') => ticks+lang+'\n'+s+'\n'+ticks;
 const branch = 'flowchart TD\nA([Start]) --> B{Ready?}\nB -->|Yes| C[Done]\nB -- No --> D[Revise]\nD -.-> B';
@@ -89,18 +89,63 @@ test('reject invalid, unsupported, active configuration and oversized inputs wit
   expect(sourceForDisplay(branch)).toEqual({text:branch,shortened:false});
 });
 
-test('resizing and theme changes reuse immutable, bounded geometry instead of retaining views',()=>{
-  const source='graph LR; A[Request] --> B[Review] --> C[Approve] --> D[Publish] --> E[Notify]';
-  const {drawing}=flowchart(source);
-  const original=JSON.stringify(drawing);
-  const narrow=chartSize(drawing,180), wide=chartSize(drawing,1000);
-  expect(narrow.scroll).toBe(true);
-  expect(narrow.scale).toBe(0.85);
-  expect(narrow.viewportWidth).toBe(180);
-  expect(chartHeight(drawing,180)).toBe(narrow.viewportHeight+22);
-  expect(wide.scroll).toBe(false);
-  expect(flowchart(source).drawing).toBe(drawing);
-  expect(JSON.stringify(drawing)).toBe(original);
+const chain = dir => `graph ${dir}; `+Array.from({length:13},(_,i)=>`N${i}[Stage ${i+1}]`).join(' --> ');
+
+test('inline previews fit the entire tall or wide drawing and keep exact bounded row height',()=>{
+  for(const dir of ['TD','LR']){
+    const source=chain(dir),{drawing}=flowchart(source);
+    const original=JSON.stringify(drawing);
+    expect(dir==='TD'?drawing.height:drawing.width).toBeGreaterThan(1000);
+    for(const width of [180,230.4,540,1800]){
+      const fit=fitFlowchart(drawing,width);
+      expect(fit.width).toBeLessThanOrEqual(width);
+      expect(fit.height).toBeLessThanOrEqual(FLOW_VIEW_HEIGHT);
+      expect(fit.scale).toBeGreaterThan(0);
+      expect(fit.height).toBeGreaterThanOrEqual(drawing.height*fit.scale-0.0001);
+      expect(fit.width).toBeGreaterThanOrEqual(drawing.width*fit.scale-0.0001);
+      expect(chartHeight(drawing,width)).toBe(fit.height+FLOW_OPEN_HEIGHT);
+    }
+    expect(flowchart(source).drawing).toBe(drawing);
+    expect(JSON.stringify(drawing)).toBe(original);
+  }
+});
+
+test('fit, zoom and pan make both ends of the drawing reachable at readable size',()=>{
+  for(const source of [chain('TD'),chain('LR'),branch]){
+    const {drawing}=flowchart(source),room={width:240,height:250};
+    const fit=flowCamera(drawing,room,fitCamera());
+    expect(fit.width).toBeLessThanOrEqual(room.width);
+    expect(fit.height).toBeLessThanOrEqual(room.height);
+    expect(fit.left).toBeGreaterThanOrEqual(0);expect(fit.top).toBeGreaterThanOrEqual(0);
+    const scaled=zoomFlowchart(drawing,room,fitCamera(),1);
+    expect(scaled.scale).toBe(1);
+    const start=flowCamera(drawing,room,panFlowchart(drawing,room,scaled,-Infinity,-Infinity));
+    const end=flowCamera(drawing,room,panFlowchart(drawing,room,scaled,Infinity,Infinity));
+    for(const [size,viewport,near,far] of [[start.width,room.width,start.left,end.left],[start.height,room.height,start.top,end.top]]){
+      if(size>viewport){expect(near).toBeCloseTo(0);expect(far+size).toBeCloseTo(viewport);}
+      else{expect(near).toBeCloseTo((viewport-size)/2);expect(far).toBeCloseTo(near);}
+    }
+    // Max zoom is bounded. At the maximum, every label can be brought into a
+    // viewport: pan to its center or clamp at the actual boundary.
+    const max=zoomFlowchart(drawing,room,scaled,Infinity);
+    expect(max.scale).toBe(FLOW_MAX_ZOOM);
+    for(const n of [...drawing.nodes,...drawing.edges.filter(e=>e.lines.length)]){
+      const v=flowCamera(drawing,room,{scale:1,x:n.x/drawing.width,y:n.y/drawing.height});
+      expect(n.x+v.left).toBeGreaterThanOrEqual(0);expect(n.x+v.left).toBeLessThanOrEqual(room.width);
+      expect(n.y+v.top).toBeGreaterThanOrEqual(0);expect(n.y+v.top).toBeLessThanOrEqual(room.height);
+    }
+    const resized={width:600,height:450};
+    expect(flowCamera(drawing,resized,max).scale).toBe(FLOW_MAX_ZOOM);
+    expect(flowCamera(drawing,resized,fitCamera()).width).toBeLessThanOrEqual(resized.width);
+  }
+});
+
+test('zoom keeps the point under the pointer when there is room to pan',()=>{
+  const {drawing}=flowchart(chain('LR')),room={width:300,height:160};
+  const camera=zoomFlowchart(drawing,room,fitCamera(),1),before=flowCamera(drawing,room,camera),at={x:100,y:80};
+  const after=flowCamera(drawing,room,zoomFlowchart(drawing,room,camera,2,at));
+  expect((at.x-before.left)/before.width).toBeCloseTo((at.x-after.left)/after.width);
+  expect(after.scale).toBe(2);
 });
 
 test('the installed layout engine is precisely the pinned upstream browser bundle with its license',()=>{

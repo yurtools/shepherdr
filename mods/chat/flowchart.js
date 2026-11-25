@@ -1,13 +1,11 @@
-// Native Chat draws data as GPUI shapes and text, not HTML or a webview.
-// No per-row callbacks or external images/files. The invisible measuring
-// pass uses the exact same height without constructing any native paths.
+// Shared native drawing. The inline overview and expanded viewer use the same
+// geometry and drawing primitives, with no retained native paths or callbacks.
 import { div, PathBuilder } from 'gpui-kit';
 import { v_flex } from 'gpui-base';
-import { arrowTriangle, chartSize, chartHeight, nodePolygon, FLOW_FONT, FLOW_LINE, FLOW_WORDS } from './core/chat-flowchart.js';
+import { arrowTriangle, fitFlowchart, chartHeight, nodePolygon, FLOW_FONT, FLOW_LINE, FLOW_WORDS, FLOW_OPEN_HEIGHT } from './core/chat-flowchart-geometry.js';
 
-export function nativeFlowchart(drawing, available, t, id, measure = false) {
-  const fit = chartSize(drawing, available), s = fit.scale;
-  if (measure) return div().h(chartHeight(drawing, available)).flex_none();
+export function flowchartCanvas(drawing, fit, t) {
+  const s = fit.scale;
   const canvas = div().relative().w(fit.width).h(fit.height).flex_none();
   const pathLayer = (path, color) => window.paint_path(path, color).absolute().top(0).left(0).w(fit.width).h(fit.height);
   const trace = (p, pts) => {
@@ -60,8 +58,15 @@ export function nativeFlowchart(drawing, available, t, id, measure = false) {
     const bg = div().absolute().left((e.x-e.width/2)*s).top((e.y-e.height/2)*s).w(e.width*s).h(e.height*s).bg(t.surface).rounded(4);
     canvas.child(bg).child(label(e,t.foreground));
   }
-  const viewport = div().id(id).w(fit.viewportWidth).h(fit.viewportHeight).flex_none()
-    .when(fit.scroll, el => el.overflow_scrollbar()).child(canvas);
-  return v_flex().items_center().child(viewport)
-    .when(fit.scroll, el => el.child(div().h(22).text_size(11).text_color(t.muted).text_center().child(FLOW_WORDS.scroll)));
+  return canvas;
+}
+
+export function nativeFlowchart(drawing, available, t, id, measure = false) {
+  const fit = fitFlowchart(drawing, available);
+  if (measure) return div().h(chartHeight(drawing, available)).flex_none();
+  return v_flex().id(id).w_full().items_center().flex_none().cursor_pointer()
+    .child(div().h(FLOW_OPEN_HEIGHT).flex_none().flex().items_center().justify_center()
+      .text_size(12).text_color(t.accent).font_medium().accessibility_label(FLOW_WORDS.expand)
+      .hover(el=>el.text_color(t.foreground)).child(`${FLOW_WORDS.expand} ↗`))
+    .child(flowchartCanvas(drawing,fit,t));
 }

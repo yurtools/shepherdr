@@ -2,7 +2,7 @@ import { afterEach, beforeEach, expect, test } from 'bun:test';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync, openSync, closeSync, writeSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { PREVIEW, canEdit, csvPage, delimiterFor, markdownExcerpt, utf8Bytes } from '../core/documents.js';
+import { PREVIEW, canEdit, csvPage, delimiterFor, markdownExcerpt, utf8Bytes, formatCount, formatFileSize } from '../core/documents.js';
 import { makeDelimited } from '../test/document-preview-fixtures.ts';
 
 const helper = new URL('../mods/workspace-document/preview-read.py', import.meta.url).pathname;
@@ -51,6 +51,7 @@ test('full source is only returned within both byte and UTF-16 budgets; boundary
 }, 15000);
 
 test('Markdown preview has an independent character/line budget and does not change source', () => {
+  expect(formatCount(262145)).toBe('262,145'); expect(formatFileSize(26257495)).toBe('25.04 MiB (26,257,495 bytes)');
   const source = '# Head\n' + '- line\r\n'.repeat(2000) + 'last 🦀';
   const out = markdownExcerpt(source); expect(out.limited).toBe(true);
   expect(out.text.split(/\r?\n/).length).toBeLessThanOrEqual(PREVIEW.markdownLines);

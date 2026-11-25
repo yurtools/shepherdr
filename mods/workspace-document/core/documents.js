@@ -12,8 +12,11 @@ export const PREVIEW = Object.freeze({
   timeout: 20000,
 });
 export const MAX_TEXT = PREVIEW.editChars;
-export const EDIT_LIMIT = `Full-buffer editing is limited to ${MAX_TEXT.toLocaleString('en-US')} characters (UTF-16 units) and 1 MiB of UTF-8. Larger files have read-only previews.`;
-export const TABLE_LIMIT = `Table preview supports UTF-8 files up to ${PREVIEW.csvBytes / 1024 / 1024} MiB and ${PREVIEW.csvRows.toLocaleString('en-US')} records. Source remains available.`;
+// The native JS runtime need not provide Intl locale grouping.
+export const formatCount = value => String(value).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+export const formatFileSize = bytes => bytes >= 1024 * 1024 ? `${(bytes / 1024 / 1024).toFixed(2)} MiB (${formatCount(bytes)} bytes)` : `${formatCount(bytes)} bytes`;
+export const EDIT_LIMIT = `Full-buffer editing is limited to ${formatCount(MAX_TEXT)} characters (UTF-16 units) and 1 MiB of UTF-8. Larger files have read-only previews.`;
+export const TABLE_LIMIT = `Table preview supports UTF-8 files up to ${PREVIEW.csvBytes / 1024 / 1024} MiB and ${formatCount(PREVIEW.csvRows)} records. Source remains available.`;
 export const SOURCE_CHANGED = 'File changed on disk. Reload preview.';
 export function utf8Bytes(text) {
   let bytes = 0;

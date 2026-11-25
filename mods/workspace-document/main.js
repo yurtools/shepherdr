@@ -6,14 +6,14 @@ import { View, div } from "gpui-kit";
 import { h_flex, v_flex, Editor, EditorState, TextView, Input, InputState } from "gpui-base";
 import { run, setShared, props, panes, shared, focused, nextCommand, writeTextFile, appHome, theme, settings, exec, spaces, window as win } from "herdr";
 import * as fs from "fs/promises";
-import { PREVIEW, EDIT_LIMIT, TABLE_LIMIT, SOURCE_CHANGED, canEdit, csvPage, markdownExcerpt, language, documentKind, delimiterFor, saveState } from "./core/documents.js";
+import { PREVIEW, EDIT_LIMIT, TABLE_LIMIT, SOURCE_CHANGED, formatCount, formatFileSize, canEdit, csvPage, markdownExcerpt, language, documentKind, delimiterFor, saveState } from "./core/documents.js";
 import { PdfPreview, pdfView } from './pdf-view.js';
 import { PreviewReader } from './preview-reader.js';
 
 const textKind = doc => ['text', 'markdown', 'csv'].includes(doc.kind);
 const completeBuffer = doc => textKind(doc) && !doc.source && typeof doc.saved === 'string' && typeof doc.text === 'string';
 const pageStart = (value, total, stride) => Math.min(Math.max(0, Math.floor((total - 1) / stride) * stride), Math.max(0, Math.floor(value / stride) * stride));
-const number = value => value.toLocaleString('en-US');
+const number = formatCount;
 
 function hash(value) { let h = 2166136261; for (let i = 0; i < value.length; i++) h = Math.imul(h ^ value.charCodeAt(i), 16777619); return (h >>> 0).toString(16); }
 export default class Document extends View {
@@ -466,7 +466,7 @@ export default class Document extends View {
       .when(Boolean(doc?.conflict), el => el.child(h_flex().px(10).py(6).gap(8).items_center().bg(t.raised)
         .child(div().flex_1().text_size(12).child('File changed on disk. Your draft is retained.'))
         .child(this.button('reload', 'Discard draft and reload', false, cx => this.reload(doc, cx), t))))
-      .when(Boolean(doc?.source) && !doc?.stale, el => el.child(div().px(10).py(4).text_size(11).text_color(t.dim).child(`${number(doc.sourceSize)} bytes · read only. ${EDIT_LIMIT}`)))
+      .when(Boolean(doc?.source) && !doc?.stale, el => el.child(div().px(10).py(4).text_size(11).text_color(t.dim).child(`${formatFileSize(doc.sourceSize)} · read only. ${EDIT_LIMIT}`)))
     .when(Boolean(doc?.stale), el => el.child(div().px(10).py(4).text_size(12).text_color(t.blocked).child(doc.staleReason ?? SOURCE_CHANGED)))
     .when(Boolean(doc?.notice) || doc?.recovered || doc?.on, el => el.child(div().px(10).py(4).text_size(11).text_color(t.dim).child(doc?.notice ?? (doc?.recovered ? 'Recovered unsaved draft' : 'Remote file · read only'))))
       .child(!doc ? div().p(16).child('Open a file from Files') : doc.closing ? div().p(16).child('Closing file…') : doc.pdf ? pdfView(doc.pdf, t) : doc.loading ? div().p(16).child('Loading…') : doc.error ? div().p(16).child(doc.error) : doc.office ? this.officePreview(doc, t) : doc.preview && (doc.kind === 'csv' || doc.kind === 'markdown') && (doc.source || doc.editor) ? this.preview(doc, t, cx) : doc.source ? this.sourceView(doc, t, cx) : doc.highlight && doc.text !== null ? highlighted(doc, language(doc.path), t, hash(doc.path)) : !doc.editor ? div().p(16).child('Loading…') : Editor.new(doc.editor).flex_1().min_h(0));

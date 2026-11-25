@@ -2,7 +2,7 @@ import { div } from 'gpui-kit';
 import { v_flex, h_flex, v_virtual_list, Scrollbar } from 'gpui-base';
 import { settings } from 'herdr';
 import { highlightedLines } from './core/syntax.js';
-import { PREVIEW, textExcerpt } from './core/documents.js';
+import { PREVIEW, formatCount, textExcerpt } from './core/documents.js';
 export function highlighted(doc, lang, t, id) {
   if (doc.highlightText !== doc.text || doc.highlightLang !== lang) {
     doc.highlightText=doc.text;doc.highlightLang=lang;
@@ -29,7 +29,7 @@ export function highlighted(doc, lang, t, id) {
   const list=`highlight-${id}-${doc.highlightRevision}`, w=Math.min(80000,60+doc.highlightColumns*8);
   return v_flex().flex_1().min_h(0)
     .child(div().px(10).py(4).flex_none().text_size(11).text_color(t.dim).child('Highlighted source · read only. Choose Edit to change the file.'))
-    .when(data.limited,el=>el.child(div().p(8).text_size(11).text_color(t.dim).child(`Highlight view is bounded to ${PREVIEW.highlightChars.toLocaleString('en-US')} characters, ${PREVIEW.highlightLines.toLocaleString('en-US')} lines and ${PREVIEW.highlightLineChars.toLocaleString('en-US')} characters per displayed line. Edit retains the full source.`)))
+    .when(data.limited,el=>el.child(div().p(8).text_size(11).text_color(t.dim).child(`Highlight view is bounded to ${formatCount(PREVIEW.highlightChars)} characters, ${formatCount(PREVIEW.highlightLines)} lines and ${formatCount(PREVIEW.highlightLineChars)} characters per displayed line. Edit retains the full source.`)))
     .child(div().flex_1().min_h(0).overflow_x_scrollbar()
       .child(div().relative().size_full().min_w(w)
         .child(v_virtual_list(list,data.lines.length,20,i=>String(i),(range)=>data.lines.slice(range.start,range.end).map((line,j)=>h_flex().h(20).min_w(w).items_center().font_family(settings().font_family).text_size(12.5)

@@ -74,6 +74,8 @@ How to run, build and lay out the code: [docs/develop.md](docs/develop.md).
   `--args "--blink-settings=primaryHoverType=2,availableHoverTypes=2,primaryPointerType=4,availablePointerTypes=4"`.
 - Claude Code may log an agent's message only as a thinking block: replay a real log through `core/chat-log.js`
   before blaming the reader.
+- Codex 0.172.0 paginated revert creates rollouts with logical thread and physical generation UUIDs and exact
+  parent byte/ordinal prefixes. Use the logical thread ID for resume and never concatenate discarded tails.
 - A branch's web app with live data, the installed one untouched: `vite preview` of its build behind
   `tailscale serve --set-path`, proxying `/api` (changeOrigin, origin header) to the serving machine's `/shepherdr`
   (`shepherdr web status` says which). Put the Mac mini back on the release the same way from

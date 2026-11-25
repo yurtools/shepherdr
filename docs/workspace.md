@@ -72,8 +72,11 @@ in parallel; the feature's recorded project folder remains its starting context.
   acceptance or merge status.
 - Closing a feature's Chat view leaves its record and workers available.
   Its recorded account, session, role and task ownership survive reopening.
-  If a reboot leaves the old terminal at a shell, reopening the feature resumes
-  the saved conversation with its original account and restores its last view
+  If a reboot leaves a restored Feature Chat without its agent (or with only
+  a shell), selecting that tab resumes the saved conversation with its original
+  account in the same pane. The selected tab is checked at startup; other chats
+  wait until selected. A deliberately stopped agent stays stopped until Resume
+  or an explicit reopen. Reopening from Features also restores its last view
   when known. A missing saved session or account is reported rather than replaced.
   Older records with no recoverable session are not treated as newly created
   features; creating a new feature is an explicit separate action.

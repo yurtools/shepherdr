@@ -57,6 +57,7 @@ export async function startRole(spec) {
         await exec('sleep', ['0.1']);
         const now = roleStart(spec);
         if (now?.address) return now.address;
+        if (now?.skipped) return spec.restore ? null : startRole(spec);
         if (!now?.pending) throw new Error(now?.error || 'The role did not start.');
       }
       throw new Error('This role is still starting. Try opening it again in a moment.');
@@ -64,11 +65,11 @@ export async function startRole(spec) {
     if (prior.address) {
       const r = await hc(['get', prior.address, '--json']);
       let t; try { t = JSON.parse(r.stdout); } catch {}
-      if (t?.state === 'live' && (!spec.featureRecord || runningFeatureAssistant({...t,address:prior.address},spec.featureRecord))) return prior.address;
+      if (!r.code&&!t?.error&&t?.state === 'live' && (!spec.featureRecord || runningFeatureAssistant({...t,address:prior.address},spec.featureRecord)&&(!spec.restore||t.foreground?.name))) return prior.address;
       if (spec.featureRecord&&featureOwner({...t,address:prior.address},spec.featureRecord)&&Date.now()-prior.at<30000)
         throw new Error('The Feature Assistant may still be starting. Try again in a moment.');
       const gone = /not_found|no terminal|not found/i.test(`${r.stdout}\n${r.stderr}`);
-      if ((!t || r.code) && !gone) throw new Error('Cannot check the previous role yet. Try opening it again once connected.');
+      if ((!t || t.error || r.code) && !gone) throw new Error('Cannot check the previous role yet. Try opening it again once connected.');
     }
     if (roleStart(spec)?.token !== prior.token) return startRole(spec);
   }
@@ -77,7 +78,11 @@ export async function startRole(spec) {
   const hadPreviousStart = Boolean(prior?.address || prior?.pending || prior?.hadPreviousStart);
   setShared(STARTS, { ...(shared(STARTS) ?? {}), [key]: { token, pending: true, at: Date.now() } });
   try {
-    const { address, started } = await launchRole(spec, hadPreviousStart);
+    const { address, started, stopped } = await launchRole(spec, hadPreviousStart);
+    if (stopped) {
+      setShared(STARTS, { ...(shared(STARTS) ?? {}), [key]: { token, skipped:true, hadPreviousStart:true, at:Date.now() } });
+      return null;
+    }
     setShared(STARTS, { ...(shared(STARTS) ?? {}), [key]: { token, address, ...(started && !spec.featureRecord?.session ? { task: spec.task } : {}), at: Date.now() } });
     return address;
   } catch (error) {
@@ -97,19 +102,23 @@ async function launchRole(spec, hadPreviousStart) {
     if (!record) return existing();
     const addresses = new Set();
     for (const label of [`herdr.feature=${record.id}`,`herdr.chat.slot=${slot}`]) {
-      const listed = await hc(['ls', '--json', '--label',label]);
+      const listed = await hc(['ls', '--json', ...(spec.restore?['--all']:[]), '--label',label]);
       let all; try { all = JSON.parse(listed.stdout).terminals; } catch {}
       if (listed.code || !Array.isArray(all)) throw new Error('Cannot check the running Feature Assistant. Try again once connected.');
       for (const row of all) if (row.address&&!row.address.includes('/')) addresses.add(row.address);
     }
-    const owners = [];
+    // The saved address may no longer appear in the live list. Its finished
+    // record distinguishes a restart from /exit or an explicit kill.
+    if(spec.restore&&record.terminal&&!record.terminal.includes('/'))addresses.add(record.terminal);
+    const owners = [], history = [];
     for (const address of addresses) {
       const result = await hc(['get', address, '--json']);
       let terminal; try { terminal = JSON.parse(result.stdout); } catch {}
       if (result.code && /not_found|no terminal|not found/i.test(`${result.stdout}\n${result.stderr}`)) continue;
-      if (result.code || !terminal) throw new Error('Cannot check the running Feature Assistant. Try again once connected.');
+      if (result.code || !terminal || terminal.error || (spec.restore&&!['live','finished'].includes(terminal.state))) throw new Error('Cannot check the running Feature Assistant. Try again once connected.');
       const candidate = {...terminal,address};
       if (featureOwner(candidate,record)) owners.push(candidate);
+      else if(spec.restore&&candidate.state==='finished'&&featureOwner({...candidate,state:'live'},record))history.push(candidate);
       else if (candidate.state==='live'&&candidate.labels?.['herdr.chat.slot']===slot) {
         // Older explicit restarts kept the feature slot but dropped its role
         // and feature labels. Reclaim only a verified original conversation.
@@ -118,7 +127,7 @@ async function launchRole(spec, hadPreviousStart) {
           (labels['herdr.coordinator.space']||labels['herdr.space'])!==record.space)
           throw new Error('A different agent holds this feature slot. Its conversation has not been replaced.');
         const repaired={...candidate,labels:{...labels,'herdr.role':'feature','herdr.feature':record.id}};
-        if (runningFeatureAssistant(repaired,record)) {
+        if (runningFeatureAssistant(repaired,record)&&(!spec.restore||repaired.foreground?.name)) {
           const kind=({'codex':'codex','claude':'claude','claude-code':'claude'})[candidate.status?.app??candidate.foreground?.name];
           const pid=candidate.foreground?.pid;
           if (!record.session||kind!==(record.kind??'codex')||!pid) throw new Error('Cannot verify the saved Feature Assistant session.');
@@ -131,10 +140,17 @@ async function launchRole(spec, hadPreviousStart) {
         owners.push(repaired);
       }
     }
-    const running = owners.filter(k => runningFeatureAssistant(k,record));
+    const running = owners.filter(k => runningFeatureAssistant(k,record)&&(!spec.restore||k.foreground?.name));
     if (running.length > 1) throw new Error('More than one agent owns this feature. Resolve the duplicate before reopening it.');
     if (!running.length && owners.some(k => !k.foreground?.name)) throw new Error('The Feature Assistant may still be starting. Try again in a moment.');
-    if (!running.length && !record.session && (record.started!==false || owners.length || record.terminal || record.tab || record.pane || hadPreviousStart))
+    // Only a restart/missing backing process is automatically reconciled. An
+    // explicit sidebar/Resume request may still resume an intentionally ended
+    // conversation. Consider the newest owner, not a prior agent's old exit.
+    if(spec.restore&&!running.length){
+      const latest=[...owners,...history].sort((a,b)=>(b.created_ms??0)-(a.created_ms??0)||Number(b.address===record.terminal)-Number(a.address===record.terminal))[0];
+      if(latest?.state==='finished'&&latest.reason!=='stopped_by_restart')return {stopped:true};
+    }
+    if (!running.length && !record.session && (spec.restore || record.started!==false || owners.length || record.terminal || record.tab || record.pane || hadPreviousStart))
       throw Object.assign(new Error('This feature has no saved session to resume. Its conversation will not be replaced.'),{hadPreviousStart:true});
     if(running[0]?.restoreLabels){
       const result=await hc(['label',running[0].address,'herdr.role=feature',`herdr.feature=${record.id}`]);
@@ -143,12 +159,12 @@ async function launchRole(spec, hadPreviousStart) {
     return running[0];
   };
   const found = await findExisting();
-  if (found) return { address: found.address, started: false };
+  if (found) return { address: found.address, started: false, stopped: found.stopped };
   const tpl = record?.session ? { name: null, words: '', done: async () => {} } : await roleTemplate(spec);
   try {
     // A lazy Chat may have completed its start while settings were being resolved.
     const started = await findExisting();
-    if (started) return { address: started.address, started: false };
+    if (started) return { address: started.address, started: false, stopped: started.stopped };
     const task = spec.task ?? featureTask(record, record?.context && !record.session ? 'Start this feature from the supplied context. Plan its work and coordinate the implementation.' : '');
     const labels = { 'herdr.chat.slot': slot, 'herdr.chat.origin': `slot:${slot}`, 'herdr.role': role,
       'herdr.coordinator.space': String(space.id).split('/').pop(),
@@ -177,7 +193,7 @@ async function launchRole(spec, hadPreviousStart) {
         late = record ? await findExisting() : all.find(k => k.state === 'live' && k.labels?.['herdr.chat.slot'] === slot && k.labels?.['herdr.role'] === role && !k.labels?.['herdr.feature']);
       } catch(error) { throw Object.assign(error,{uncertain:true}); }
     }
-    if (late) out = { address: late.address, first_message: { sent: false } };
+    if (late?.address) out = { address: late.address, first_message: { sent: false } };
     if (!out.address || (r.code && !late)) throw new Error(r.stderr || 'The role did not start.');
     const address = machine && !out.address.includes('/') ? `${machine}/${out.address}` : out.address;
     if (!resume && out.first_message?.sent === false) setShared(FIRST, { ...(shared(FIRST) ?? {}), [address]: [tpl.words, task].filter(Boolean).join('\n\n') });

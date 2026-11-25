@@ -43,7 +43,7 @@ async function app(command,args) {
  const r=await exec('herdr-app',['do',command,JSON.stringify(args)]);let out;try{out=JSON.parse(r.stdout);}catch{throw new Error(r.stderr||'Herdr did not answer.');}
  if(r.code||out.error)throw new Error(out.error||r.stderr);return out;
 }
-export async function openFeature(record) {
+export async function openFeature(record, restore = null) {
  const space=spaces().find(s=>s.id===record.space);
  if(!space)throw new Error('The feature’s space is not open.');
  if(space.machine)throw new Error('Feature Assistants currently run in local spaces.');
@@ -54,10 +54,19 @@ export async function openFeature(record) {
  const extras=new Set(Object.values(snapshot.companions).map(r=>r.pane));
  const owned=snapshot.panes.filter(p=>views.byPane.get(p.pane)?.id===record.id&&!extras.has(p.pane));
  let existing=owned.find(p=>live&&(p.terminal===live.address||p.pane===chatPane(live)))??owned.find(p=>p.mod==='chat');
+ // Activation is only a request to reconcile this persisted dialog, never to
+ // open another tab or bring a tab back after the person has switched away.
+ if(restore){
+  if(!space.active||!space.tabs.some(t=>t.id===restore.tab&&t.active)||views.byTab.get(restore.tab)?.id!==record.id)return false;
+  existing=owned.find(p=>p.mod==='chat'&&p.pane===restore.pane&&p.tab===restore.tab);
+  if(!existing)return false;
+ }
  reconcileNames(snapshot,new Map(),record.id);
  const slot=`feature-${record.id}`;
- const spec={role:'feature',template:'feature',space,folder:record.folder,slot,settings:record.settings,featureRecord:record};
+ const spec={role:'feature',template:'feature',space,folder:record.folder,slot,settings:record.settings,featureRecord:record,...(restore?{restore:true}:{})};
  const terminal=await startRole({...spec,...(existing?.mod==='chat'?{pane:existing.pane,tab:existing.tab}:{})});
+ if(!terminal)return true; // An explicitly ended agent stays stopped until Resume.
+ if(restore&&!panes().some(p=>p.mod==='chat'&&p.pane===restore.pane&&p.tab===restore.tab))return false;
  // The core may just have repaired a legacy feature slot before the native
  // list catches up. Use its verified address, not a saved pane ID.
  if(!existing){
@@ -72,8 +81,10 @@ export async function openFeature(record) {
    // name the shell that the core recovered. StartRole resumes the exact session.
    setShared('workspace.feature.resume',{record:{...record,terminal},address:terminal,pane:existing.pane,at:Date.now(),nonce:Math.random()});
   }
-  run('space.select',{id:space.id});run('tab.select',{id:existing.tab});run('pane.focus',{pane:existing.pane});return;
+  if(!restore){run('space.select',{id:space.id});run('tab.select',{id:existing.tab});run('pane.focus',{pane:existing.pane});}
+  return true;
  }
+ if(restore)return false;
  await withRoleView(async()=>{
  await app('space.select',{id:space.id});
  // Older records did not save the view mode. A retained Chat label is evidence
@@ -125,37 +136,62 @@ export async function captureFeatureSession(record, address) {
  return t.foreground.pid;
 }
 export function watchFeatures(cx,onError) {
- let seen=shared('workspace.feature.request')?.nonce,busy=false,reading=false;
+ let seen=shared('workspace.feature.request')?.nonce,busy=false,reading=false,loaded=false,selected=null,tried=false,queued=null;
+ // Slots were restored with the window. Freeze this set: Features opened during
+ // this window's lifetime should not automatically restart after an explicit stop.
+ const restored=new Map(Object.entries(shared('coordinator.slots')??{}).filter(([slot,s])=>s?.feature&&slot===`feature-${s.feature}`&&s.tab&&s.pane).map(([,s])=>[s.feature,s]));
  const attempted=new Map(),captured=new Map();
  const refresh=async()=>{if(reading)return;reading=true;try{const out=await workspaceCall('features'),old=featureRecords();
  if(JSON.stringify(out.features)!==JSON.stringify(old)){
   setShared('workspace.features',out.features);
  }
- reconcileNames(featureViewState(out.features),attempted);
+ reconcileNames(featureViewState(out.features),attempted);loaded=true;
  for(const k of terminals().filter(k=>isFeatureAssistant(k)&&panes().some(p=>p.terminal===k.address))){
   if(captured.has(k.address)&&(!k.foreground?.pid||captured.get(k.address)===k.foreground.pid))continue;
   const record=out.features.find(r=>r.id===k.labels['herdr.feature']);if(!record)continue;
   const pid=await captureFeatureSession(record,k.address);if(pid)captured.set(k.address,pid);
  }
  }finally{reading=false;}};
- cx.spawn(async()=>{try{await refresh();}catch(e){onError(e);}});
- cx.timer.every(2000,cx=>{cx.spawn(async()=>{try{await refresh();}catch{};});});
- cx.timer.every(150,cx=>{
-  const req=shared('workspace.feature.request');if(!req||req.nonce===seen||busy)return;seen=req.nonce;
-  if(Date.now()-req.at>15000)return;busy=true;
+ const poll=cx=>{
+  const request=shared('workspace.feature.request');
+  if(request&&request.nonce!==seen){seen=request.nonce;if(Date.now()-request.at<=15000)queued=request;}
+  if(!restored.size&&!queued)return;
+  const space=spaces().find(s=>s.active),tab=space?.tabs.find(t=>t.active);
+  const key=tab?`${space.id}:${tab.id}`:null;
+  if(selected!==key){selected=key;tried=false;}
+  if(busy)return;
+  // Observe the actual selected tab, not only tab-bar clicks: startup, keyboard
+  // navigation, and space changes all select tabs through the host.
+  let restore=null;
+  const req=queued;queued=null;
+  if(!req){
+   if(!loaded||tried||!tab||space.machine)return;
+   const saved=[...restored.values()].find(s=>s.space===space.id&&s.tab===tab.id);
+   if(!saved)return;
+   const snapshot=featureViewState(),views=featureViews(snapshot);
+   if(views.byTab.get(tab.id)?.id!==saved.feature||views.byPane.get(saved.pane)?.id!==saved.feature||
+    !snapshot.panes.some(p=>p.pane===saved.pane&&p.tab===tab.id&&p.mod==='chat')||
+    Object.values(snapshot.companions).some(c=>c.pane===saved.pane))return;
+   restore=saved;tried=true;
+  }
+  busy=true;
   cx.spawn(async cx=>{try{
    let rec;
-   if(req.rename){
+   if(req?.rename){
     const name=req.rename.name?.trim();if(!name)throw new Error('Enter a feature name.');
     await workspaceCall('feature-update',{id:req.rename.id,name});await refresh();return;
-   }else if(req.create){
+   }else if(req?.create){
     const cfg=shepherdrFor(await readShepherdr(),req.create.space),pick=featureSettings(cfg);
     const space=spaces().find(s=>s.id===req.create.space);
     if(!space)throw new Error('The feature’s space is no longer available.');
     const folder=await projectFolder(space);
     rec=await workspaceCall('feature-create',{...req.create,folder,settings:pick});
-   }else rec=await workspaceCall('feature-get',{id:req.id});
-   await openFeature(rec);await refresh();
+   }else rec=await workspaceCall('feature-get',{id:restore?.feature??req.id});
+   if(await openFeature(rec,restore)!==false)restored.delete(rec.id);
+   await refresh();
   }catch(e){onError(e);}finally{busy=false;cx.notify();}});
- });
+ };
+ cx.spawn(async cx=>{try{await refresh();poll(cx);}catch(e){onError(e);}});
+ cx.timer.every(2000,cx=>{cx.spawn(async()=>{try{await refresh();}catch{};});});
+ cx.timer.every(150,poll);
 }

@@ -3072,7 +3072,7 @@ export default definePlugin({
     reg.composerAbove.push({ order: 5, View: WorkingLine }, { order: 6, View: NeedsYou }, { order: 8, View: Held })
     reg.composerAbove.push({ order: 10, View: JobsTag })
     onTerminal(openTerminal)
-    reg.overlays.push(JobsSheet, SubagentSheet, DiscardDialog)
+    reg.overlays.push(JobsSheet, SubagentSheet)
     reg.messageParts.push({ order: 60, View: ({ msg, chat, from }) => (msg.question ? <QuestionCard q={msg.question} chat={chat} msg={msg.id} from={from} /> : null) })
     reg.messageParts.push({ order: 61, View: ({ msg, chat }) => (msg.secret ? <SecretCard ask={msg.secret} chat={chat} source={msg.secret.by ? { id: msg.secret.by.ref, title: msg.secret.by.title } : undefined} /> : null) })
     reg.composerPlus = PlusMenu
@@ -3093,6 +3093,7 @@ export default definePlugin({
     // 3.0 finds in a chat with Ctrl+F (its find bar), and restarts or switches an Assistant from its tab menu
     // (coordinators): no Search or Restart items here
     reg.overlays.push(RestartSheet)
+    reg.overlays.push(DiscardDialog)
     reg.composerAbove.push({ order: 20, View: Attachments }, { order: 30, View: PlusMenu })
     reg.overlays.push(Photo)
     addEventListener('pointerdown', keepBox, true)

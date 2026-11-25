@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, test } from 'bun:test';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync, truncateSync, openSync, closeSync, writeSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync, openSync, closeSync, writeSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PREVIEW, canEdit, csvPage, delimiterFor, markdownExcerpt, utf8Bytes } from '../core/documents.js';
@@ -101,11 +101,16 @@ test('wide and long records retain exact column counts but bound the page payloa
 });
 
 test('file, record, row, and malformed-input limits are explicit; source remains available', () => {
-  const path = file('large.csv', 'a\n'); truncateSync(path, PREVIEW.csvBytes + 1);
+  const path = join(root, 'large.csv'), f = openSync(path, 'w');
+  const record = 'x'.repeat(63) + '\n', chunk = Buffer.from(record.repeat(2048));
+  try { for (let n = 0; n < PREVIEW.csvBytes; n += chunk.length) writeSync(f, chunk); } finally { closeSync(f); }
+  const boundary = call(path, 'scan'); expect(boundary.size).toBe(PREVIEW.csvBytes);
+  expect(boundary.total).toBe(PREVIEW.csvBytes / record.length); expect(boundary.limited).toBe(false);
+  // Add a real text record, not a sparse binary hole, to cross the byte cap.
+  const append = openSync(path, 'a'); try { writeSync(append, record); } finally { closeSync(append); }
   expect(call(path, 'scan').error).toContain('32 MiB');
+  expect(call(path, 'stat').size).toBe(PREVIEW.csvBytes + record.length);
   // A real text file over the table limit is still source-browsable.
-  const f = openSync(path, 'w'), chunk = Buffer.from('x\n'.repeat(65536));
-  try { for (let n = 0; n <= PREVIEW.csvBytes; n += chunk.length) writeSync(f, chunk); } finally { closeSync(f); }
   const opened = call(path, 'open'); expect(opened.source.text).toBeDefined(); expect(opened.text).toBeUndefined();
   const maximal = file('record.csv', 'x'.repeat(PREVIEW.recordBytes - 1) + '\n');
   expect(call(maximal, 'scan').total).toBe(1);

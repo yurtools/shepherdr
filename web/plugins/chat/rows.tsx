@@ -109,7 +109,7 @@ export function Band({ msg, chat, cli }: { msg: Message; chat: string; cli?: boo
         </button>
       )
     if (a === 'discard')
-      return <button key={a} type="button" aria-label="Discard mistaken turn" title="Discard mistaken turn…" className={clsx(btn, hover)} onClick={() => void discardChat(chat, msg)}><RewindIcon className="size-3.5" /></button>
+      return <button key={a} type="button" aria-label="Discard mistaken turn" className={clsx(btn, hover)} onClick={() => void discardChat(chat, msg)}><RewindIcon className="size-3.5" /></button>
     if (a === 'rewind')
       return <button key={a} type="button" aria-label="Rewind" className={clsx(btn, hover)} onClick={() => void act({ type: 'rewind', chat, message: msg.id } as never).then(() => showTerminal(chat), (e: Error) => alert(e.message))}><RewindIcon className="size-3.5" /></button>
     return <button key={a} type="button" aria-label="Fork" className={clsx(btn, hover)} onClick={() => void forkChat(chat).catch((e: Error) => alert(e.message))}><ForkIcon className="size-3.5" /></button>

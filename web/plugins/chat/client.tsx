@@ -273,7 +273,7 @@ function Held({ chatKey }: { chatKey: string }) {
           </span>
           <button type="button" className={ghost} disabled={!r.held || !!taking} onClick={() => void act({ type: 'held-now', chat: chatKey, cid: r.cid } as never).catch((e) => alert(reasonOf(e)))}>{WORDS.sendNow}</button>
           <button type="button" className={ghost} disabled={!r.held || !!taking} onClick={() => void take(r.cid, () => { const now = (getDraft(chatKey) ?? '').trim(); setDraft(chatKey, now ? `${r.text}\n\n${now}` : r.text); setUI({ focus: chatKey }) })}>Edit</button>
-          <button type="button" aria-label="Withdraw unsent message" title="Withdraw unsent message" disabled={!r.held || !!taking} className="grid size-[22px] shrink-0 place-items-center rounded-[6px] text-fg3 hover:bg-hover hover:text-fg disabled:opacity-50 phone:size-9" onClick={() => void take(r.cid)}><XIcon className="size-3" /></button>
+          <button type="button" aria-label="Withdraw unsent message" disabled={!r.held || !!taking} className="grid size-[22px] shrink-0 place-items-center rounded-[6px] text-fg3 hover:bg-hover hover:text-fg disabled:opacity-50 phone:size-9" onClick={() => void take(r.cid)}><XIcon className="size-3" /></button>
         </div>
       ))}
     </div>

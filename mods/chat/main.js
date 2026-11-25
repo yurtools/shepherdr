@@ -1212,8 +1212,11 @@ export default class Chat extends View {
     try { t = JSON.parse(r.stdout || "null"); } catch {}
     // Gone for good (removed after a restart from here), or unreachable for now (another
     // machine offline: try again later, don't call it ended).
-    const gone = /not_found|no terminal|not found/i.test(`${r.stdout}\n${r.stderr}`);
-    if (!gone && (!t || t.error)) return;
+    // Only a failed lookup can report a missing terminal. A successful core record contains
+    // the original launch prompt in argv (and foreground.argv), not an error diagnostic.
+    const failed = r.code !== 0 || Boolean(t?.error);
+    const gone = failed && /not_found|no terminal|not found/i.test(`${t && !t.error ? "" : r.stdout}\n${r.stderr}`);
+    if (!gone && (failed || !t)) return;
     if(this.role==='feature'&&!this.thread&&!this.companion){
       const record=this.currentFeature();
       if(gone||!runningFeatureAssistant({...t,address},record)){

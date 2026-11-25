@@ -3,7 +3,10 @@ import {fakeHerdr} from '../../service/fake-herdr';
 import {fakeGpuiKit,fakeGpuiBase,byId,handler,built} from '../../service/fake-gpui';
 let state:Map<string,any>,ps:any[],ts:any[],ss:any[],core:Map<string,any>,calls:any[],files:string[],cfg:any,focus:any,tree:any;
 let props:any,holdRun:any,runRelease:any,failKeep=false,sent=false,runTimeout=false,serial=0;
+let getResults:Map<string,any>,screen:string,lookups:any[];
 const ok=(value:any={})=>({code:0,stdout:typeof value==='string'?value:JSON.stringify(value),stderr:''});
+const savedSession='00000000-0000-0000-0000-000000000001';
+const savedLog=`/account-two/sessions/rollout-${savedSession}.jsonl`;
 function appArgs(args:string[]) {
  if(args[2]?.startsWith('{'))return JSON.parse(args[2]);
  return Object.fromEntries(Array.from({length:(args.length-2)/2},(_,i)=>[args[i*2+2].slice(2),args[i*2+3]]));
@@ -24,7 +27,8 @@ mock.module('herdr',()=>fakeHerdr({
    if(holdRun)await holdRun;
    return runTimeout?{code:1,stdout:"",stderr:"trust timeout"}:ok({address,first_message:{sent}});
   }
-  if(args[0]==='get')return ok(core.get(args[1])??{state:'done'});
+  if(args[0]==='get')return getResults.get(args[1])??ok(core.get(args[1])??{state:'done'});
+  if(args[0]==='read')return ok(screen);
   if(args[0]==='ls')return ok({terminals:[...core.values()]});
   if(args[0]==='label'){const t=core.get(args[1]);if(t)for(const label of args.slice(2)){const at=label.indexOf('=');t.labels[label.slice(0,at)]=label.slice(at+1);}}
   return ok();
@@ -36,8 +40,8 @@ mock.module('herdr',()=>fakeHerdr({
    if(args[1].includes('agent-profiles.json'))return ok({profiles:[{id:'account-two',name:'Second',agent:'codex',home:'/account-two'}]});
    if(args[1].includes('cat "$dir/$1.md"'))return ok('---\ncommand: codex --no-daemon\n---\nGlobal '+args[3]+' instructions.');
    if(args[1].includes('printf "%s" "$2"')){files.push(args[4]);return ok();}
-   if(args[2]==='defaults')return ok('home\t/account-two\n');
-   if(args[2]==='chat')return ok('/account-two/sessions/rollout-00000000-0000-0000-0000-000000000001.jsonl');
+   if(args[2]==='defaults'){lookups.push(['defaults',args[3],args[5]]);return ok('home\t/account-two\n');}
+   if(args[2]==='chat'){lookups.push(['chat',...args.slice(3)]);return ok(savedLog);}
    return ok();
   }
   if(bin==='python3'){
@@ -73,6 +77,7 @@ const spec=()=>({slot:'slot',space:ss[0],folder:'/project',role:'coordinator',te
 const launches=()=>calls.filter(c=>c[0]==='hc'&&c[1][0]==='run');
 beforeEach(()=>{
  serial=0;state=new Map();ps=[];ts=[];core=new Map();calls=[];files=[];props={};holdRun=null;runRelease=null;sent=true;failKeep=false;runTimeout=false;
+ getResults=new Map();screen='';lookups=[];
  ss=[{id:'space',folder:'/project',machine:null,active:true,tabs:[]}];focus={space:'original-space',pane:'original-pane'};
  tree={id:'tasks-thread-body',active:'tasks-thread-chat'};
  cfg={everywhere:{coordinator:{agent:'codex',profile:'account-two',model:'chosen-model',effort:'high',perm:'auto'}},spaces:{space:{instructions:{coordinator:'Only this space.',feature:'Only this feature.'}}}};
@@ -258,6 +263,107 @@ test('switching a running Feature with a stale saved pane keeps the same owner a
  expect(core.get('owner').labels['herdr.chat']).toBe('');expect(launches()).toEqual([]);
  expect(state.get('coordinator.slots')['feature-feature-one']).toMatchObject({tab:'actual-tab',pane:'role-pane'});
  expect(calls.filter(c=>c[0]==='workspace'&&c[1][1]==='feature-update').map(c=>JSON.parse(c[1][2])).at(-1)).toEqual({id:record.id,pane:'role-pane',tab:'actual-tab',view:'terminal'});
+});
+
+// SHEP-42: the actual YUR-011 hc get succeeded with state=live, status.app=codex,
+// status.state=done and foreground.name=codex. Its original launch prompt contained
+// "no terminal" in both argv and foreground.argv. Use stand-in IDs/account paths,
+// but keep the response shape and matching words that caused the false stop.
+function featureLocator() {
+ const record={id:'feature-one',space:'space',folder:'/project',name:'One',kind:'codex',session:savedSession,home:'/account-two',terminal:'owner'};
+ const argv=['codex','--no-daemon','Original context: no terminal has opened yet.'];
+ const owner:any={address:'owner',state:'live',keep:false,status:{app:'codex',state:'done'},argv,
+  foreground:{name:'codex',pid:52,argv,cwd:'/project'},
+  labels:{'herdr.role':'feature','herdr.feature':record.id,'herdr.coordinator.space':record.space,'herdr.chat.slot':'feature-feature-one','herdr.chat.origin':'slot:feature-feature-one','herdr.chat':'extra-pane'}};
+ core.set(owner.address,owner);ts=[owner];ss[0].tabs=[{id:'actual-tab',name:'One'}];ps=[{pane:'extra-pane',tab:'actual-tab',mod:'chat'}];
+ state.set('workspace.features',[record]);
+ state.set('coordinator.slots',{'feature-feature-one':{feature:record.id,space:record.space,pane:'extra-pane',tab:'actual-tab'}});
+ const work:Promise<any>[]=[],cx:any={notify(){},spawn:(fn:any)=>{const job=Promise.resolve(fn(cx));work.push(job);return job;}};
+ const chat:any=Object.create(Chat.prototype);
+ Object.assign(chat,{role:'feature',feature:record.id,featureRecord:record,slot:'feature-feature-one',addr:owner.address,
+  originKey:'slot:feature-feature-one',phase:'finding',path:null,lostTried:new Set(),myPane:()=> 'extra-pane',
+  reset(){},flag:async()=>{},loadFirst(){},loadTasks:async()=>{},loadReach:async()=>{},loadSpaceTasks:async()=>{},
+  lostSession:async()=>{throw new Error('The Feature must not start a replacement session.');}});
+ const locate=async()=>{await chat.locate(cx);await Promise.all(work.splice(0));};
+ const noReplacement=()=>expect(calls.filter(c=>c[0]==='hc'&&['run','send','keys','kill','rm'].includes(c[1][0]))).toEqual([]);
+ return {record,owner,chat,locate,noReplacement};
+}
+
+test('SHEP-42: switched YUR-011 follows the live process even when successful argv says no terminal',async()=>{
+ const {record,owner,chat,locate,noReplacement}=featureLocator();
+ // Follow the same terminal selected by the ordinary native Chat switch, not a saved pane.
+ delete owner.labels['herdr.chat'];owner.keep=true;
+ const terminal={pane:'actual-pane',tab:'actual-tab',terminal:owner.address,app:'codex'};
+ ps=[terminal];state.set('coordinator.slots',{'feature-feature-one':{feature:record.id,space:record.space,pane:'stale-pane',tab:'stale-tab'}});
+ const header:any=Object.create(Pane.prototype),work:Promise<any>[]=[],cx:any={notify(){},spawn:(fn:any)=>{const job=Promise.resolve(fn(cx));work.push(job);return job;}};
+ header.toChat(terminal,cx);await Promise.all(work);
+ const split=JSON.parse(calls.find(c=>c[0]==='pane.split')[1].props);
+ expect(split).toMatchObject({terminal:owner.address,feature:record.id,featureRecord:{session:record.session,home:record.home}});
+ ps=[{pane:'extra-pane',tab:'actual-tab',mod:'chat'}];owner.keep=false;
+ await locate();
+ expect(chat.phase).toBe('finding');expect(chat.path).toBe(savedLog);
+ expect(chat.addr).toBe(split.terminal);expect(chat.kind).toBe('codex');
+ expect(lookups).toContainEqual(['chat','codex','52']);
+ expect(lookups).toContainEqual(['defaults','codex','52']);
+ expect(calls).toContainEqual(['hc',['keep',owner.address]]);
+ await locate(); // the process account has now resolved; capture the same session.
+ const updates=calls.filter(c=>c[0]==='workspace'&&c[1][1]==='feature-update').map(c=>JSON.parse(c[1][2]));
+ expect(updates.at(-1)).toMatchObject({id:record.id,terminal:owner.address,session:record.session,home:record.home,kind:'codex'});
+ expect(updates.at(-1).argv).toContain('CODEX_HOME=/account-two');
+ expect(chat.resumeMissing).toBeUndefined();noReplacement();
+});
+
+test('SHEP-42: a live lookup recovers a previously false stopped Chat',async()=>{
+ const {chat,locate,noReplacement}=featureLocator();
+ chat.phase='unsupported';await locate();
+ expect(chat.phase).toBe('finding');expect(chat.path).toBe(savedLog);noReplacement();
+});
+
+test('SHEP-42: a kept shell, exited terminal and missing terminal are still stopped',async()=>{
+ const {owner,chat,locate,noReplacement}=featureLocator();
+ owner.foreground={name:'bash',pid:52,argv:['bash'],cwd:'/project'};
+ // Even stale Codex status and launch arguments cannot make Bash an Assistant.
+ await locate();expect(chat.phase).toBe('unsupported');expect(chat.path).toBeNull();
+ chat.phase='finding';owner.state='finished';owner.foreground={name:'codex',pid:52,argv:owner.argv,cwd:'/project'};
+ await locate();expect(chat.phase).toBe('unsupported');
+ chat.phase='finding';
+ getResults.set(owner.address,{code:3,stdout:'',stderr:JSON.stringify({error:{kind:'not_found',message:'no terminal "owner"'}})});
+ await locate();expect(chat.phase).toBe('unsupported');
+ chat.phase='finding';
+ getResults.set(owner.address,{code:1,stdout:JSON.stringify({error:{kind:'not_found',message:'no terminal "owner"'}}),stderr:''});
+ await locate();expect(chat.phase).toBe('unsupported');
+ expect(lookups).toEqual([]);noReplacement();
+});
+
+test('SHEP-42: a missing saved Feature session is not replaced',async()=>{
+ const {record,owner,chat,locate,noReplacement}=featureLocator();
+ owner.argv=['env','CODEX_HOME=/account-two','codex','resume',record.session];
+ owner.foreground={name:'bash',pid:52,argv:['bash'],cwd:'/project'};
+ screen='No conversation found with id '+record.session;
+ await locate();expect(chat.phase).toBe('unsupported');expect(chat.resumeMissing).toBe(true);
+ expect(lookups).toEqual([]);noReplacement();
+});
+
+test('SHEP-42: a stale address follows only the running owner of this Feature and space',async()=>{
+ const {owner,chat,locate,noReplacement}=featureLocator();
+ const restored={...owner,address:'restored'},wrong={...owner,address:'wrong',labels:{...owner.labels,'herdr.coordinator.space':'other-space'}};
+ const worker={...owner,address:'worker',labels:{...owner.labels,'herdr.task':'TASK-1'}};
+ getResults.set(owner.address,{code:3,stdout:'',stderr:JSON.stringify({error:{kind:'not_found',message:'no terminal "owner"'}})});
+ ts=[wrong,worker];await locate();expect(chat.phase).toBe('unsupported');expect(chat.addr).toBe(owner.address);
+ ts.push(restored);core.set(restored.address,restored);await locate();
+ expect(chat.addr).toBe(restored.address);expect(chat.phase).toBe('finding');
+ await locate();expect(chat.path).toBe(savedLog);noReplacement();
+});
+
+test('SHEP-42: unreachable or malformed lookups do not mark the Feature stopped',async()=>{
+ const {owner,chat,locate,noReplacement}=featureLocator();
+ chat.phase='ready';chat.path=savedLog;
+ for(const result of [{code:1,stdout:'',stderr:'connection timed out'},{code:0,stdout:'',stderr:''},
+  {code:1,stdout:JSON.stringify(owner),stderr:'connection interrupted'}]){
+  getResults.set(owner.address,result);await locate();
+  expect(chat.phase).toBe('ready');expect(chat.path).toBe(savedLog);
+ }
+ expect(lookups).toEqual([]);noReplacement();
 });
 
 test('simultaneous hidden openings in different spaces restore the original focus',async()=>{

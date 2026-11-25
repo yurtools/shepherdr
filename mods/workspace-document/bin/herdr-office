@@ -6,6 +6,14 @@ from pathlib import Path
 MAX_MEMBER = 16 * 1024 * 1024
 MAX_TOTAL = 64 * 1024 * 1024
 MAX_CHARS = 400000
+MAX_ROWS, MAX_COLS, MAX_SHEETS = 500, 100, 100
+WORD_ROWS, WORD_COLS = 500, 50
+# Count allocated cell slots, not just non-empty value characters. A sparse
+# workbook can otherwise expand to 5 million empty strings (>20 MiB JSON),
+# exceeding the host exec's 8 MiB reply limit despite zero content characters.
+MAX_CELLS = 500000
+WORD_LIMIT = f'Word preview is limited to {MAX_CHARS:,} characters and {WORD_ROWS} rows / {WORD_COLS} columns per table.'
+EXCEL_LIMIT = f'Excel preview is limited to {MAX_ROWS} rows, {MAX_COLS} columns, {MAX_SHEETS} sheets, {MAX_CHARS:,} value characters and {MAX_CELLS:,} cell slots across the workbook.'
 W = '{http://schemas.openxmlformats.org/wordprocessingml/2006/main}'
 S = '{http://schemas.openxmlformats.org/spreadsheetml/2006/main}'
 R = '{http://schemas.openxmlformats.org/officeDocument/2006/relationships}'
@@ -49,17 +57,26 @@ def word(pkg):
  for e in body if body is not None else []:
   if e.tag==W+'p': value=paragraph(e)
   elif e.tag==W+'tbl':
-   rows=[[ '<br>'.join(paragraph(p) for p in c.findall(W+'p')).replace('\n',' ') for c in row.findall(W+'tc')[:50]] for row in e.findall(W+'tr')[:500]]
+   table_rows=e.findall(W+'tr')
+   if len(table_rows)>WORD_ROWS: limited=True
+   rows=[]
+   for row in table_rows[:WORD_ROWS]:
+    cells=row.findall(W+'tc')
+    if len(cells)>WORD_COLS: limited=True
+    rows.append(['<br>'.join(paragraph(p) for p in c.findall(W+'p')).replace('\n',' ') for c in cells[:WORD_COLS]])
    width=max([len(r) for r in rows] or [0]);rows=[r+['']*(width-len(r)) for r in rows]
    value='\n'.join('| '+' | '.join(r)+' |' for r in ([rows[0],['---']*width,*rows[1:]] if rows else []))
   else: continue
   if chars+len(value)>MAX_CHARS: limited=True;break
   blocks.append(value);chars+=len(value)+2
- return {'kind':'docx','markdown':'\n\n'.join(blocks),'limited':limited,'notice':'Read-only content preview. Page layout, images, comments and tracked-change formatting are not reproduced.'}
+ return {'kind':'docx','markdown':'\n\n'.join(blocks),'limited':limited,'limitNotice':WORD_LIMIT,'notice':'Read-only content preview. Page layout, images, comments and tracked-change formatting are not reproduced.'}
 
 def cell_index(address):
  n=0
- for c in re.match(r'[A-Za-z]+',address or 'A')[0].upper(): n=n*26+ord(c)-64
+ match=re.match(r'[A-Za-z]+',address or 'A')
+ if not match: raise ValueError('Invalid worksheet cell address.')
+ if match.end()>2: return MAX_COLS  # all three-letter columns are beyond the preview
+ for c in match[0].upper(): n=n*26+ord(c)-64
  return n-1
 
 def excel(pkg):
@@ -72,20 +89,22 @@ def excel(pkg):
    fmt=int(xf.get('numFmtId','0'));pattern=re.sub(r'"[^\"]*"|\\.|\[[^\]]*\]','',fmts.get(fmt,''))
    if fmt in set(range(14,23))|set(range(45,48)) or re.search('[dyh]|m{2,}',pattern,re.I): date_styles.add(i)
  props=wb.find(S+'workbookPr');epoch=datetime.datetime(1904,1,1) if props is not None and props.get('date1904') in ('1','true') else datetime.datetime(1899,12,30)
- sheets=[];total_chars=0
- for sheet in wb.findall(S+'sheets/'+S+'sheet')[:100]:
+ sheets=[];total_chars=0;total_cells=0;budget_exhausted=False
+ all_sheets=wb.findall(S+'sheets/'+S+'sheet')
+ for sheet in all_sheets[:MAX_SHEETS]:
   target=targets.get(sheet.get(R+'id'),'');part=posixpath.normpath(target.lstrip('/') if target.startswith('/') else 'xl/'+target)
   if not part.startswith('xl/') or '..' in part.split('/'): raise ValueError('Invalid worksheet relationship.')
   root=pkg.xml(part);rows=[];limited=False;formulas=0;last=0
   for line in root.findall(S+'sheetData/'+S+'row'):
    row_num=int(line.get('r',str(last+1)))
-   if row_num>500 or len(rows)>=500: limited=True;break
+   if row_num>MAX_ROWS or len(rows)>=MAX_ROWS: limited=True;break
    while last+1<row_num: rows.append([]);last+=1
    row=[]
    for c in line.findall(S+'c'):
     col=cell_index(c.get('r','A1'))
-    if col>=100: limited=True;continue
-    while len(row)<=col: row.append('')
+    if col>=MAX_COLS: limited=True;continue
+    extra=max(0,col+1-len(row))
+    if total_cells+extra>MAX_CELLS: limited=budget_exhausted=True;break
     v=c.find(S+'v');val=v.text if v is not None and v.text is not None else '';typ=c.get('t')
     if c.find(S+'f') is not None: formulas+=1;val=val or '[formula: no cached value]'
     if typ=='s': val=strings[int(val)] if val.isdigit() and int(val)<len(strings) else ''
@@ -95,14 +114,15 @@ def excel(pkg):
      try:
       serial=float(val);dt=epoch+datetime.timedelta(days=serial+(1 if epoch.year==1899 and serial<60 else 0));val=dt.isoformat(sep=' ',timespec='seconds');val=val[:-9] if val.endswith(' 00:00:00') else val
      except (ValueError,OverflowError): pass
-    total_chars+=len(val)
-    if total_chars>MAX_CHARS: limited=True;break
-    row[col]=val
+    if total_chars+len(val)>MAX_CHARS: limited=budget_exhausted=True;break
+    total_chars+=len(val);total_cells+=extra
+    row.extend(['']*extra);row[col]=val
    rows.append(row);last=row_num
-   if total_chars>MAX_CHARS: break
-  sheets.append({'name':sheet.get('name','Sheet'),'rows':rows,'limited':limited,'formulas':formulas})
-  if total_chars>MAX_CHARS: break
- return {'kind':'excel','sheets':sheets,'limited':len(wb.findall(S+'sheets/'+S+'sheet'))>len(sheets),'notice':'Read-only worksheet data. Formulas show saved cached values; macros, charts and external links are never executed.'}
+   if budget_exhausted: break
+  name=sheet.get('name','Sheet')
+  sheets.append({'name':name[:128],'rows':rows,'limited':limited or len(name)>128,'formulas':formulas})
+  if budget_exhausted: break
+ return {'kind':'excel','sheets':sheets,'limited':budget_exhausted or len(all_sheets)>len(sheets),'limitNotice':EXCEL_LIMIT,'notice':'Read-only worksheet data. Formulas show saved cached values; macros, charts and external links are never executed.'}
 
 def preview(path):
  ext=Path(path).suffix.lower()

@@ -1,11 +1,13 @@
 import { afterEach, beforeEach, expect, mock, test } from "bun:test";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fakeHerdr } from "./fake-herdr";
 import { fakeGpuiBase, fakeGpuiKit, built, dispatch, element, byId } from "./fake-gpui";
+import { makeDelimited } from "../test/document-preview-fixtures.ts";
+let execute:(command:string,args:string[],opts:any)=>Promise<any>;
 let root:string, disk:()=>Promise<string|null>, modelPanes:any[], viewProps:any, state:Map<string,any>, actions:any[], writeDisk:(path:string,text:string,expected:string)=>Promise<void>;
-mock.module("herdr",()=>fakeHerdr({appHome:()=>root,theme:()=>new Proxy({},{get:()=>"#111111"}),settings:()=>({}),readTextFile:()=>disk(),writeTextFile:(path:string,text:string,expected:string)=>writeDisk(path,text,expected),panes:()=>modelPanes,props:()=>viewProps,shared:(k:string)=>state.get(k),setShared:(k:string,v:any)=>state.set(k,v),run:(name:string,args:any)=>actions.push([name,args])}));
+mock.module("herdr",()=>fakeHerdr({appHome:()=>root,theme:()=>new Proxy({},{get:()=>"#111111"}),settings:()=>({}),readTextFile:()=>disk(),exec:(command:string,args:string[],opts:any)=>execute(command,args,opts),writeTextFile:(path:string,text:string,expected:string)=>writeDisk(path,text,expected),panes:()=>modelPanes,props:()=>viewProps,shared:(k:string)=>state.get(k),setShared:(k:string,v:any)=>state.set(k,v),run:(name:string,args:any)=>actions.push([name,args])}));
 mock.module("gpui-kit",()=>fakeGpuiKit());mock.module("gpui-base",()=>fakeGpuiBase({TextView:{markdown:(id:string,text:string)=>element("TextView").id(id).child(text)}}));
 const { default: Document }=await import("../mods/workspace-document/main.js");
 let view:any, pending:Promise<any>[], released:string[], cx:any;
@@ -16,7 +18,7 @@ function add(name:string,text="saved",saved="saved") {
 }
 beforeEach(async()=>{
  modelPanes=[];viewProps={};state=new Map();actions=[];(globalThis as any).localStorage={getItem:()=>null,setItem(){},removeItem(){}};
- root=await mkdtemp(join(tmpdir(),"shepherdr-document-tabs-"));disk=async()=>"saved";writeDisk=async()=>{throw Error("unexpected source write")};released=[];pending=[];built.length=0;
+ root=await mkdtemp(join(tmpdir(),"shepherdr-document-tabs-"));execute=async()=>{throw Error("unexpected helper execution")};disk=async()=>"saved";writeDisk=async()=>{throw Error("unexpected source write")};released=[];pending=[];built.length=0;
  view=Object.create(Document.prototype);view.docs=new Map();
  cx={notify(){},stop_propagation(){},timer:{after(){}},spawn(fn:any){const p=Promise.resolve(fn(cx));pending.push(p);return p;}};
 });
@@ -75,7 +77,7 @@ test("failed draft persistence keeps the file and its editor open",async()=>{
  await view.closeFile(view.active,cx);expect(view.docs.get(view.active)).toBe(doc);expect(doc.notice).toContain("disk full");expect(doc.closing).toBe(false);expect(released).toEqual([]);
 });
 test("a file closed while loading cannot allocate an editor or replace a reopened copy",async()=>{
- let complete:(value:string)=>void=()=>{};disk=()=>new Promise(resolve=>{complete=resolve});view.open("/project/loading.ts",null,cx);
+ let complete:(value:string)=>void=()=>{}, started:()=>void=()=>{};const waiting=new Promise<void>(r=>{started=r});disk=()=>new Promise(resolve=>{complete=resolve;started()});view.open("/project/loading.ts",null,cx);await waiting;
  const old=view.docs.get(key("loading.ts"));await view.closeFile(key("loading.ts"),cx);expect(old.closed).toBe(true);
  disk=async()=>"new contents";view.open("/project/loading.ts",null,cx);complete("stale contents");await Promise.all(pending);
  expect(old.editor).toBeUndefined();expect(view.docs.get(key("loading.ts")).text).toBe("new contents");
@@ -173,4 +175,101 @@ test("EOL-only edits stay dirty and EOL-only disk changes trigger the save guard
  view.check(cx);await Promise.all(pending);expect(doc.conflict).toBe(true);expect(doc.text).toBe(edited);
  view.reload(doc,cx);await Promise.all(pending);expect(doc.text).toBe(external);expect(doc.saved).toBe(external);
  expect(doc.conflict).toBe(false);await expect(readFile(view.draftPath(doc))).rejects.toThrow();
+});
+
+// Real helper / file bytes, with the host exec and render descriptions as the
+// only stand-ins. No app window, task service or actual other machine is used.
+async function settle() { for (let at=0;at<pending.length;) { const jobs=pending.slice(at); at=pending.length; await Promise.all(jobs); } }
+async function enableReader() {
+ const dir=join(root,'mods','workspace-document');await mkdir(dir,{recursive:true});
+ await writeFile(join(dir,'preview-read.py'),await readFile(new URL('../mods/workspace-document/preview-read.py',import.meta.url)));
+ execute=async(command,args)=>{
+  const child=Bun.spawn([command,...args],{stdout:'pipe',stderr:'pipe'});
+  const [stdout,stderr,code]=await Promise.all([new Response(child.stdout).text(),new Response(child.stderr).text(),child.exited]);
+  return {stdout,stderr,code};
+ };
+}
+
+test('large CSV opens beyond the native 1 MiB read cap, browses the last page and cannot save a prefix',async()=>{
+ await enableReader(); const fixture=makeDelimited(join(root,'orders.csv'),2*1024*1024);
+ disk=async()=>{throw Error('File exceeds the native 1 MiB read limit')};
+ const original=await readFile(fixture.path);view.open(fixture.path,null,cx);await settle();
+ const doc=view.docs.get(`:${fixture.path}`);
+ expect(doc.error).toBeNull();expect(doc.text).toBeNull();expect(doc.saved).toBeNull();
+ expect(doc.table.total).toBe(fixture.rows);expect(doc.table.rows[0][0]).toBe('record');
+ expect(doc.rowInput).toBeDefined();expect(doc.sourceInput).toBeDefined();
+ built.length=0;view.render(cx);expect(byId('save')).toBeUndefined();expect(byId('csv-last')).toBeDefined();
+ expect(built.length).toBeLessThan(1000); // 40 rows × at most 16 cells, not a whole table tree.
+ dispatch(byId('csv-next'),'on_click',cx);await settle();expect(doc.table.row).toBe(40);expect(doc.table.rows[0][0]).toBe('40');
+ built.length=0;view.render(cx);dispatch(byId('csv-last'),'on_click',cx);await settle();
+ expect(doc.table.row%40).toBe(0);expect(doc.table.rows.at(-1)[0]).toBe(String(fixture.rows-1));
+ built.length=0;view.render(cx);dispatch(byId('csv-first'),'on_click',cx);await settle();expect(doc.table.row).toBe(0);
+ view.tablePage(doc,10003,0,cx);await settle();expect(doc.table.row).toBe(10000);
+ built.length=0;view.render(cx);dispatch(byId('mode-Source'),'on_click',cx);built.length=0;view.render(cx);
+ expect(byId('source-next')).toBeDefined();expect(byId('save')).toBeUndefined();
+ dispatch(byId('source-next'),'on_click',cx);await settle();expect(doc.source.page).toBe(1);
+ view.save(doc,cx);await view.draft(doc);expect(await readFile(fixture.path)).toEqual(original);
+ await expect(readFile(view.draftPath(doc))).rejects.toThrow();
+ built.length=0;view.render(cx);dispatch(byId('mode-Preview'),'on_click',cx);expect(doc.table.row).toBe(10000);
+ built.length=0;view.render(cx);dispatch(byId('delimiter-Comma'),'on_click',cx);await settle();expect(doc.table.row).toBe(0);
+},10000);
+
+test('small editable TSV still previews unsaved quoted content and saves the entire original buffer',async()=>{
+ await enableReader();const path=join(root,'small.tsv'),before='id\tnote\r\n1\t"hello\r\nworld"\r\n';await writeFile(path,before);
+ view.open(path,null,cx);await settle();const doc=view.docs.get(`:${path}`);expect(doc.source).toBeNull();expect(doc.text).toBe(before);
+ expect(view.csvData(doc).rows[1][1]).toBe('hello\r\nworld');
+ doc.text=before.replace('hello','goodbye');expect(view.csvData(doc).rows[1][1]).toBe('goodbye\r\nworld');
+ let writes=0;writeDisk=async(p,text,expected)=>{writes++;expect(p).toBe(path);expect(expected).toBe(before);expect(text).toBe(doc.text);await writeFile(p,text);};
+ view.save(doc,cx);await settle();expect(writes).toBe(1);expect(await readFile(path,'utf8')).toBe(doc.text);
+});
+
+test('growing disk file keeps a dirty draft, reopens it in conflict, and only explicit discard becomes read only',async()=>{
+ await enableReader();const path=join(root,'growing.md'),before='# old\n';await writeFile(path,before);
+ view.open(path,null,cx);await settle();let doc=view.docs.get(`:${path}`);doc.text='# unsaved\n';await view.draft(doc);
+ const large='# new\n'+'large markdown line\n'.repeat(30000);await writeFile(path,large);
+ view.check(cx);await settle();expect(doc.conflict).toBe(true);expect(doc.text).toBe('# unsaved\n');expect(doc.source).toBeNull();
+ view.save(doc,cx);await settle();await view.closeFile(view.active,cx);
+ view.open(path,null,cx);await settle();doc=view.docs.get(`:${path}`);expect(doc.recovered).toBe(true);expect(doc.conflict).toBe(true);expect(doc.text).toBe('# unsaved\n');
+ expect(JSON.parse(await readFile(view.draftPath(doc),'utf8')).text).toBe('# unsaved\n');
+ view.reload(doc,cx);await settle();expect(doc.source).toBeTruthy();expect(doc.saved).toBeNull();expect(doc.text).toBeNull();
+ await expect(readFile(view.draftPath(doc))).rejects.toThrow();
+ built.length=0;view.render(cx);expect(byId('save')).toBeUndefined();expect(byId('mode-Source')).toBeDefined();
+ view.mode(doc,false,cx);view.sourcePage(doc,1,cx);await settle();expect(doc.source.page).toBe(1);view.save(doc,cx);await settle();
+ expect(await readFile(path,'utf8')).toBe(large);
+ await writeFile(path,large.replace('# new','# NEW'));view.check(cx);await settle();expect(doc.stale).toBe(true);view.sourcePage(doc,2,cx);await settle();expect(doc.source.page).toBe(1);
+ await writeFile(path,before);view.reload(doc,cx);await settle();expect(doc.source).toBeNull();expect(doc.text).toBe(before);expect(doc.conflict).toBe(false);
+});
+
+test('large clean source transitions without editing or creating a draft, and oversized edits cannot save',async()=>{
+ await enableReader();const path=join(root,'grow.txt');await writeFile(path,'short');view.open(path,null,cx);await settle();const doc=view.docs.get(`:${path}`);
+ doc.text='x'.repeat(400001);view.save(doc,cx);await settle();expect(doc.notice).toContain('editing is limited');expect(await readFile(path,'utf8')).toBe('short');
+ expect(JSON.parse(await readFile(view.draftPath(doc),'utf8')).text.length).toBe(400001);
+ doc.text=doc.saved;await view.draft(doc);await writeFile(path,'y'.repeat(400001));view.check(cx);await settle();
+ expect(doc.source).toBeTruthy();expect(doc.saved).toBeNull();expect(doc.text).toBeNull();expect(doc.stale).toBe(false);
+ await expect(readFile(view.draftPath(doc))).rejects.toThrow();
+});
+
+test('remote preview runs the same bounded reader on the selected machine; source and table requests ignore late closed results',async()=>{
+ await enableReader();const path=join(root,'remote.tsv');const fixture=makeDelimited(path,2*1024*1024,'\t');
+ const real=execute;let started:()=>void=()=>{},release:()=>void=()=>{};const began=new Promise<void>(r=>{started=r}),wait=new Promise<void>(r=>{release=r});
+ let hold=true, scans=0;const calls:any[]=[];
+ execute=async(command,args,opts)=>{const request=JSON.parse(args[2]);calls.push([request.op,opts.on,opts.timeout]);
+  if(request.op==='scan'){scans++;if(hold){hold=false;started();await wait;}}return real(command,args,opts);
+ };
+ view.open(path,'remote-one',cx);await began;const old=view.docs.get(`remote-one:${path}`);await view.closeFile(view.active,cx);
+ view.open(path,'remote-two',cx);release();await settle();const doc=view.docs.get(`remote-two:${path}`);
+ expect(scans).toBe(2);expect(old.closed).toBe(true);expect(old.table).toBeNull();expect(doc.table.total).toBe(fixture.rows);expect(doc.table.delimiter).toBe('\t');
+ expect(calls).toContainEqual(['scan','remote-one',20000]);expect(calls).toContainEqual(['scan','remote-two',20000]);
+ let sourceStarted:()=>void=()=>{},sourceRelease:()=>void=()=>{};const sourceBegan=new Promise<void>(r=>{sourceStarted=r}),sourceWait=new Promise<void>(r=>{sourceRelease=r});
+ execute=async(command,args,opts)=>{if(JSON.parse(args[2]).op==='source'){sourceStarted();await sourceWait;}return real(command,args,opts);};
+ view.sourcePage(doc,1,cx);await sourceBegan;await view.closeFile(view.active,cx);sourceRelease();await settle();expect(doc.closed).toBe(true);expect(doc.source.page).toBe(0);
+},10000);
+
+test('Office and raster-image panes never become text editors or Save targets',async()=>{
+ let reads=0;disk=async()=>{reads++;throw Error('unexpected text read')};
+ execute=async()=>({code:0,stdout:JSON.stringify({kind:'docx',markdown:'# Report',notice:'Read only'}),stderr:''});
+ view.open('/project/report.docx',null,cx);await settle();let doc=view.docs.get(key('report.docx'));expect(doc.office.markdown).toBe('# Report');
+ view.save(doc,cx);view.editor(doc);await view.draft(doc);expect(doc.editor).toBeUndefined();built.length=0;view.render(cx);expect(byId('save')).toBeUndefined();
+ view.open('/project/picture.png',null,cx);await settle();doc=view.docs.get(key('picture.png'));expect(doc.error).toContain('Image preview');expect(reads).toBe(0);
+ built.length=0;view.render(cx);expect(byId('save')).toBeUndefined();expect(byId('document-original')).toBeDefined();
 });

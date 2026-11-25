@@ -61,6 +61,8 @@ try {
   await back(); await openFile('scan.pdf'); await page.keyboard.press('Control+f')
   await search.fill('needle'); await expectStatus('Unavailable'); assert.equal(await marks.count(),0)
   assert(await page.getByText('Search needs a readable text preview.').isVisible())
+  await back(); await openFile('ascii.pdf'); await page.keyboard.press('Control+f')
+  await search.fill('needle'); await expectStatus('Unavailable'); assert.equal(await marks.count(),0)
   console.log('PASS: web Files Ctrl/Cmd+F; all three matches; syntax preserved; Enter/Shift+Enter/buttons wrap; late match in view; Escape removes marks and restores focus/scroll; file identity; partial and binary preview limits.')
   process.exit(0)
 } catch(e) {console.error(e);process.exit(1)}

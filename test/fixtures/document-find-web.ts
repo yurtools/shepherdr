@@ -7,12 +7,16 @@ const text='// Document Find fixture\nconst needle = "NEEDLE";\n'+
   Array.from({length:145},(_,i)=>`// Synthetic source line ${i+3}\n`).join('')+
   'const late = "Needle at the end";\n'
 const other='Different project file. No matching words.\n'
-const prefix=('First 400,000 bytes only.\n'+'x'.repeat(399960)+'\nneedle\n').slice(0,400000)
+const head='First 400,000 bytes only.\n', tail='\nneedle\n'
+const prefix=head+'x'.repeat(400000-head.length-tail.length)+tail
 const files:Record<string,object>={
   'sample.ts':{path:'sample.ts',size:Buffer.byteLength(text),text},
   'other.txt':{path:'other.txt',size:Buffer.byteLength(other),text:other},
   'large.txt':{path:'large.txt',size:600000,text:prefix,tooBig:true},
   'scan.pdf':{path:'scan.pdf',size:1200,binary:true},
+  // An ASCII PDF prefix can have no NUL byte. It is still not a text document
+  // preview: the project web panel does not parse PDF content.
+  'ascii.pdf':{path:'ascii.pdf',size:40,text:'%PDF-1.4\nneedle as PDF syntax\n%%EOF'},
 }
 const snapshot={name:'Find fixture',host:'fixture',user:'You',places:[{id:'fixture-space',name:'Document Find',machine:'fixture',level:2,status:'idle',mode:'regular',chat:key,folder:'/synthetic'}],machines:[{id:'m:fixture',machine:'fixture',name:'Fixture',here:true,status:'idle'}],tasks:[],automations:{},artifacts:[],asks:{},needs:[],settings:[],sections:[],panels:['files','changes']}
 Bun.serve({port,hostname:'127.0.0.1',fetch(req,server){

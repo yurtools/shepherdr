@@ -378,6 +378,8 @@ test('native PDF Find navigates the matched page and hides obsolete-version boxe
  expect(built.some(el=>el.calls.some(([n,a]:any)=>n==='bg'&&a[0]==='#f59e0b66'))).toBe(true);
  doc.pdf.result.version='changed';built.length=0;view.render(cx);
  expect(built.some(el=>el.calls.some(([n,a]:any)=>n==='bg'&&a[0]==='#f59e0b66'))).toBe(false);
+ doc.pdf.call=async()=>({hits:[],hasText:false,done:true});
+ await findQuery(doc,'needle');expect(doc.find.noText).toBe(true);expect(doc.find.detail).toContain('not OCR scanned');
 });
 
 test('paged source Find loads its actual page and closes without a draft or save',async()=>{

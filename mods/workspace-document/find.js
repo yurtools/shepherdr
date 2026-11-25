@@ -128,7 +128,7 @@ export class DocumentFind {
   get current() { return this.hits[this.index]; }
   cancel() {
     this.serial++; this.hits = []; this.index = 0; this.error = null;
-    this.detail = null; this.cells = null; this.sourceText = null; this.rows = null; this.rowsText = null; this.pdfTarget = null; this.revealPending = false; this.busy = false; this.limited = false; this.rendered = null; this.version = null; this.jump = false;
+    this.detail = null; this.noText = false; this.cells = null; this.sourceText = null; this.rows = null; this.rowsText = null; this.pdfTarget = null; this.revealPending = false; this.busy = false; this.limited = false; this.rendered = null; this.version = null; this.jump = false;
   }
   release() { this.cancel(); this.closed = true; this.input.release(); this.scroll.release(); this.pdfScroll?.release(); }
   async scan(query, serial, signature, reader) {
@@ -173,7 +173,9 @@ export class DocumentFind {
         next = mode === 'pdf' ? { page: batch.next } : mode === 'source' ? { start: batch.next } : { row: batch.row, offset: batch.offset };
       }
       if (!alive()) return null;
-      if (mode === 'pdf' && complete && !hasText) result.detail = 'No searchable text layer in this PDF. Image-only pages are not OCR scanned.';
+      if (mode === 'pdf' && complete && !hasText) {
+        result.noText = true; result.detail = 'No searchable text layer in this PDF. Image-only pages are not OCR scanned.';
+      }
       else if (mode === 'pdf') result.detail ??= 'Search covers extracted PDF text; highlights follow word boxes. Image-only text is not searched.';
       if (mode === 'table' && doc.table.limited) { result.limited = true; result.detail ??= 'Only indexed records are searchable. Choose Source for the rest.'; }
     } else if (mode === 'table') Object.assign(result, bufferTable(doc, query));
@@ -202,7 +204,7 @@ export class DocumentFind {
         if (/[\uD800-\uDBFF]$/.test(value)) value = value.slice(0,-1);
         result.sourceText = value; result.limited = true; result.detail = 'Only the first 400,000 units of this oversized draft are searchable.';
       }
-      if (!value.trim() && mode === 'docx') result.detail = 'No readable text in this Word content preview.';
+      if (!value.trim() && mode === 'docx' && !result.limited) { result.noText = true; result.detail = 'No readable text in this Word content preview.'; }
       const found = findRanges(value, query);
       result.hits = found.hits; result.limited ||= found.limited;
     }

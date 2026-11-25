@@ -60,6 +60,7 @@ export function findCount(state) {
   if (!state.query) return '';
   if (state.error) return state.error;
   if (state.busy) return 'Searching…';
+  if (state.noText) return 'No searchable text';
   const n = state.hits.length;
   return n ? `${state.index + 1} of ${n}${state.limited ? '+' : ''}` : state.limited ? 'No matches in searched content' : 'No matches';
 }

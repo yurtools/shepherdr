@@ -179,11 +179,11 @@ not executed. The Office helper has a 20-second host timeout.
   and a real remote connection have not been exercised here. Office continues to
   use its local `python3` helper. Native PDF still requires local Linux/macOS
   Python and Poppler; Windows and remote native PDFs use the existing fallback.
-- The web **Task Files** panel is not the native Document pane. It reads from the
-  task's worktree on its machine (`service/worktree.ts`, `machine.exec`, `wc -c`
+- The web **Files** side panel is not the native Document pane. It reads from the
+  selected space's folder on its machine (the shared worktree service also accepts task sources) (`service/worktree.ts`, `machine.exec`, `wc -c`
   and `head -c`): **400,000 file bytes** as a read-only text prefix, with a
-  truncation label, NUL-based binary detection and no CSV/Markdown/Office/PDF
-  mode or editor. Web code highlighting has a separate 300,000-character
+  truncation label, NUL-based binary detection and explicit unsupported-document
+  formats; no CSV/Markdown/Office/PDF rendered mode or editor. Web code highlighting has a separate 300,000-character
   threshold. It supports Find within that text prefix, not native document-mode parity.
 - Native **Changes** previews are Git output (2,000,000 bytes command cap, 400,000
   bytes for new text files, 1,500 lines and 4,000 characters per line). Web task

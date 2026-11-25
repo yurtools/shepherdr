@@ -22,6 +22,12 @@ window's `loadResults()` reading). A CLI's start screens are read and watched wi
 the window's chat (`mods/chat/screens.js`) and the service (`service/watch.ts`), tested in `core/screens.test.js`; a
 lost session's words and handover (`LOST`, `lostMessage`, the notes) are `core/chat-view.js`'s on both sides.
 
+Yurherdr's [inline flowcharts](../chat-flowcharts.md) share a bounded fence
+scanner, text-only parser and Dagre geometry between native GPUI and web SVG.
+The same source/fallback/copy contract applies to user and agent messages.
+Native materialization is checked independently of web paint; this does not
+certify native deferred-list layout or touch interaction.
+
 State: ✓ matches, ◇ web-only form (why), ✗ still differs (why).
 
 ## Timeline rows

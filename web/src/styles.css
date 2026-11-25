@@ -420,6 +420,71 @@
   }
 }
 
+/* Shared flowchart cards, for both literal user text and rendered Markdown.
+   Narrow panes scroll the drawing instead of shrinking the labels to dust. */
+.flowchart-card {
+  max-width: 100%;
+  min-width: 0;
+  margin: 6px 0;
+  border: 1px solid var(--line2);
+  border-radius: var(--row-radius);
+  background: var(--well);
+  color: var(--fg);
+  overflow: hidden;
+}
+.flowchart-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px;
+  min-height: 30px;
+  padding: 2px 4px 2px 10px;
+  border-bottom: 1px solid var(--line);
+  color: var(--fg2);
+  font-size: 12px;
+  line-height: 16px;
+}
+.flowchart-lang { flex: 1; min-width: 0; }
+.flowchart-head button {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 4px;
+  min-height: 24px;
+  padding: 0 6px;
+  border-radius: 5px;
+  color: var(--fg2);
+  white-space: nowrap;
+}
+.flowchart-head button:hover { color: var(--fg); background: var(--hover); }
+[data-device="phone"] .flowchart-head button { min-height: 40px; }
+.flowchart-viewport {
+  width: 100%;
+  overflow: auto;
+  touch-action: auto;
+  overscroll-behavior: contain;
+}
+.flowchart-viewport svg { display: block; margin: auto; max-width: none; }
+.flowchart-scroll-hint, .flowchart-error {
+  margin: 0;
+  padding: 6px 10px;
+  color: var(--fg2);
+  font-size: 12px;
+  line-height: 17px;
+}
+.flowchart-scroll-hint { border-top: 1px solid var(--line); }
+.flowchart-source {
+  margin: 0;
+  max-height: 420px;
+  overflow: auto;
+  touch-action: auto;
+  overscroll-behavior: contain;
+  padding: 10px 12px;
+  font: 0.8125rem/1.5 var(--font-mono);
+  white-space: pre;
+  user-select: text;
+}
+
 /* Rendered agent replies (markdown): paragraphs, lists, inline code, code blocks that scroll sideways */
 @utility prose-reply {
   /* a long link or path breaks rather than pushing the bubble wider */

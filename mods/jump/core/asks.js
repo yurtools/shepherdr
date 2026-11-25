@@ -50,6 +50,7 @@ const STATUS_DETAILS = {
   manual: 'Ask me mode is on.', 'no-rule': 'No saved rule matched this request.',
   'assistant-asked': 'Assistant asked you to decide.', 'review-expired': 'Assistant review expired. You can decide or ask again.',
   'review-unavailable': 'Assistant review is unavailable. You can decide here.',
+  'context-unavailable': 'Could not read the requesting terminal. Try again when it is available, or decide here.',
   'policy-error': 'Approval policy could not be read. You can decide here.',
   'rule-denied': 'A saved deny rule blocks Assistant approval. You can decide here.',
   'policy-changed': 'The review policy changed during review. You can decide or ask again.',

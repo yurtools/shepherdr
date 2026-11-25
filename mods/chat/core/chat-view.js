@@ -1,4 +1,5 @@
 import { sortPlan } from "./chat-preparation.js";
+import { fencedParts } from "./chat-fences.js";
 // Shared core: the source is core/chat-view.js; bin/sync-shared copies it into mods/chat/core/. Edit it here.
 // The chat's rows as the window's chat (mods/chat) draws them and the web app's chat (web/plugins/chat) draws them
 // too: their words, a message's time, who sent a message, a launch brief's label, a task's news line, which
@@ -471,10 +472,9 @@ export function mediaIn(text, { cwd = null, home = null } = {}) {
     return i;
   };
   // the words outside code: fenced blocks and inline code stay as written
-  const parts = src.split(/(^ {0,3}(?:```|~~~)[^\n]*\n[\s\S]*?(?:\n {0,3}(?:```|~~~)[^\n]*(?:\n|$)|$))/m);
-  const out = parts.map((part, i) => {
-    if (i % 2) return part;
-    return part.split(/(`+[^`]*`+)/).map((bit, j) => {
+  const parts = [...fencedParts(src)].map(part => {
+    if (part.type === "code") return part;
+    const text = part.text.split(/(`+[^`]*`+)/).map((bit, j) => {
       if (j % 2) return bit;
       return bit.replace(/(!?)\[([^\]\n]*)\]\(\s*(<[^>\n]+>|[^\s()]+(?:\([^\s()]*\)[^\s()]*)*)(?:\s+"[^"\n]*")?\s*\)/g, (whole, bang, words, target) => {
         const path = where(target);
@@ -483,18 +483,27 @@ export function mediaIn(text, { cwd = null, home = null } = {}) {
         return bang ? (i >= 0 ? `\u0000${i}\u0000` : "") : words;
       });
     }).join("");
-  }).join("");
+    return { ...part, text };
+  });
   if (!media.length) return { text: src, media };
   // a line with one picture and a short label ("Before:", "**After**") gives the picture its caption and goes; the lines
   // a picture leaves empty go, and the gaps they leave close
-  const lines = out.split("\n").flatMap((l) => {
+  const clean = text => text.split("\n").flatMap((l) => {
     const marks = [...l.matchAll(/\u0000(\d+)\u0000/g)];
     if (!marks.length) return [l.replace(/[ \t]+$/, "")];
     const rest = l.replace(/\u0000\d+\u0000/g, "").replace(/^\s*(?:[-*+]|\d+[.)])\s+/, "").trim();
     const label = rest.replace(/^[*_]+|[*_]+$/g, "").replace(/:$/, "").replace(/^[*_]+|[*_]+$/g, "").trim();
     if (marks.length === 1 && label && rest.length <= 40 && (/:[*_]*$/.test(rest) || /^[*_]/.test(rest))) { media[Number(marks[0][1])].alt = label; return []; }
     return rest ? [l.replace(/\u0000\d+\u0000[ \t]*/g, "").replace(/[ \t]+$/, "")] : [];
-  });
-  const words = lines.join("\n").replace(/\n{3,}/g, "\n\n").trim();
+  }).join("\n").replace(/\n{3,}/g, "\n\n");
+  // Don't normalize whitespace inside a fence: Copy must get the original
+  // source, even if the same message also contains a picture or video.
+  const words = parts.map((p,i) => {
+    if (p.type === "code") return p.raw;
+    let s = clean(p.text);
+    if (i === 0) s = s.trimStart();
+    if (i === parts.length - 1) s = s.trimEnd();
+    return s;
+  }).join("");
   return { text: words, media };
 }

@@ -11,7 +11,7 @@ class ApprovalPolicy(unittest.TestCase):
   self.tmp=tempfile.TemporaryDirectory();self.addCleanup(self.tmp.cleanup);self.base=Path(self.tmp.name)
   self.env=mock.patch.dict(os.environ,{'HERDR_APP_HOME':str(self.base/'app'),'HERDR_TASK_SETTINGS':str(self.base/'settings.json'),'HC_TERMINAL_ID':'worker'});self.env.start();self.addCleanup(self.env.stop)
   self.meta={'state':'live','argv':['env','CODEX_HOME='+str(self.base/'account'),'codex'],'cwd':str(self.base/'repo'),'labels':{'herdr.task.space':'space','herdr.task':'TASK-1','herdr.coordinator':'assistant'}}
-  self.hc=mock.patch.object(A,'hc_get',side_effect=lambda terminal: {'state':'live','labels':{'herdr.role':'coordinator','herdr.coordinator.space':'space'},'argv':['claude']} if terminal=='assistant' else self.meta);self.hc.start();self.addCleanup(self.hc.stop)
+  self.hc=mock.patch.object(A,'hc_get',side_effect=lambda terminal: {'state':'live','pid':42,'labels':{'herdr.role':'coordinator','herdr.coordinator.space':'space'},'argv':['claude']} if terminal=='assistant' else self.meta);self.hc.start();self.addCleanup(self.hc.stop)
   self.req={'session_id':'session','cwd':str(self.base/'repo'),'tool_name':'Bash','tool_input':{'command':'git status --short'}}
   self.path=A.app_home()/'data/chat-asks/req/worker.1.json';A.write(self.path,self.req)
  def mode(self,mode):A.write(self.base/'settings.json',{'everywhere':{'approvals':{'mode':mode}}})
@@ -106,6 +106,92 @@ class ApprovalAdvice(unittest.TestCase):
   with mock.patch.object(D.subprocess,'run',return_value=mock.Mock(returncode=0,stdout='{}')) as send:
    result=D.request(self.path,A.status_key(A.read(self.path)),'worker')
   return A.read(D.ticket_path(self.path.stem)),send,result
+ def click(self,command):
+  spec=importlib.util.spec_from_file_location('feature_approval_ui',ROOT/'mods/chat/approval-policy.py');ui=importlib.util.module_from_spec(spec);spec.loader.exec_module(ui)
+  return ui.main(ui.parser().parse_args([command,'--request',str(self.path),'--terminal','worker','--hash',A.status_key(A.read(self.path))]))
+ def test_both_buttons_recover_after_requester_metadata_temporarily_disappears(self):
+  self.owner(True)
+  self.owner_meta.update(argv=['codex'],foreground={'name':'codex','pid':42,'argv':['codex']},status={'app':'codex','state':'done'})
+  lookup=A.hc_get.side_effect
+  A.hc_get.side_effect=lambda t:{} if t=='worker' else lookup(t)
+  with mock.patch.object(A.subprocess,'run',return_value=mock.Mock(returncode=0,stdout='{}')) as hc:
+   self.assertEqual(A.evaluate(self.path)['action'],'wait')
+   self.assertEqual(A.read(self.path.with_suffix('.status'))['reason'],'context-unavailable')
+   self.assertFalse(self.path.with_suffix('.context').exists())
+   for command in ('advice','review'):
+    with self.assertRaisesRegex(ValueError,'requesting terminal'):
+     self.click(command)
+   hc.assert_not_called()
+   self.assertFalse(D.ticket_path(self.path.stem).exists())
+   self.assertFalse((A.store()/'pending'/self.path.name).exists())
+   A.hc_get.side_effect=lookup
+   self.assertEqual(self.click('advice')['state'],'pending')
+   self.click('review')
+   self.assertEqual([c.args[0][:3] for c in hc.call_args_list],[['hc','send','assistant'],['hc','send','assistant']])
+  ctx=A.read(self.path.with_suffix('.context'))
+  self.assertEqual((ctx['feature'],ctx['space'],ctx['task'],ctx['reviewer']),('feature-one','space','TASK-1','assistant'))
+  self.assertFalse((self.path.parent.parent/'ans'/self.path.name).exists())
+ def test_context_lookup_cannot_create_a_sidecar_after_the_request_closes(self):
+  def closed(_terminal):
+   self.path.unlink();return self.meta
+  A.hc_get.side_effect=closed
+  with self.assertRaisesRegex(ValueError,'changed, closed or already'):
+   A.request_context(self.path)
+  self.assertFalse(self.path.with_suffix('.context').exists())
+ def test_manually_answering_does_not_require_requester_metadata(self):
+  A.hc_get.side_effect=lambda _t:{}
+  spec=importlib.util.spec_from_file_location('missing_context_ui',ROOT/'mods/chat/approval-policy.py');ui=importlib.util.module_from_spec(spec);spec.loader.exec_module(ui)
+  args=ui.parser().parse_args(['answer','--request',str(self.path),'--hash',A.status_key(self.req),'--answer',json.dumps(A.response('deny')['response'])])
+  self.assertEqual(ui.main(args)['action'],'answered')
+  self.assertEqual(A.read(self.path.parent.parent/'ans'/self.path.name),A.response('deny')['response'])
+  self.assertFalse(self.path.with_suffix('.context').exists())
+  row=A.history_rows()[-1];self.assertEqual(row['decision'],'deny');self.assertFalse(row.get('account'));self.assertNotIn('rule_seed',row)
+ def test_both_buttons_follow_the_restored_feature_not_its_shell_or_stale_address(self):
+  self.owner(True)
+  shell={**self.owner_meta,'argv':['bash'],'foreground':{'name':'bash','pid':42,'argv':['bash']},'status':None}
+  restored={**self.owner_meta,'pid':52,'foreground':{'name':'claude','pid':53,'argv':['claude']}}
+  other={**restored,'labels':{**restored['labels'],'herdr.feature':'another-feature'}}
+  req,ctx=A.request_context(self.path,'worker')
+  self.assertEqual(ctx['reviewer'],'assistant') # persisted before reboot
+  A.hc_get.side_effect=lambda t:{'assistant':shell,'restored':restored,'other':other}.get(t,self.meta)
+  sends=[]
+  def hc(args,**kwargs):
+   if args[1]=='ls':return mock.Mock(returncode=0,stdout=json.dumps({'terminals':[{'address':t} for t in ('assistant','other','restored')]}))
+   sends.append(args[:3]);return mock.Mock(returncode=0,stdout='{}')
+  with mock.patch.object(A.subprocess,'run',side_effect=hc):
+   self.assertEqual(self.click('advice')['state'],'pending')
+   self.click('review')
+  self.assertEqual(sends,[['hc','send','restored'],['hc','send','restored']])
+  self.assertEqual(A.read(D.ticket_path(self.path.stem))['owner'],'restored')
+  self.assertEqual(A.read(A.store()/'pending'/self.path.name)['reviewer'],'restored')
+  self.assertEqual(A.read(self.path.with_suffix('.context')),ctx)
+ def test_both_buttons_refuse_a_shell_when_no_matching_feature_is_running(self):
+  self.owner(True)
+  self.owner_meta.update(argv=['claude'],foreground={'name':'bash','pid':42,'argv':['bash']},status=None)
+  req,ctx=A.request_context(self.path,'worker')
+  with mock.patch.object(A.subprocess,'run',return_value=mock.Mock(returncode=0,stdout='{"terminals":[{"address":"assistant"}]}')) as hc:
+   self.assertEqual(self.click('advice')['state'],'unavailable')
+   self.click('review')
+  self.assertEqual(A.read(A.store()/'pending'/self.path.name)['status'],'unavailable')
+  self.assertTrue(all(c.args[0][1]=='ls' for c in hc.call_args_list))
+  self.assertFalse((self.path.parent.parent/'ans'/self.path.name).exists())
+ def test_explicit_retry_replaces_only_stale_feature_tickets_after_owner_recovery(self):
+  self.owner(True)
+  with mock.patch.object(A.subprocess,'run',return_value=mock.Mock(returncode=0,stdout='{}')):
+   self.click('advice');self.click('review')
+  old_advice=A.read(D.ticket_path(self.path.stem));old_review=A.read(A.store()/'pending'/self.path.name)
+  shell={**self.owner_meta,'argv':['bash'],'foreground':{'name':'bash','pid':42,'argv':['bash']},'status':None}
+  restored={**self.owner_meta,'pid':52}
+  A.hc_get.side_effect=lambda t:{'assistant':shell,'restored':restored}.get(t,self.meta)
+  def hc(args,**kwargs):return mock.Mock(returncode=0,stdout='{"terminals":[{"address":"restored"}]}' if args[1]=='ls' else '{}')
+  with mock.patch.object(A.subprocess,'run',side_effect=hc):
+   self.click('advice');self.click('review')
+  advice=A.read(D.ticket_path(self.path.stem));review=A.read(A.store()/'pending'/self.path.name)
+  self.assertEqual((advice['owner'],review['reviewer']),('restored','restored'))
+  self.assertNotEqual(advice['token'],old_advice['token']);self.assertNotEqual(review['token'],old_review['token'])
+  with self.assertRaises(ValueError):D.evidence(old_advice['id'],old_advice['token'],'assistant')
+  with self.assertRaises(ValueError):A.review_input(old_review['id'],old_review['token'],'assistant')
+  self.assertFalse((self.path.parent.parent/'ans'/self.path.name).exists())
  def test_feature_owner_gets_only_an_informational_capability_and_duplicate_clicks_send_once(self):
   self.owner(True);ticket,send,result=self.request();self.assertEqual(result['state'],'pending')
   message=send.call_args.args[0];self.assertEqual(message[:3],['hc','send','assistant'])
@@ -158,7 +244,7 @@ class ApprovalAdvice(unittest.TestCase):
     elif case=='unknown-state':self.owner_meta.pop('status')
     elif case=='no-process':self.owner_meta.pop('pid')
     else:self.meta['labels']['herdr.owner']='worker'
-    ticket,send,result=self.request();send.assert_not_called();self.assertIn(result['state'],('busy','unavailable'))
+    ticket,send,result=self.request();self.assertFalse(any(c.args[0][1]=='send' for c in send.call_args_list));self.assertIn(result['state'],('busy','unavailable'))
   self.owner();self.meta['labels'].pop('herdr.coordinator',None);self.meta['labels'].pop('herdr.owner',None);self.path.with_suffix('.context').unlink();D.ticket_path(self.path.stem).unlink()
   with mock.patch.object(D.subprocess,'run',return_value=mock.Mock(returncode=0,stdout='{"terminals":[]}')) as calls:
    self.assertEqual(D.request(self.path,A.status_key(self.req))['state'],'unavailable');self.assertEqual(calls.call_args.args[0],['hc','ls','--json'])
@@ -298,7 +384,7 @@ class ApprovalLifecycle(unittest.TestCase):
   else:
    for key in ('herdr.feature','herdr.owner'):self.meta['labels'].pop(key,None)
   worker=self.meta.copy()
-  reviewer={'state':'live','labels':{'herdr.role':kind if kind=='feature' else 'coordinator','herdr.coordinator.space':'space',**({'herdr.feature':'feature-one'} if kind=='feature' else {})}}
+  reviewer={'state':'live','pid':42,'argv':['claude'],'labels':{'herdr.role':kind if kind=='feature' else 'coordinator','herdr.coordinator.space':'space',**({'herdr.feature':'feature-one'} if kind=='feature' else {})}}
   A.hc_get.side_effect=lambda terminal:reviewer if terminal=='assistant' else worker
   with mock.patch.object(A.subprocess,'run',return_value=mock.Mock(returncode=delivery,stdout='{}')):
    if mode=='manual':
@@ -401,7 +487,7 @@ class AssistantReviewRegression(unittest.TestCase):
   original=A.hc_get.side_effect
   def lookup(terminal):
    if during:during()
-   return {'state':'live','labels':{'herdr.role':'coordinator','herdr.coordinator.space':'space'},'argv':['claude']}
+   return {'state':'live','pid':42,'labels':{'herdr.role':'coordinator','herdr.coordinator.space':'space'},'argv':['claude']}
   A.hc_get.side_effect=lookup
   try:
    with mock.patch.object(A.subprocess,'run',return_value=mock.Mock(returncode=0,stdout='{}')) as send:
@@ -412,7 +498,7 @@ class AssistantReviewRegression(unittest.TestCase):
   observed=[]
   def poll():
    # No recursive reviewer lookup: the ticket must describe processing already.
-   with mock.patch.object(A,'hc_get',return_value={'state':'live','labels':{'herdr.role':'coordinator','herdr.coordinator.space':'space'}}):A.evaluate(self.path)
+   with mock.patch.object(A,'hc_get',return_value={'state':'live','pid':42,'argv':['claude'],'labels':{'herdr.role':'coordinator','herdr.coordinator.space':'space'}}):A.evaluate(self.path)
    observed.append(A.read(self.path.with_suffix('.status'))['state'])
   self.delegate(during=poll)
   self.assertTrue(observed);self.assertNotIn('person',observed)
@@ -497,7 +583,7 @@ class AssistantReviewRegression(unittest.TestCase):
   self.assertIn('review-input',send.call_args.args[0][-1]);self.assertNotIn('Exact request:',send.call_args.args[0][-1])
   command=[str(A.app_home()/'mods/chat/approval-policy.py'),'review-input','--id',ticket['id'],'--token',ticket['token']]
   nested=A.app_home()/'data/chat-asks/req/assistant.2.json';request={'tool_name':'Bash','tool_input':{'command':shlex.join(command)}};A.write(nested,request)
-  reviewer={'state':'live','argv':['claude'],'labels':{'herdr.role':'coordinator','herdr.coordinator.space':'space'}}
+  reviewer={'state':'live','pid':42,'argv':['claude'],'labels':{'herdr.role':'coordinator','herdr.coordinator.space':'space'}}
   with mock.patch.object(A,'hc_get',return_value=reviewer):
    self.assertEqual(A.evaluate(nested,'assistant')['source'],'review-control')
   with mock.patch.dict(os.environ,{'HC_TERMINAL_ID':'assistant'}):
@@ -539,7 +625,7 @@ class AssistantReviewRegression(unittest.TestCase):
    with self.subTest(cli=cli):
     self.path.with_suffix('.context').unlink(missing_ok=True);(A.store()/'pending'/self.path.name).unlink(missing_ok=True)
     self.meta['labels'].update({'herdr.feature':'owned-feature','herdr.owner':'stale-space-assistant'})
-    owner={'state':'live','argv':[cli,'--model','fixture-model'],'labels':{'herdr.role':'feature','herdr.feature':'owned-feature','herdr.coordinator.space':'space'}}
+    owner={'state':'live','pid':42,'argv':[cli,'--model','fixture-model'],'labels':{'herdr.role':'feature','herdr.feature':'owned-feature','herdr.coordinator.space':'space'}}
     A.hc_get.side_effect=lambda terminal:owner if terminal=='feature-owner' else self.meta if terminal=='worker' else {'state':'gone'}
     self.mode('assistant')
     def hc(argv,**kwargs):return mock.Mock(returncode=0,stdout=json.dumps({'terminals':[{'address':'feature-owner'}]}) if argv[1]=='ls' else '')
@@ -602,7 +688,7 @@ elif args[0]=='send':
 else:sys.exit(1)
 ''');hc.chmod(0o755)
   A.write(self.base/'worker.json',self.meta)
-  A.write(self.base/'assistant.json',{'state':'live','argv':['claude'],'labels':{'herdr.role':'coordinator','herdr.coordinator.space':'space'}})
+  A.write(self.base/'assistant.json',{'state':'live','pid':42,'argv':['claude'],'labels':{'herdr.role':'coordinator','herdr.coordinator.space':'space'}})
   req={**self.req,'tool_input':{'command':'git status | wc -l'}}
   self.path.unlink()
   env={**os.environ,'PATH':str(fake)+os.pathsep+os.environ['PATH'],'FIXTURE_ROOT':str(self.base),'FIXTURE_HELPER':str(ROOT/'mods/chat/approval-policy.py')}

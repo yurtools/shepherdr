@@ -5,7 +5,9 @@ reference and acceptance notes, not a claim that every Yurherdr extension is
 available on the web. Native Yurherdr has additional Feature Assistants, Sessions,
 account controls, document panes, multi-repository Changes, browser pages and
 approval-history actions. The native Changes panel groups repositories under the
-space folder; web Changes retains its single-repository behavior.
+space folder; web Changes retains its single-repository behavior. Native indexed
+CSV/TSV, paged source and format-specific document previews remain distinct from
+the web Task Files text-prefix view; see [document preview limits](document-preview.md).
 Use [the workspace guide](workspace.md) for implemented behavior and limitations.
 
 The inherited comparison targets the shared contents, labels, menus and states.

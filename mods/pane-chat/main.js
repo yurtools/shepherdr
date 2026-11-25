@@ -25,6 +25,7 @@ import { on as addonOn } from "./addons.js";
 import { endAgent } from "./core/menus.js";
 import { companionFor, boundAgent, closeCompanion, requestCompanionMode, companionAgent } from "./companions.js";
 import { popupBounds, popupAt } from "./popup.js";
+import { workspaceCall } from "./workspace-store.js";
 
 const CHAT = "chat";
 const LABEL = "herdr.chat";
@@ -59,10 +60,11 @@ function featureOf(pane) {
   return featureViews({ features: shared('workspace.features') ?? [], spaces: spaces(), panes: panes(), terminals: terminals(),
     slots: shared('coordinator.slots') ?? {}, companions: shared('workspace.companions') ?? {} }).byPane.get(pane);
 }
-function bindFeature(record, pane, tab) {
+async function bindFeature(record, pane, tab, view) {
   if (!record || !pane) return;
   setShared('coordinator.slots', { ...(shared('coordinator.slots') ?? {}),
     [`feature-${record.id}`]: { feature: record.id, space: record.space, folder: record.folder, pane, tab } });
+  await workspaceCall('feature-update',{id:record.id,pane,tab,view});
 }
 
 // The agent a chat pane shows.
@@ -162,7 +164,7 @@ export default class Pane extends View {
         // The agent knows its chat: if that pane goes with its tab or space, the agents list
         // ends the agent (parked.js sweep), as closing its own pane would have.
         await hc(["label", terminal, `${LABEL}=${chatLabel(out.pane)}`]);
-        bindFeature(feature, out.pane, p.tab);
+        await bindFeature(feature, out.pane, p.tab, 'chat');
         run("pane.focus", { pane: out.pane });
         // Last: parking removes this pane, and this header with it. The chat turns core keep
         // back on once the park has gone through (mods/chat).
@@ -185,7 +187,7 @@ export default class Pane extends View {
     const feature = featureOf(chat), tab = panes().find(p => p.pane === chat)?.tab;
     if (!live || own) {
       const zoomed = panes().find((x) => x.pane === chat)?.zoomed;
-      if (own) bindFeature(feature, own.pane, own.tab);
+      if (own) bindFeature(feature, own.pane, own.tab, 'terminal').catch(e=>toast({title:'Could not remember Feature view',body:plainError(e),level:'error'}));
       run("pane.close", { pane: chat });
       if (terminal) hc(["label", terminal, `${LABEL}=`]);
       if (own) { if (zoomed && own.zoomed) run("pane.zoom", { pane: own.pane }); run("pane.focus", { pane: own.pane }); }
@@ -198,7 +200,7 @@ export default class Pane extends View {
         await app("pane.focus", { pane: chat });
         const out = await app("terminal.keep", { terminal, place: "right" });
         await hc(["label", terminal, `${LABEL}=`]);
-        bindFeature(feature, out.pane, tab);
+        await bindFeature(feature, out.pane, tab, 'terminal');
         if (out.pane) run("pane.focus", { pane: out.pane });
         // Last: closing the chat removes this header too.
         await app("pane.close", { pane: chat });

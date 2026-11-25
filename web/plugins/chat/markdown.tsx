@@ -7,6 +7,7 @@ import { copyText } from '@client/copy.ts'
 import { goPlace, openTask, useSnap } from '@client/kernel.ts'
 import * as MNs from '@core/mentions.js'
 import { forMarkdown, hasMention, parseMention, parseTask, stateOf, taskStateOf, TITLE, useReach } from './mentions.tsx'
+import { MermaidMessage } from './flowchart.tsx'
 const shortTitle = (MNs as any).short as (t: string) => string
 
 marked.setOptions({ gfm: true, breaks: false })
@@ -120,6 +121,10 @@ function onCopy(e: MouseEvent) {
 
 /** chat: the chat it is in, so a #-mention of a space (core/mentions.js) draws as a chip, open or locked */
 export function Markdown({ text, chat }: { text: string; chat?: string }) {
+  return <MermaidMessage text={text} renderText={part => <MarkdownText text={part} chat={chat} />} />
+}
+
+function MarkdownText({ text, chat }: { text: string; chat?: string }) {
   if (chat && hasMention(text)) return <WithMentions text={text} chat={chat} />
   return <Plain text={text} />
 }

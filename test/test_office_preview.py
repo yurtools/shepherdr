@@ -1,5 +1,5 @@
 import home_guard  # noqa: F401
-import importlib.machinery, importlib.util, tempfile, unittest, zipfile
+import importlib.machinery, importlib.util, json, tempfile, unittest, zipfile
 from pathlib import Path
 ROOT=Path(__file__).resolve().parent.parent
 loader=importlib.machinery.SourceFileLoader('office_preview',str(ROOT/'mods/workspace-document/bin/herdr-office'))
@@ -34,6 +34,24 @@ class OfficePreview(unittest.TestCase):
    office.MAX_TOTAL=100
    with self.assertRaisesRegex(ValueError,'limited'): office.preview(path)
   finally: office.MAX_TOTAL=old
+ def test_sparse_workbook_output_slots_are_bounded_independently_of_characters(self):
+  # Every row has only an empty cell at column 100. The old preview expanded
+  # this compact package to 5 million empty strings and a >20 MB JSON reply.
+  ns=office.S[1:-1];rel=office.R[1:-1];parts={
+   'xl/workbook.xml':f'<workbook xmlns="{ns}" xmlns:r="{rel}"><sheets>'+''.join(f'<sheet name="Sheet {i}" sheetId="{i}" r:id="r{i}"/>' for i in range(1,101))+'</sheets></workbook>',
+   'xl/_rels/workbook.xml.rels':'<Relationships>'+''.join(f'<Relationship Id="r{i}" Target="worksheets/sheet{i}.xml"/>' for i in range(1,101))+'</Relationships>'}
+  sheet=f'<worksheet xmlns="{ns}"><sheetData>'+''.join(f'<row r="{i}"><c r="CV{i}"/></row>' for i in range(1,501))+'</sheetData></worksheet>'
+  for i in range(1,101): parts[f'xl/worksheets/sheet{i}.xml']=sheet
+  path=self.package('.xlsx',parts);out=office.preview(path)
+  self.assertTrue(out['limited']);self.assertIn('cell slots',out['limitNotice'])
+  self.assertEqual(sum(len(row) for sheet in out['sheets'] for row in sheet['rows']),office.MAX_CELLS)
+  self.assertLess(len(json.dumps(out,ensure_ascii=False).encode('utf-8')),8*1024*1024)
+  self.assertEqual(len(out['sheets'][0]['rows']),500);self.assertEqual(len(out['sheets'][0]['rows'][0]),100)
+ def test_word_table_truncation_is_disclosed_without_changing_original(self):
+  rows='<w:tr><w:tc><w:p><w:r><w:t>Cell</w:t></w:r></w:p></w:tc></w:tr>'*501
+  path=self.package('.docx',{'word/document.xml':f'<w:document xmlns:w="{office.W[1:-1]}"><w:body><w:tbl>{rows}</w:tbl></w:body></w:document>'})
+  before=Path(path).read_bytes();out=office.preview(path)
+  self.assertTrue(out['limited']);self.assertIn('500 rows',out['limitNotice']);self.assertEqual(Path(path).read_bytes(),before)
  def test_legacy_binary_formats_have_actionable_message(self):
   with self.assertRaisesRegex(ValueError,'Save a copy as DOCX or XLSX'): office.preview('/not-read.xls')
 if __name__=='__main__': unittest.main()

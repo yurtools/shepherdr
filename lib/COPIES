@@ -83,7 +83,7 @@ file-reference.js: workspace-file-search workspace-files workspace-document work
 approval.js: chat chat-models coordinator newspace shepherdr-settings workspace-approvals menu-tasks new-menu-tasks spaces-chat tabs-tasks tasks workspace-sessions workspace-launchers pane-chat workspace-agents
 features.js: tabs-tasks chat workspace-sessions workspace-launchers new-menu-tasks
 workspace-browser.js: tabs-tasks
-workspace-store.js: tabs-tasks chat workspace-sessions workspace-launchers new-menu-tasks menu-tasks
+workspace-store.js: tabs-tasks chat workspace-sessions workspace-launchers new-menu-tasks menu-tasks pane-chat
 
 core/chat-links.js: chat workspace-document
 
@@ -99,7 +99,11 @@ core/chat-preparation.js: chat
 role-launch.js: chat coordinator menu-tasks new-menu-tasks newspace shepherdr-settings spaces-chat tabs-tasks tasks workspace-sessions workspace-launchers pane-chat workspace-agents
 task-view.js: chat tasks jump spaces-chat tabs-tasks workspace-status-chat
 
-core/session-find.js: chat tabs-tasks workspace-sessions workspace-launchers new-menu-tasks
+core/session-find.js: chat tabs-tasks workspace-sessions workspace-launchers new-menu-tasks coordinator menu-tasks newspace shepherdr-settings spaces-chat tasks pane-chat workspace-agents
 
 bounded-wait.js: chat tabs-tasks tasks spaces-chat coordinator artifacts workspace-status-chat
 clipboard.js: chat
+
+core/chat-fences.js: chat
+core/chat-flowchart.js: chat
+core/vendor/dagre.js: chat

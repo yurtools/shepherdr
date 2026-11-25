@@ -75,7 +75,7 @@ export function fakeGpuiBase(given: Record<string, unknown> = {}): Record<string
   return {
     Button: factory("Button"), Editor: factory("Editor"), EditorState: Stub, Input: factory("Input"), InputState: Stub, Popup: factory("Popup"),
     Scrollbar: factory("Scrollbar"), TextView: factory("TextView"), Textarea: factory("Textarea"), TextareaState: Stub,
-    VirtualListScrollHandle: Stub, h_flex: factory("h_flex"), v_flex: factory("v_flex"), v_virtual_list: factory("v_virtual_list"),
+    VirtualListScrollHandle: Stub, ScrollHandle: Stub, h_flex: factory("h_flex"), v_flex: factory("v_flex"), v_virtual_list: factory("v_virtual_list"),
     ...given,
   };
 }

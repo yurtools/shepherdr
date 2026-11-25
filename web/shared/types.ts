@@ -560,6 +560,9 @@ export interface Message {
   updated?: number
   /** plain text (yours) or markdown (the agent's) */
   text?: string
+  /** Provider turn + item identity for the exact latest Codex prompt, not a
+   * display-row offset. The server revalidates before opening rewind. */
+  discard?: string
   /** "Answered “Rerun CI on main?”" */
   answered?: string
   /** answered on the question's copy in a space's chat: a link there */
@@ -869,7 +872,7 @@ export interface Chat {
   /** a note at the conversation's end (a lost session being started again) */
   note?: string
   /** 3.0's notice instead of the conversation: opening it, not a chat agent, its log not found, its agent ended */
-  notice?: 'opening' | 'unsupported' | 'none' | 'ended' | 'gone'
+  notice?: 'opening' | 'unsupported' | 'none' | 'ended' | 'gone' | 'history-unavailable'
   /** the turn that runs now: how far it got and its step on now, drawn as one quiet line at the end of the chat */
   live?: TurnActivity
   /** what it started in the background that still runs: subagents, shells, headless agents */

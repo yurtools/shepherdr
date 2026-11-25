@@ -42,13 +42,13 @@ import { focused, props, run, theme, home, hc, exec, shared, setShared, watchFol
 import { agents, panes, terminals, spaces, inRender } from "./live.js";
 import { chatPane, chatLabel, runningFeatureAssistant } from "./core/spaces.js";
 import * as fs from "fs/promises";
-import { FIND, LOG, Conversation, records, resultText, summary, excerpt, names, pilotLine } from "./core/chat-log.js";
+import { FIND, LOG, Conversation, records, resultText, summary, excerpt, names, pilotLine, discardableTurn } from "./core/chat-log.js";
 import { BgJobs } from "./core/bg-jobs.js";
 import { ChatReader } from "./core/chat-reader.js";
 import { preview } from "./core/recipe.js";
 import { words, permissionStatus, requestHash, howAnswered, codexOnScreen, codexSteps } from "./core/asks.js";
 // The rows' words and rules the web app's chat draws by too (core/chat-view.js).
-import { WORDS, clock, bgGroups, subagentsOf, subagentWord, senderName, briefLabel, firstUser, firstKeys, literal, fromName, sentTo, selfName, initialOf, newsWords, resolveArtifacts, resolveArtifactPlan, unsigned, ownWords, fitThumbs, bandActs, bandOrder, imagesLine, questionsBelow, notSent, published, artifactLine, videoLine, mediaIn, elapsed, reportMsg, doingWords, LOST, lostMessage, shellWord, sessionStarted, sessionFailed } from "./core/chat-view.js";
+import { WORDS, clock, bgGroups, subagentsOf, subagentWord, senderName, briefLabel, firstUser, firstKeys, literal, fromName, sentTo, selfName, initialOf, newsWords, resolveArtifacts, resolveArtifactPlan, unsigned, ownWords, fitThumbs, bandActs, bandOrder, imagesLine, questionsBelow, notSent, published, artifactLine, videoLine, mediaIn, elapsed, reportMsg, doingWords, LOST, lostMessage, shellWord, sessionStarted, sessionFailed, DISCARD_TITLE, discardDetail } from "./core/chat-view.js";
 // Sending the person's words, as the web app does (core/send.js).
 import { refusal, taskTag, messageBody, replyInstead, steerNow, reactionLine, mentionedIn, sendTyped, SETTLE } from "./core/send.js";
 // hc whose send goes as the person, with no caller: never "Another agent" on another machine (SHEP-3, core/person.js).
@@ -172,7 +172,7 @@ const shownLines = (text, h, width) => {
   }
   return out.join("\n");
 };
-const ICONS = { copy: "copy", reply: "reply", rewind: "rewind", fork: "git-fork", feature: "flag", react: "smile-plus" };
+const ICONS = { copy: "copy", reply: "reply", rewind: "rewind", discard: "rewind", fork: "git-fork", feature: "flag", react: "smile-plus" };
 // Reaction pills: this wide and tall (inside the ACT row, so they sit on the icons' center line
 // without towering over them), this far apart; and the gap between them and the smiley.
 const PILL = 46, PILL_H = 20, PILL_GAP = 4, PILL_EDGE = 6;
@@ -342,6 +342,7 @@ export default class Chat extends View {
     this.machine = this.addr?.includes("/") ? this.addr.split("/")[0] : null;
     this.phase = "finding";
     this.conv = null;
+    this.historyMode = null;
     this.path = null;
     this.reset();
     this.pending = [];
@@ -514,6 +515,7 @@ export default class Chat extends View {
     this.viewAsked = new Set();
     this.callReqAt = shared("chat.callreq")?.at ?? null;
     this.restartReqAt = shared("chat.restartreq")?.at ?? null;
+    this.discardReqAt = shared("chat.discardreq")?.at ?? null;
     this.reactReqAt = shared("chat.reactreq")?.at ?? null;
     this.sendReqAt = shared("chat.sendreq")?.at ?? null;
     this.startReqAt = shared("chat.startreq")?.at ?? null;
@@ -657,6 +659,7 @@ export default class Chat extends View {
     this.start = null;
     this.end = 0;
     this.conv = null;
+    this.historyMode = null;
     // What the agent left running in the background (core/bg-jobs.js), the row opened, and the
     // last lines each printed (job id -> text, while open), the ones being stopped.
     this.bgJobs = new BgJobs();
@@ -1430,12 +1433,14 @@ export default class Chat extends View {
     if (this.start === null) {
       const r = await this.log(["page", path, "999999999999999", String(PAGE)]);
       if (!current()) return;
+      if (String(r.stdout).startsWith("lineage")) { this.reset(); this.set("history-unavailable", cx); return; }
+      if (r.code) return;
       if (r.stdout.startsWith("missing")) { this.path = null; return; }
       const { head, records: recs } = records(r.stdout);
       if (head[0] !== "P") return;
       const next=await this.rebuild(recs,cx);
       if(!next||!current())return;
-      this.commitConversation(next,{start:Number(head[1]),end:Number(head[2]),records:recs});
+      this.commitConversation(next,{start:Number(head[1]),end:Number(head[2]),records:recs,historyMode:head[3]??null});
       this.stick = true;
       this.phase = "ready";
       cx.notify();
@@ -1443,6 +1448,8 @@ export default class Chat extends View {
     }
     const r = await this.log(["tail", path, String(this.end)]);
     if (!current()) return;
+    if (String(r.stdout).startsWith("lineage")) { this.reset(); this.set("history-unavailable", cx); return; }
+    if (r.code) return;
     if (r.stdout.startsWith("missing")) { this.path = null; return; }
     const { head, records: recs } = records(r.stdout);
     if (head[0] !== "T") return;
@@ -1478,6 +1485,7 @@ export default class Chat extends View {
     cx.spawn(async (cx) => {
       try {
         const r = await this.log(["page", path, String(before), String(PAGE)]);
+        if (r.code) return;
         const { head, records: recs } = records(r.stdout);
         if (path !== this.path || this.start !== before || head[0] !== "P") return;
         const all=await this.historyRecords(recs,previous,cx);
@@ -1507,6 +1515,7 @@ export default class Chat extends View {
     cx.spawn(async (cx) => {
       try {
         const r = await this.log(["results", path, ...offs.map(String)]);
+        if (r.code || path !== this.path) return;
         for (const part of r.stdout.split("\x1e").slice(1)) {
           const nl = part.indexOf("\n");
           const off = Number(part.slice(0, nl));
@@ -1774,10 +1783,22 @@ export default class Chat extends View {
 
   // A held message sent at once (the agent takes it mid-turn).
   sendQueued(msg, cx) {
-    this.queue = this.queue.filter((m) => m !== msg);
+    if (!this.takeQueued(msg)) return;
     if (msg.raw) personHc(["send", this.addr, msg.text]);
     else this.deliver(msg, cx);
     this.saveSoon(cx);
+  }
+
+  // A queued row can still be visible when drainQueue has already claimed
+  // it. In that case neither discard nor Edit may imply it stayed unsent.
+  takeQueued(msg) {
+    const i = this.queue.indexOf(msg);
+    if (i < 0) {
+      toast({ title: "Message is no longer held", body: "It may already have reached the agent. Check the conversation.", level: "info" });
+      return false;
+    }
+    this.queue = this.queue.filter((_, n) => n !== i);
+    return true;
   }
 
   // Stop: the CLI's own interrupt. The working line says "Stopping…" until it is idle.
@@ -1790,7 +1811,7 @@ export default class Chat extends View {
 
   // A held message back into the box, to change it before it goes.
   editQueued(msg, cx) {
-    this.queue = this.queue.filter((m) => m !== msg);
+    if (!this.takeQueued(msg)) return;
     const now = this.box.value().trim();
     this.box.set_value(now ? `${msg.text}\n\n${now}` : msg.text);
     this.addFiles(msg.files);
@@ -2501,6 +2522,7 @@ export default class Chat extends View {
       this.saveSoon(cx);
     }
     if (what === "rewind") this.rewind(row, cx);
+    if (what === "discard") this.discardTurn(row, cx);
     if (what === "fork") this.fork(cx);
     if (what === "feature") this.featureFrom(row, cx);
     if (what === "react") { this.keepIcons = row.of; this.openReactions(row, this.hitLeft); }
@@ -2591,6 +2613,52 @@ export default class Chat extends View {
     cx.write_to_clipboard(text);
     this.copied = id;
     cx.timer.after(1500, (cx) => { if (this.copied === id) { this.copied = null; cx.notify(); } });
+  }
+
+  // The provider owns the destructive confirmation. We identify only the
+  // exact latest prompt of a single-prompt Codex turn, show the scope, then
+  // open the existing terminal (no keypress, restart or transcript edit).
+  discardTurn(row, cx) {
+    const candidate = this.kind === "codex" && this.historyMode === "paginated" && discardableTurn(this.records, agent.sessionOf("codex", this.path));
+    if (!candidate || candidate.id !== row.of || candidate.token !== row.discard) {
+      toast({ title: "That turn changed", body: "Select the latest prompt again.", level: "info" }); return;
+    }
+    if (!candidate.closed || !["idle", "done"].includes(this.status())) {
+      toast({ title: "Stop the agent first", body: "Wait until the turn has stopped, then select Discard mistaken turn again.", level: "info" }); return;
+    }
+    const pane = this.pickKey();
+    if (!pane || !this.t?.foreground?.pid || this.queue.length || this.pending.length || this.asks.length || openCard(this.addr)) {
+      toast({ title: "Cannot prepare discard yet", body: "Wait for sends and questions to settle, and withdraw any queued messages.", level: "info" }); return;
+    }
+    openOverlay({ mod: "confirm-chat", kind: "dialog", width: 500, height: 355, props: {
+      title: DISCARD_TITLE, detail: discardDetail(row.text), verb: "Open Terminal", cancel: "Cancel",
+      discard: { pane, address: this.addr, pid: this.t.foreground.pid, path: this.path, id: row.of, token: candidate.token }
+    } });
+  }
+
+  openDiscard(req, cx) {
+    cx.spawn(async (cx) => {
+      try {
+        const same = () => this.addr === req.address && this.path === req.path && this.kind === "codex" &&
+          !this.queue.length && !this.pending.length && !this.asks.length && !openCard(this.addr);
+        const check = async () => {
+          if (!same()) throw new Error("The conversation changed. Select its latest prompt again.");
+          const r = await hc(["get", req.address, "--json"]);
+          const t = JSON.parse(r.stdout || "null");
+          if (r.code !== 0 || t?.state !== "live" || t.foreground?.pid !== req.pid ||
+              !["idle", "done"].includes(t.status?.state)) throw new Error("The original agent is not idle.");
+        };
+        await check();
+        const f = await exec("sh", ["-c", FIND, "chat", "codex", String(req.pid)], { on: this.machine });
+        if (f.code || f.stdout.trim() !== req.path) throw new Error("The active session changed. Select the latest prompt again.");
+        const result = await this.log(["page", req.path, "999999999999999", String(PAGE)]);
+        const parsed = records(result.stdout);
+        const latest = !result.code && parsed.head[3] === "paginated" && discardableTurn(parsed.records, agent.sessionOf("codex", req.path));
+        if (!latest?.closed || latest.id !== req.id || latest.token !== req.token) throw new Error("That is no longer the latest completed or interrupted turn.");
+        await check();
+        this.toTerminal();
+      } catch (e) { toast({ title: "Discard not started", body: plainError(e), level: "error" }); }
+    });
   }
 
   // The CLI's own rewind, on that message as nearly as it can: Claude Code's /rewind lists
@@ -3495,6 +3563,7 @@ export default class Chat extends View {
     // The session's first message: the first user item (news read out of it comes before it, #589).
     let first = -1;
     for (let i = 0; i < items.length; i++) { yield; if (items[i].kind === "user") { first = i; break; } }
+    const discard = this.kind === "codex" && this.historyMode === "paginated" && !this.ended && discardableTurn(this.records, agent.sessionOf("codex", this.path));
     for (let i = 0; i < items.length; i++) {
       yield;
       let x = items[i];
@@ -3567,7 +3636,8 @@ export default class Chat extends View {
         // Its actions in a band row under it (the row above draws them too: band()).
         if (x.text) {
           const bar = { id: `b:${x.id}`, of: x.id, target: x.text, text: x.text, side: "user", at: x.at, pills: this.pills(x.id),
-            acts: bandActs("user", x.text, { from: x.from }) };
+            acts: bandActs("user", x.text, { from: x.from, discard: discard?.id === x.id && !(i === first && ft) }),
+            ...(discard?.id === x.id && !(i === first && ft) ? { discard: discard.token } : {}) };
           out[out.length - 1] = { ...out[out.length - 1], bar };
           out.push({ kind: "band", id: `ab:${x.id}`, bar });
         }
@@ -3834,7 +3904,7 @@ export default class Chat extends View {
   bar(bar, t, bottom, hover) {
     const done = this.copied === bar.id;
     const icon = (a) => div().size(ACT).flex().items_center().justify_center().rounded(5).cursor_pointer()
-      .accessibility_label(a === "feature" ? "Create feature from this reply" : a)
+      .accessibility_label(a === "feature" ? "Create feature from this reply" : a === "discard" ? "Discard mistaken turn…" : a)
       .text_color(a === "feature" ? t.accent : done && a === "copy" ? t.foreground : t.dim).hover((s) => s.bg(t.hover).text_color(t.foreground))
       .child(svg(`mods/chat/${done && a === "copy" ? "check" : ICONS[a]}.svg`).size(14));
     const pill = (p) => h_flex().w(PILL).h(PILL_H).gap(4).items_center().justify_center().rounded(PILL_H / 2).border_1().cursor_pointer()
@@ -4660,8 +4730,9 @@ export default class Chat extends View {
         .child(ghost(`queued-now-${m.id}`, WORDS.sendNow,(cx) => this.sendQueued(m, cx)))
         .child(ghost(`queued-edit-${m.id}`, "Edit", (cx) => this.editQueued(m, cx)))
         .child(div().id(`queued-x-${m.id}`).size(22).flex_none().flex().items_center().justify_center().rounded(6).cursor_pointer().text_color(t.dim)
+          .accessibility_label("Withdraw unsent message")
           .hover((s) => s.bg(t.hover).text_color(t.foreground))
-          .on_click((_e, cx) => { cx.stop_propagation(); this.queue = this.queue.filter((x) => x !== m); this.saveSoon(cx); cx.notify(); })
+          .on_click((_e, cx) => { cx.stop_propagation(); if (this.takeQueued(m)) this.saveSoon(cx); cx.notify(); })
           .child(svg("mods/chat/x.svg").size(12)))));
   }
 
@@ -5302,6 +5373,11 @@ export default class Chat extends View {
       this.restartReqAt = rr.at;
       cx.timer.after(0, (cx) => { this.applyPick(rr.pick, cx); cx.notify(); });
     }
+    const dr = shared("chat.discardreq");
+    if (dr && pk && dr.pane === pk && dr.at !== this.discardReqAt && Date.now() - dr.at < 10000) {
+      this.discardReqAt = dr.at;
+      cx.timer.after(0, (cx) => this.openDiscard(dr, cx));
+    }
     // The header's Terminal on a chat with no agent yet (pane-chat): start it, then show its
     // terminal. Shared "chat.startreq" = { pane, at }.
     const stq = shared("chat.startreq");
@@ -5425,6 +5501,8 @@ export default class Chat extends View {
     if (this.phase === "unsupported") return root.child(this.notice(t, this.resumeMissing ? "Couldn’t resume this conversation" : WORDS.unsupported,
       this.resumeMissing ? "Codex couldn’t find the saved session in its original account. Open Terminal to inspect the error." : WORDS.unsupportedBody, [open]));
     if (this.phase === "none") return root.child(this.notice(t, WORDS.notFound, WORDS.notFoundBody, [open]));
+    if (this.phase === "history-unavailable") return root.child(this.notice(t, "Retained conversation unavailable",
+      "Codex’s saved history segments could not be verified. Open Terminal to see the conversation from Codex itself.", [open]));
     if ((this.phase === "finding" && !starting) || this.phase === "ended") return root.child(this.notice(t, this.swapping ? WORDS.restarting : WORDS.opening, null));
 
     this.sizeBox();

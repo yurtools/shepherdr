@@ -79,14 +79,17 @@ def main(command,p):
    if not p.get('space'):raise ValueError('Choose a space first.')
    ident=uuid.uuid4().hex
    row={k:v for k,v in p.items() if k in ('space','folder','settings','context','source','autoName')}
-   row.update(id=ident,name=name,created=int(time.time()*1000),status='active');features[ident]=row;atomic(path,features);return row
+   row.update(id=ident,name=name,created=int(time.time()*1000),status='active',started=False);features[ident]=row;atomic(path,features);return row
   if command in ('feature-get','feature-update','feature-name'):
    row=features.get(p.get('id'))
    if not row:raise ValueError('This feature is no longer available.')
    if command=='feature-name' and not row.get('autoName'):return row
    if command!='feature-get':
     if p.get('name'):row['autoName']=False
-    allowed=('name',) if command=='feature-name' else ('name','status','tab','pane','session','home','argv','terminal','model','effort','sandbox','approval','kind')
+    allowed=('name',) if command=='feature-name' else ('name','status','tab','pane','session','home','argv','terminal','model','effort','sandbox','approval','kind','view')
+    # The absence of a session on a legacy record is not proof it never ran.
+    # Only newly created records can explicitly say they have not started.
+    if command=='feature-update' and p.get('started') is True:row['started']=True
     for k in allowed:
      if k in p:row[k]=str(p[k]).strip()[:80] if k=='name' else p[k]
     if not row['name']:raise ValueError('Enter a name.')

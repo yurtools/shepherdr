@@ -40,10 +40,11 @@ class AssistantResponsiveness(unittest.TestCase):
                 if role == 'feature':
                     owner_labels['herdr.feature'] = worker_labels['herdr.feature'] = 'feature-one'
                 records = {
-                    'towner': {'state': 'live', 'status': {'state': 'idle'}, 'argv': ['codex'], 'labels': owner_labels},
+                    'towner': {'state': 'live', 'pid': 42, 'status': {'state': 'idle', 'app': 'codex'}, 'argv': ['codex'],
+                               'foreground': {'name': 'codex', 'pid': 42, 'argv': ['codex']}, 'labels': owner_labels},
                     'tworker': {'state': 'live', 'status': {'state': 'working'},
                                 'argv': ['env', 'CODEX_HOME=' + account, 'codex'], 'cwd': project, 'labels': worker_labels},
-                    'tother': {'state': 'live', 'status': {'state': 'idle'}, 'argv': ['codex'],
+                    'tother': {'state': 'live', 'pid': 44, 'status': {'state': 'idle', 'app': 'codex'}, 'argv': ['codex'],
                                'labels': {**owner_labels, 'herdr.feature': 'feature-two'}},
                 }
                 state = root / 'core.json'

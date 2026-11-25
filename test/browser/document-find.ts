@@ -33,6 +33,9 @@ try {
   assert.equal(await marks.nth(1).textContent(),'NEEDLE')
   // Syntax spans are still present alongside the marks.
   await page.waitForFunction(()=>!!document.querySelector('.code-view .hljs-keyword'))
+  await search.fill('const needle'); await expectStatus('1 of 1')
+  assert.equal(await current.allTextContents().then(parts=>parts.join('')),'const needle')
+  await search.fill('needle'); await expectStatus('1 of 3')
   await shot('web-first')
   await page.keyboard.press('Enter'); await expectStatus('2 of 3')
   assert.equal(await current.textContent(),'NEEDLE')

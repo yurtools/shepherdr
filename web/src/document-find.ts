@@ -8,10 +8,13 @@ export function markLine(html: string, start: number, hits: TextHit[], current: 
   const walk = document.createTreeWalker(fragment.content, NodeFilter.SHOW_TEXT)
   const nodes: Text[] = []
   for (let node = walk.nextNode(); node; node = walk.nextNode()) nodes.push(node as Text)
-  let offset = start
+  let offset = start, first = 0
   for (const node of nodes) {
     const value = node.data, end = offset + value.length
-    const selected = hits.filter(hit => hit.start < end && hit.end > offset)
+    while (first < hits.length && hits[first].end <= offset) first++
+    let last = first
+    while (last < hits.length && hits[last].start < end) last++
+    const selected = hits.slice(first,last)
     if (selected.length) {
       const replacement = document.createDocumentFragment()
       let cursor = 0

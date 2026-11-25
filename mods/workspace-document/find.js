@@ -10,18 +10,18 @@ import { lexer } from './core/vendor/marked.js';
 import { syntaxTokens, HIGHLIGHT_LANGUAGES } from './core/syntax.js';
 import { language } from './core/documents.js';
 
-const named = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: '\u00a0', ndash: '–', mdash: '—', hellip: '…', copy: '©', reg: '®' };
-const entities = value => value.replace(/&(#x[\da-f]+|#\d+|[a-z]+);/gi, (raw, name) => {
-  if (name[0] !== '#') return named[name] ?? raw;
+import named from './core/vendor/html-entities.js';
+const entities = value => value.replace(/&(#x[\da-f]+|#\d+|[a-z][a-z\d]+);/gi, (raw, name) => {
+  if (name[0] !== '#') return Object.hasOwn(named,name) ? named[name] : raw;
   const n = name[1].toLowerCase() === 'x' ? parseInt(name.slice(2), 16) : Number(name.slice(1));
-  return n > 0 && n <= 0x10ffff && !(n >= 0xd800 && n <= 0xdfff) ? String.fromCodePoint(n) : raw;
+  return n > 0 && n <= 0x10ffff && !(n >= 0xd800 && n <= 0xdfff) ? String.fromCodePoint(n) : '\ufffd';
 });
 
 // Search the displayed text, not link URLs, fence delimiters, table separators
 // or emphasis punctuation. Keep inline emphasis and block styling as runs.
 // Raw HTML is not a native searchable DOM: only its textual fallback is used.
 export function renderedText(markdown) {
-  let text = ''; const runs = [];
+  let text = ''; const runs = []; let htmlLimited = false;
   const add = (value, style = {}) => {
     if (!value) return;
     const start = text.length; text += value;
@@ -59,7 +59,11 @@ export function renderedText(markdown) {
         case 'blockquote': walk(token.tokens, { ...style, italic: true }); break;
         case 'html':
           if (/^<br\s*\/?\s*>$/i.test(token.text)) add('\n');
-          else if (token.block) add(entities(token.text.replace(/<!--[\s\S]*?-->|<[^>]*>/g, '')), style);
+          else if (token.block) {
+            htmlLimited = true;
+            if (!/^\s*<(?:script|style|head|template)\b/i.test(token.text))
+              add(entities(token.text.replace(/<!--[\s\S]*?-->|<[^>]*>/g, '')), style);
+          }
           break;
         case 'text': case 'escape':
           if (token.tokens) walk(token.tokens, style);
@@ -70,7 +74,7 @@ export function renderedText(markdown) {
     }
   };
   walk(lexer(markdown, {gfm: true}));
-  return { text, runs };
+  return { text, runs, htmlLimited };
 }
 
 export function tableMatches(rows, query, limit = FIND.hits) {
@@ -187,6 +191,10 @@ export class DocumentFind {
           result.limited = true;
           result.detail = mode === 'markdown' ? 'Only the bounded rendered preview is searchable. Choose Source for the entire file.' : 'Only the bounded Word content preview is searchable.';
         }
+      }
+      if (result.rendered?.htmlLimited) {
+        result.limited = true;
+        result.detail = [result.detail, 'Raw HTML has a limited text fallback.'].filter(Boolean).join(' ');
       }
       if (typeof value !== 'string') throw Error('No searchable text in this preview.');
       if (!result.rendered && value.length > PREVIEW.editChars) {

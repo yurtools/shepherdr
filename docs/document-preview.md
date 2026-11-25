@@ -55,7 +55,8 @@ Switching tabs pauses an in-flight scan and resumes it on return.
   inline emphasis, code and table text within the respective preview budgets.
   The Find view lays the rendered text and table values out in searchable rows
   rather than changing the original rich renderer. Closing it restores normal
-  formatting and links. Raw HTML uses a textual fallback, not a browser DOM.
+  formatting and links. Named HTML character references decode as visible text. Raw HTML uses a
+  limited textual fallback (disclosed as partial), not a browser DOM.
   Choose Markdown Source for content outside the rendered excerpt.
 - **CSV/TSV Preview and Excel:** search complete logical cell values (including
   values longer than the displayed cell), on all indexed records/columns or

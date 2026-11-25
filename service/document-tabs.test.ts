@@ -298,12 +298,13 @@ test('literal, Unicode source Find, wrap navigation, and close leave draft and s
 });
 
 test('Markdown rendered Find sees emphasis, link labels, table cells and code, not link targets or markup',async()=>{
- const md='# **Need**le\n\n[Needle](https://hidden.invalid)\n\n| A | B |\n|---|---|\n| a | needle |\n\n\`\`\`js\nNEEDLE\n\`\`\`';
+ const md='# **Need**le &eacute; &NotEqualTilde;\n\n[Needle](https://hidden.invalid)\n\n| A | B |\n|---|---|\n| a | needle |\n\n\`\`\`js\nNEEDLE\n\`\`\`';
  const doc=add('find.md',md,md);doc.kind='markdown';doc.preview=true;view.active=key('find.md');
  await findQuery(doc,'needle');
  expect(doc.find.hits).toHaveLength(4);
  expect(doc.find.rendered.text).not.toContain('https://');
- expect(doc.find.rendered.text).toContain('Needle');
+ expect(doc.find.rendered.text).toContain('Needle é ≂̸');
+ await findQuery(doc,'é');expect(doc.find.hits).toHaveLength(1);
  await findQuery(doc,'hidden.invalid');expect(doc.find.hits).toHaveLength(0);
  view.mode(doc,false,cx);await settle();
  expect(doc.find.hits).toHaveLength(1);expect(doc.text).toBe(md);expect(doc.saved).toBe(md);

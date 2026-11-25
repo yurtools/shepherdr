@@ -233,7 +233,7 @@ function FileView({ task, path, onBack }: { task: Task; path: string; onBack: ()
   const [finding, setFinding] = useState(false), [query, setQuery] = useState(''), [index, setIndex] = useState(0)
   const text = f.data?.text ?? ''
   const supported = ['text','markdown','csv'].includes(documentKind(path))
-  const usable = supported && !!f.data && !f.data.binary && !f.error
+  const usable = supported && !!f.data && !f.data.binary && !f.error && !f.loading
   const q = finding ? query.trim() : ''
   const found = useMemo(() => findRanges(usable ? text : '', q.length <= FIND.queryChars ? q : ''), [text, q, usable])
   const hits = useMemo(() => found.hits.map((hit, i) => ({...hit, index: i})), [found])
@@ -241,10 +241,13 @@ function FileView({ task, path, onBack }: { task: Task; path: string; onBack: ()
   const partial = !!f.data?.tooBig || found.limited
   const open = () => { setFinding(true); if (finding) input.current?.focus({preventScroll: true}) }
   const close = () => { setFinding(false); setQuery(''); setIndex(0); frame.current?.focus({preventScroll: true}) }
-  const step = (by: number) => hits.length && setIndex((current + by + hits.length) % hits.length)
+  const step = (by: number) => {
+    if (hits.length) setIndex((current + by + hits.length) % hits.length)
+    input.current?.focus({ preventScroll: true })
+  }
   useLayoutEffect(() => { frame.current?.focus({preventScroll:true}) }, [])
   useLayoutEffect(() => { if (finding) input.current?.focus({preventScroll:true}) }, [finding])
-  useEffect(() => { setIndex(0) }, [text])
+  useLayoutEffect(() => { setIndex(0) }, [text])
   return (
     <div ref={frame} tabIndex={0} aria-label={`File preview: ${path}`} className="flex min-h-0 flex-1 flex-col outline-none"
       onKeyDownCapture={e => {
@@ -272,14 +275,14 @@ function FileView({ task, path, onBack }: { task: Task; path: string; onBack: ()
             autoComplete="off" enterKeyHint="search" onChange={e => { setQuery(e.target.value); setIndex(0) }}
             className="h-[34px] min-w-0 flex-1 bg-transparent px-1 outline-none placeholder:text-fg3 phone:h-11 [&::-webkit-search-cancel-button]:hidden" />
           <span role="status" className="shrink-0 text-[0.75rem] text-fg2 tabular-nums">
-            {!usable ? 'Unavailable' : q.length > FIND.queryChars ? 'Query too long' : !q ? '' : hits.length ? `${current + 1} of ${hits.length}${partial ? '+' : ''}` : partial ? 'No matches here' : 'No matches'}
+            {f.loading ? 'Reading…' : !usable ? 'Unavailable' : q.length > FIND.queryChars ? 'Query too long' : !q ? '' : hits.length ? `${current + 1} of ${hits.length}${partial ? '+' : ''}` : partial ? 'No matches here' : 'No matches'}
           </span>
           <IconButton label="Previous match (Shift+Enter)" className={roundBtn} disabled={hits.length < 2} onClick={() => step(-1)}><DownIcon className={`${ic} rotate-180`} /></IconButton>
           <IconButton label="Next match (Enter)" className={roundBtn} disabled={hits.length < 2} onClick={() => step(1)}><DownIcon className={ic} /></IconButton>
           <IconButton label="Close Find (Escape)" className={roundBtn} onClick={close}><XIcon className={ic} /></IconButton>
         </div>
         <div className="px-2 pt-1 text-xs text-fg3">
-          {!usable ? 'Search needs a readable text preview.' : f.data?.tooBig ? 'Only the first 400,000 file bytes are searchable in web Files.' : found.limited ? 'Search stopped at the match limit.' : q.length > FIND.queryChars ? `Find supports up to ${FIND.queryChars} characters.` : 'Web Files searches raw text, not rendered Office or PDF pages.'}
+          {f.loading ? 'Reading the latest file contents.' : !usable ? 'Search needs a readable text preview.' : f.data?.tooBig ? 'Only the first 400,000 file bytes are searchable in web Files.' : found.limited ? 'Search stopped at the match limit.' : q.length > FIND.queryChars ? `Find supports up to ${FIND.queryChars} characters.` : 'Web Files searches raw text, not rendered Office or PDF pages.'}
         </div>
       </div>}
       {f.error ? (

@@ -353,9 +353,15 @@ when reopening that file. A conflicting external change leaves the draft intact;
 refresh automatically. Large read-only pages ask you to reload if the file changes.
 Remote text files are read only. Office and PDF files have no Edit or Save action.
 
+**Find** (Ctrl/Cmd+F in the active document) highlights matching text or cells
+and goes to the matching page/sheet. Enter/Shift+Enter or the arrows step
+through matches; Escape closes Find without altering the file. Bounded or
+unsearchable previews explain their limits. See [Document Find](document-preview.md#find-within-a-document)
+for mode-specific behavior, including searchable PDFs and the web text-prefix limit.
+
 Ctrl+Shift+P selects Preview; Ctrl+Shift+O selects Source in a document pane.
 The equivalent commands are `workspace-document.preview`,
-`workspace-document.source`, and `workspace-document.save`.
+`workspace-document.source`, `workspace-document.find`, and `workspace-document.save`.
 
 Full-buffer editing is limited to 400,000 UTF-16 units and 1 MiB of UTF-8. CSV/TSV
 preview supports 32 MiB files and up to two million records, with 40 rows and 16

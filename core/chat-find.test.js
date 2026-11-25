@@ -79,7 +79,8 @@ test('diagram labels can have a display-only space, while code remains exact',()
 test('native vendored Markdown is the pinned web parser with license',()=>{
   const vendor=readFileSync(new URL('./vendor/marked.js',import.meta.url),'utf8');
   const installed=readFileSync(new URL('../node_modules/marked/lib/marked.esm.js',import.meta.url),'utf8').split('\n//# sourceMappingURL=')[0].trim();
-  expect(vendor).toContain(installed);expect(vendor).toContain('Permission is hereby granted');
+  const license=readFileSync(new URL('./vendor/marked.LICENSE',import.meta.url),'utf8');
+  expect(vendor).toContain(installed);expect(license).toContain('Permission is hereby granted');
 });
 
 

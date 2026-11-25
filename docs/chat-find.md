@@ -1,6 +1,6 @@
 # Find in Chat
 
-Use **Ctrl+F** (or **Cmd+F** in the web app on Mac) within a conversation. The
+Use **Ctrl+F** (or **Cmd+F** on Mac) within a conversation. The
 web Chat header also has a Find button for touch users, including a task or
 subagent's own chat. Type the words or punctuation to find. The counter is an
 **occurrence** counter, not a count of messages. Enter/F3 moves forward to the

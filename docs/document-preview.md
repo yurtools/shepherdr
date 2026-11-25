@@ -13,7 +13,7 @@ increase what can be edited, uploaded, decoded or rendered at once.
 | Markdown | Same source/edit policy. | **Preview** renders at most 32,768 UTF-16 units and 500 lines from the beginning. Larger rendered content has an explicit notice; use **Source** for the rest (full editor or read-only pages). |
 | CSV / TSV | Full source/edit policy unchanged. Read-only table scan: up to **32 MiB** (33,554,432 file bytes) and **2,000,000 logical records**, including a header if present. | 40 records × 16 columns per page, with first/last, arrows and a row-number jump; column pages cover wide tables. Displayed cells show up to 160 Unicode codepoints plus an ellipsis, with a notice when clipped. Each complete logical record is bounded to 256 KiB of UTF-8, including line endings. Auto, comma, tab and semicolon are supported. |
 | Word (`.docx`) | Local OOXML only: compressed file ≤ 64 MiB, total declared uncompressed members ≤ 64 MiB, XML member ≤ 16 MiB, at most 10,000 archive members. | Read-only content, at most 400,000 output characters, 500 rows and 50 columns per table. Truncated content is indicated. Page layout and images are not reproduced. |
-| Excel (`.xlsx`, `.xlsm`, `.xltx`) | Same OOXML guards; local only. | Up to 100 worksheets, 500 rows and 100 columns per sheet, 400,000 value characters and **500,000 allocated cell slots across the workbook**, including sparse empty cells. 40 rows per page; truncated previews are indicated. Sheet names are bounded to 128 characters (ordinary Excel names are at most 31). Values are cached, not recalculated. |
+| Excel (`.xlsx`, `.xlsm`, `.xltx`) | Same OOXML guards; local only. | Up to 100 worksheets, 500 rows and 100 columns per sheet, 400,000 value characters and **500,000 allocated cell slots across the workbook**, including sparse empty cells. 40 rows × 16 columns per page; truncated previews are indicated. Sheet names are bounded to 128 characters (ordinary Excel names are at most 31). Values are cached, not recalculated. |
 | PDF | Local Linux/macOS: 128 MiB file, up to 100,000 pages. | One page at a time, longest edge ≤ 2,000 pixels; zoom/Fit/Reload. See [PDF preview](pdf-preview.md) for Poppler, time, process and disk-cache guards. |
 | Raster images (`.png`, `.jpg`, `.gif`, `.webp`, `.bmp`, `.tif`, `.ico`, `.heic`, `.avif`, etc.) | No native project-file image decoding. | **Open original** opens the local file in its usual app. Remote files offer **Copy remote path**. SVG remains text source in Files; artifact and Chat image viewers are separate. |
 
@@ -33,6 +33,71 @@ misleading partial table; the original text remains available in Source. UTF-8
 errors and binary source pages have an explicit error rather than replacement
 characters that could accidentally be saved. **Open original** is available for
 local read-only documents and unsupported files.
+
+## Find within a document
+
+Focus a native Document tab and press **Ctrl+F** (or **Command+F**), or select
+**Find** in its toolbar. The bar shows the current match and the count. Enter
+and Shift+Enter (or the down/up buttons) move through matches and wrap around.
+Escape or the close button removes the marks. Find is literal and
+case-insensitive; it searches the active preview mode, not another open file.
+A new query, reload, source/table mode or delimiter invalidates the old results.
+Switching tabs pauses an in-flight scan and resumes it on return.
+
+- **Text, supported source languages, and Markdown/CSV Source:** search the
+  complete in-budget buffer, including unsaved changes. Search on larger
+  read-only files crosses UTF-8 source-page boundaries and goes to the page
+  containing the match. Since the retained native editor exposes one selection
+  but no multiple-range decoration API, Find temporarily uses a virtualized
+  read-only source view with colored spans; closing it returns to the original
+  editor or Highlight view. Source bytes, drafts and Save are unchanged.
+- **Markdown Preview and Word:** search visible headings, paragraphs, link labels,
+  inline emphasis, code and table text within the respective preview budgets.
+  The Find view lays the rendered text and table values out in searchable rows
+  rather than changing the original rich renderer. Closing it restores normal
+  formatting and links. Named HTML character references decode as visible text. Raw HTML uses a
+  limited textual fallback (disclosed as partial), not a browser DOM.
+  Choose Markdown Source for content outside the rendered excerpt.
+- **CSV/TSV Preview and Excel:** search complete logical cell values (including
+  values longer than the displayed cell), on all indexed records/columns or
+  every worksheet within the Office read budget. Find opens the matched sheet
+  and starts the visible row and column window at the hit. A long active cell
+  may show a short excerpt around the match so hidden text can be found.
+  A match cell is tinted and the active match has a stronger highlight.
+  Excel now has column paging as well as row paging.
+- **PDF:** local searchable text is extracted with Poppler `pdftotext` in
+  batches of up to eight pages. Phrase matches use extracted word order
+  with spaces between words. Word boxes follow the raster page's MediaBox and
+  rotation at the current zoom or Fit. This is a word-box highlight, not
+  character-level PDF editing. Image-only PDFs report no searchable text layer;
+  text on scanned pages is not OCR scanned. Extraction errors and missing
+  Poppler tools are reported rather than treated as zero matches.
+- **Images and unsupported Office/binary files:** Find explains that the
+  preview has no searchable text or is unavailable, without attempting OCR,
+  binary decoding or conversion.
+
+Queries are limited to 256 UTF-16 units and 5,000 retained matches (PDF also
+has a 12,000-word-box cap). A `+` count and a separate notice indicate partial
+results. Paged source Find reads up to 4 MiB plus a small UTF-8 lookahead per
+helper batch; table Find reads up to 4 MiB / 65,536 logical records per
+batch, using the same CSV record and file guards. One scan is queued per
+native pane, with a 60-second overall scan budget checked between batches and
+the existing helper timeouts. Changing the query, closing Find/the file or
+switching documents stops further batches; the host cannot kill an already
+running exec, but obsolete replies cannot change the current search. The
+source may exceed the time budget, and a dirty editor buffer that outgrows the
+edit budget has a clearly bounded search. Office search covers only extracted
+content within the existing decompression, output and sheet/table limits.
+
+**Web Files** uses the same literal match/count/navigation conventions and
+preserves syntax colors while painting matches. It searches only the existing
+read-only text prefix (400,000 file bytes); Markdown and CSV/TSV are raw text,
+not rendered modes. Known PDF, Office and image formats and binary data are
+not searchable in this panel. It labels truncated prefixes and the match cap.
+Ctrl/Cmd+F belongs to the focused file preview; Chat Find remains separate.
+Web Files is currently a desktop/tablet side panel, not a phone Document pane.
+Changes, Chat attachments and published recipe artifacts are separate surfaces,
+not project document previews.
 
 ## Why these limits are separate
 
@@ -114,12 +179,12 @@ not executed. The Office helper has a 20-second host timeout.
   and a real remote connection have not been exercised here. Office continues to
   use its local `python3` helper. Native PDF still requires local Linux/macOS
   Python and Poppler; Windows and remote native PDFs use the existing fallback.
-- The web **Task Files** panel is not the native Document pane. It reads from the
-  task's worktree on its machine (`service/worktree.ts`, `machine.exec`, `wc -c`
+- The web **Files** side panel is not the native Document pane. It reads from the
+  selected space's folder on its machine (the shared worktree service also accepts task sources) (`service/worktree.ts`, `machine.exec`, `wc -c`
   and `head -c`): **400,000 file bytes** as a read-only text prefix, with a
-  truncation label, NUL-based binary detection and no CSV/Markdown/Office/PDF
-  mode or editor. Web code highlighting has a separate 300,000-character
-  threshold. This task does not add native document mode parity there.
+  truncation label, NUL-based binary detection and explicit unsupported-document
+  formats; no CSV/Markdown/Office/PDF rendered mode or editor. Web code highlighting has a separate 300,000-character
+  threshold. It supports Find within that text prefix, not native document-mode parity.
 - Native **Changes** previews are Git output (2,000,000 bytes command cap, 400,000
   bytes for new text files, 1,500 lines and 4,000 characters per line). Web task
   diff truncates at 400,000 JS string units. Neither is a file-edit or document

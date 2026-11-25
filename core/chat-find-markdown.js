@@ -49,7 +49,11 @@ function htmlProjection(html,limited=false) {
     parts.push({raw:m[0]}); at = m.index + m[0].length;
   }
   words(html.slice(at));
-  return { html, parts, groups, limited };
+  // The native HTML TextView supports inline marks, but its HTML path does
+  // not preserve table empty cells/alignment, task checkboxes, ordered-list
+  // starts, rules or fenced code blocks. Keep original Markdown for these.
+  const compatible=!/<(?:table|pre|hr|input)\b|<ol\s+start=/i.test(html);
+  return { html, parts, groups, limited, compatible };
 }
 /** @param {number} [limit] */
 export function markdownRanges(projection, q, limit = FIND_LIMITS.matches) {

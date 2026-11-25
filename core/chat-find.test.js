@@ -81,3 +81,11 @@ test('native vendored Markdown is the pinned web parser with license',()=>{
   const installed=readFileSync(new URL('../node_modules/marked/lib/marked.esm.js',import.meta.url),'utf8').split('\n//# sourceMappingURL=')[0].trim();
   expect(vendor).toContain(installed);expect(vendor).toContain('Permission is hereby granted');
 });
+
+
+test('native rich blocks that would lose formatting keep their original renderer',()=>{
+  for(const md of ['| A | B |\n|---|---|\n| hit | |','- [x] hit','3. hit','---\n\nhit','```js\n  hit\n```']){
+    const p=markdownProjection(md);expect(markdownRanges(p,'hit').hits.length).toBe(1);expect(p.compatible).toBe(false);
+  }
+  expect(markdownProjection('**hit** and `hit`').compatible).toBe(true);
+});

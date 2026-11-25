@@ -15,6 +15,7 @@ export default class Fixture extends View {
     const rows=this.rows=[{id:'person',kind:'user',text:'Needle and [a+b]'},
       {id:'reply',kind:'agent',text:'**nee**dle, `NEEDLE` and [link](./doc.md).'},
       {id:'code',kind:'code',code:'const needle = 1;\nconst NEEDLE = 2;'},
+      {id:'table',kind:'agent',text:'| Key | Value |\n|---|---|\n| needle | |'},
       {id:'diagram-source',kind:'code',code:source,display:source,result:flowchart(source)}];
     for(const row of rows)row.find=h.findData(row,'needle');
     const found=h.findMatches(rows),findOffsets=new Map(),findEnds=[];let findTotal=0;

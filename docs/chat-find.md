@@ -28,6 +28,9 @@ end. Escape or Close removes the search and its highlights.
   manageable virtual rows, and displays the exact selected occurrence with its
   surrounding words in the Find bar. A giant single rich block (such as a table)
   can still only be scrolled to its row: the readout gives its precise match.
+  Native tables, task lists and other rich blocks that the native HTML path
+  cannot faithfully render keep their original Markdown and show a highlighted
+  match excerpt rather than changing their format.
 - The existing Copy actions always use the original message or exact fenced
   source, not the search representation. Find does not change retained logs,
   messages, roles, accounts, or task/Feature ownership.

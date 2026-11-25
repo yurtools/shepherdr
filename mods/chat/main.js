@@ -2151,7 +2151,8 @@ export default class Chat extends View {
       const md=['user','pending'].includes(row.kind)?typed(this.mentionsIn?.(text)??text):row.kind==='brief'&&!row.who?literal(text):this.mentionsIn?.(text)??text;
       const projection=row.findHtml??this.projectFind(md), got=markdownRanges(projection,q,limit);
       const raw=literalRanges(text,q,limit),person=['user','pending'].includes(row.kind);
-      if(row.findHtml||got.hits.length&&(!person||got.hits.length===raw.ranges.length))return {query:q,...got,projection};
+      if(row.findHtml||got.hits.length&&(!person||got.hits.length===raw.ranges.length))return projection.compatible!==false&&!projection.limited
+        ?{query:q,...got,projection}:{query:q,...got,contextOnly:true};
       // A person's message is literal in web Chat. If the native Markdown
       // renderer hides a character, keep the original occurrence in a clearly
       // labelled source readout instead of inventing a visible match.
@@ -4312,7 +4313,7 @@ export default class Chat extends View {
     const sourceContext=()=>{
       const hit=active??f.hits[0], context=findContext(hit.text,hit,32);
       return div().mt(4).p(4).h(52).overflow_hidden().rounded(5).border_1().border_color(t.border).text_size(11.5).text_color(t.foreground)
-        .child(div().text_color(t.dim).child("Source match"))
+        .child(div().text_color(t.dim).child(f.source?"Source match":"Match in formatted text"))
         .child(TextView.html(`${pre}source-match-${x.id}`,`<span>${escapeHtml(context.before)}<mark color="${hit===active?colors.active:colors.match}">${escapeHtml(context.match.slice(0,160))}</mark>${escapeHtml(context.after)}</span>`).scrollable(false).selectable(true));
     };
     const markdown=(id,text)=>{
@@ -4321,7 +4322,7 @@ export default class Chat extends View {
       if(this.collectMarkdown){this.collectMarkdown.set(id,{id,text:content,format,key:this.pickKey()??this.areaKey()});return div();}
       const kept=this.linkedMarkdownView(x,id,content,format);
       const view=kept?div().flex_none().child(kept):TextView[format](id,content).scrollable(false).selectable(true).flex_none();
-      return f?.source&&!this.collectMarkdown?v_flex().child(view).child(sourceContext()):view;
+      return (f?.source||f?.contextOnly)&&!this.collectMarkdown?v_flex().child(view).child(sourceContext()):view;
     };
     // A readable column, centered when the pane is wide.
     // At a block's edge a row drops its outer room there: spaced() puts the gap between blocks.

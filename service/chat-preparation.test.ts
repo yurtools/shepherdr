@@ -312,3 +312,13 @@ test('Find bounds occurrence storage and uses separate virtual rows for a long M
   h.v.conv={items:[{kind:'agent',id:'many',text:'x '.repeat(find.FIND_LIMITS.matches+100),at}]};h.v.findQuery=()=> 'x';h.request();h.drain();
   p=h.v.history.snapshot;expect(p.findTotal).toBe(find.FIND_LIMITS.matches);expect(p.findLimited).toBe(true);
 });
+
+
+test('native rich Markdown and a file name keep their source and precise match context',()=>{
+  const at=1772946000000,table='| Key | Value |\n|---|---|\n| needle | |';
+  const h=historyHost([{kind:'agent',id:'table',text:table,at},{kind:'user',id:'image',text:'Picture',paths:['/synthetic/needle.png'],images:1,at:at+1}]);
+  h.v.findQuery=()=> 'needle';h.request();h.drain();const p=h.v.history.snapshot;
+  expect(p.findTotal).toBe(2);const rich=p.rows.find((r:any)=>r.id==='table');
+  expect(rich.text).toBe(table);expect(rich.find.contextOnly).toBe(true);expect(rich.find.projection).toBeUndefined();
+  expect(p.rows.find((r:any)=>r.kind==='imgs').find).toMatchObject({imageNames:true,hits:[{text:'needle.png',start:0,end:6}]});
+});

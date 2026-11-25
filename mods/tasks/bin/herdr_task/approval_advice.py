@@ -23,14 +23,7 @@ def owner_binding(meta):
          'space':labels.get('herdr.coordinator.space') or labels.get('herdr.space') or labels.get('herdr.task.space')}
 
 def owner_kind(meta,ctx):
- binding=owner_binding(meta)
- if meta.get('state')!='live' or binding['space']!=ctx.get('space'):return ''
- foreground=meta.get('foreground') or {};state=meta.get('status') or {}
- programs={str(x).split('/')[-1] for x in [*(meta.get('argv') or []),*(foreground.get('argv') or [])]}
- if not ({'codex','claude'} & programs or isinstance(state,dict) and state.get('app') in ('codex','claude-code','claude')):return ''
- if not (meta.get('pid') or foreground.get('pid')):return ''
- if ctx.get('feature'):return 'feature' if binding['role']=='feature' and binding['feature']==ctx['feature'] else ''
- return 'space' if ctx.get('space') and binding['role']=='coordinator' else ''
+ return A.reviewer_type(meta,ctx)
 
 def owner_identity(meta):
  # A restarted conversation in the same terminal must not inherit a capability.
@@ -56,9 +49,14 @@ def request(path,expected_hash,terminal=None):
  if not A.is_permission(req):raise ValueError('Advice is only for execution permission requests, not plans or choices.')
  if not expected_hash or A.status_key(req)!=expected_hash:raise ValueError('This request changed. Refresh before asking for advice.')
  pending(path,req);identity=stamp(path);file=ticket_path(Path(path).stem)
+ previous=A.read(file) if ctx.get('feature') else None
+ stale=False
+ if previous and previous.get('status')=='pending':
+  meta=A.hc_get(previous.get('owner'))
+  stale=not owner_kind(meta,previous['context']) or owner_identity(meta)!=previous.get('owner_identity')
  with A.locked():
   pending(path,req,identity);old=A.read(file)
-  if old and old.get('key')==A.request_key(req) and old.get('identity')==identity and (old.get('status')=='ready' or old.get('status') in ('processing','pending') and old.get('expires',0)>time.time()):return public(path,req,old)
+  if old and old.get('key')==A.request_key(req) and old.get('identity')==identity and not (stale and old==previous) and (old.get('status')=='ready' or old.get('status') in ('processing','pending') and old.get('expires',0)>time.time()):return public(path,req,old)
   ticket={'id':Path(path).stem,'token':secrets.token_hex(24),'key':A.request_key(req),'identity':identity,'request':str(path),'context':ctx,'expires':time.time()+600,'status':'processing'}
   A.write(file,ticket);public(path,req,ticket)
  def stop(state):
@@ -67,16 +65,7 @@ def request(path,expected_hash,terminal=None):
    if current and current.get('token')==ticket['token'] and current.get('status') in ('processing','pending'):
     ticket['status']=state;A.write(file,ticket);return public(path,req,ticket)
   return {'state':current.get('status','closed') if current and current.get('token')==ticket['token'] else 'closed'}
- owner=ctx.get('reviewer');meta=A.hc_get(owner) if owner else {};kind=owner_kind(meta,ctx)
- if not kind or owner==ctx.get('terminal'):
-  # Never choose a different owner when an explicit owner is offline.
-  if owner:return stop('unavailable')
-  try:
-   r=subprocess.run(['hc','ls','--json'],capture_output=True,text=True,timeout=3)
-   for row in json.loads(r.stdout).get('terminals',[]) if r.returncode==0 else []:
-    candidate=row.get('address','');candidate_meta=A.hc_get(candidate);candidate_kind=owner_kind(candidate_meta,ctx)
-    if candidate_kind and candidate!=ctx.get('terminal'):owner,meta,kind=candidate,candidate_meta,candidate_kind;break
-  except (OSError,ValueError,subprocess.TimeoutExpired):pass
+ owner,meta,kind=A.resolve_reviewer(ctx,space_fallback=False)
  if not kind:return stop('unavailable')
  state=meta.get('status');state=state.get('state') if isinstance(state,dict) else state
  if state in ('working','blocked'):return stop('busy')

@@ -7,7 +7,7 @@ export function adviceControl(ask,host){
  const bound={...ask,terminal:ask.terminal??host.terminal?.(),machine:ask.machine??host.machine?.()};
  return {id:`ask-advice-${ask.id}`,label:'Advice',look:'secondary',disabled:Boolean(bound.machine)||['processing','pending','ready'].includes(ask.approval?.advice?.state),fn:cx=>cx.spawn(async cx=>{
   try{await approvalCall('advice',[...args(bound),'--hash',requestHash(ask.req)]);}
-  catch{toast({title:'Advice unavailable',body:'The request may have changed or closed. Refresh the card and try again.',level:'error'});}
+  catch{toast({title:'Advice unavailable',body:'The request may have changed or its terminal may be unavailable. Refresh the card and try again.',level:'error'});}
   cx.notify();
  })};
 }

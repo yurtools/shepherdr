@@ -39,4 +39,3 @@ for p in "$pid" $(kids "$pid"); do
   fi
 done
 true`;
-

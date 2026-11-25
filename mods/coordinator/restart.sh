@@ -41,7 +41,7 @@ info=$(hc get "$old" --json) || { echo "$old isn't running here any more." >&2; 
 get() { jq -r "$1 // empty" <<<"$info"; }
 space=$(get '.labels["herdr.space"]') tab=$(get '.labels["herdr.tab"]') role=$(get '.labels["herdr.role"]')
 # Assistants start from the assistant template (earlier ones from "coordinator").
-case $(get .template) in assistant|coordinator) role=coordinator ;; esac
+[ "$role" = feature ] || case $(get .template) in assistant|coordinator) role=coordinator ;; esac
 cwd=$(get .cwd) app=$(get .status.app) pid=$(get .foreground.pid) created=$(get .created_ms)
 # A parked agent (behind a chat) has no tab labels: the chat names where it goes instead.
 # A coordinator in Chat mode says where it lives in its own labels (its workers name that tab).
@@ -113,6 +113,17 @@ if [ -n "$chat" ]; then
     v=$(get ".labels[\"$k\"]"); [ -n "$v" ] && labels+=(--label "$k=$v")
   done
   [ "$role" = coordinator ] && labels+=(--label herdr.role=coordinator)
+fi
+# The feature owns its conversation and workers independently of its tab or
+# terminal. Preserve that identity when the agent is explicitly restarted too.
+feature=$(get '.labels["herdr.feature"]')
+if [ "$role" = feature ] && [ -n "$feature" ]; then
+  labels+=(--label herdr.role=feature --label "herdr.feature=$feature")
+  if [ -z "$chat" ]; then
+    for k in herdr.chat.slot herdr.chat.origin herdr.coordinator.space herdr.coordinator.tab; do
+      v=$(get ".labels[\"$k\"]"); [ -n "$v" ] && labels+=(--label "$k=$v")
+    done
+  fi
 fi
 # The new agent never inherits a parent Claude Code session's markers the holder may carry (SHEP-86):
 # the same line as core/clean-env.js CLEAN_ENV (test_repo keeps them equal).

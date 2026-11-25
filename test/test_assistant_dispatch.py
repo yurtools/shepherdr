@@ -120,7 +120,7 @@ class ReviewOwnership(unittest.TestCase):
     def test_feature_review_requires_both_space_and_feature(self):
         from herdr_task import approvals as A
         ctx = {'space': 'space', 'feature': 'one'}
-        owner = {'state': 'live', 'labels': {'herdr.role': 'feature', 'herdr.feature': 'one',
+        owner = {'state': 'live', 'pid': 42, 'argv': ['codex'], 'labels': {'herdr.role': 'feature', 'herdr.feature': 'one',
                                            'herdr.coordinator.space': 'elsewhere'}}
         self.assertEqual(A.reviewer_type(owner, ctx), '')
         owner['labels']['herdr.coordinator.space'] = 'space'
@@ -128,6 +128,6 @@ class ReviewOwnership(unittest.TestCase):
 
     def test_space_review_never_selects_a_feature_labelled_terminal(self):
         from herdr_task import approvals as A
-        owner = {'state': 'live', 'labels': {'herdr.role': 'coordinator', 'herdr.feature': 'one',
+        owner = {'state': 'live', 'pid': 42, 'argv': ['codex'], 'labels': {'herdr.role': 'coordinator', 'herdr.feature': 'one',
                                            'herdr.coordinator.space': 'space'}}
         self.assertEqual(A.reviewer_type(owner, {'space': 'space'}), '')

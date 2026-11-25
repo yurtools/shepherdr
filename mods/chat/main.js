@@ -6,7 +6,7 @@ import { startRole, roleStart, featureTask } from './role-launch.js';
 import {readShepherdr} from './coordinator.js';
 import LinkedMarkdown from './linked-markdown.js';
 import { chatLink, chatLinkScan, scanChatLink } from './core/chat-links.js';
-import { startFeature, workspaceCall } from "./features.js";
+import { startFeature, featureRequest, workspaceCall } from "./features.js";
 import { approvalArgv, answerPermission } from "./approval.js";
 import { measuredHeight, viewportScroll, hoverMessage, measureOrder, pendingMarkdownHeight, messageChunks } from "./core/chat-layout.js";
 // Chat: an agent's conversation as a chat, read from the agent's own session log, with a
@@ -37,7 +37,7 @@ import { View, div, svg, image } from "gpui-kit";
 import { v_flex, h_flex, TextareaState, Textarea, Scrollbar, VirtualListScrollHandle, TextView, v_virtual_list, InputState, Input } from "gpui-base";
 import { focused, props, run, theme, home, hc, exec, shared, setShared, watchFolder, window as appWindow, settings, playSound, notify, appHome, readTextFile, writeTextFile, nextCommand, openOverlay, knownAgents, machines, layout } from "herdr";
 import { agents, panes, terminals, spaces, inRender } from "./live.js";
-import { chatPane, chatLabel } from "./core/spaces.js";
+import { chatPane, chatLabel, runningFeatureAssistant } from "./core/spaces.js";
 import * as fs from "fs/promises";
 import { FIND, LOG, Conversation, records, resultText, summary, excerpt, names, pilotLine } from "./core/chat-log.js";
 import { BgJobs } from "./core/bg-jobs.js";
@@ -282,8 +282,12 @@ export default class Chat extends View {
     this.origin = P?.terminal ?? null;
     this.addr = (this.companion && boundAgent(companionRecords()[this.companion])?.address) || this.origin;
     // No agent yet (a Coordinator tab): it may have started one already (this slot's label).
-    this.role = P?.role ?? terminals().find(k=>k.address===this.addr)?.labels?.["herdr.role"] ?? null; this.feature = P?.feature ?? terminals().find(k=>k.address===this.addr)?.labels?.["herdr.feature"] ?? null; this.featureRecord = P?.featureRecord ?? null;
-    this.slot = P?.slot ?? null;
+    const initialLabels = terminals().find(k=>k.address===this.addr)?.labels ?? {};
+    const oldSlot = P?.terminal && Object.values(shared('coordinator.slots')??{}).find(s=>s.feature&&s.legacyTerminal===P.terminal);
+    this.feature = P?.feature ?? P?.featureRecord?.id ?? initialLabels["herdr.feature"] ?? oldSlot?.feature ?? null;
+    this.role = P?.role ?? initialLabels["herdr.role"] ?? (initialLabels['herdr.task']?'worker':this.feature&&!P?.thread?'feature':null);
+    this.featureRecord = (shared('workspace.features')??[]).find(r=>r.id===this.feature) ?? P?.featureRecord ?? null;
+    this.slot = P?.slot ?? (this.role==='feature'&&this.feature ? `feature-${this.feature}` : null);
     // A thread: a task worker's chat, in the Tasks panel ({ terminal, thread: true, task,
     // title }). The same conversation, box and cards, but only a view: it never claims the
     // worker's herdr.chat, never gives it a pane, and leaving it leaves the worker running.
@@ -297,7 +301,7 @@ export default class Chat extends View {
     this.taskRef = P?.task ?? null;
     // Tells the Tasks panel threads can be asked for (shared "chat.threadreq").
     if (shared("chat.threads.v") !== 1) setShared("chat.threads.v", 1);
-    if (!this.addr && this.role && this.slot) this.addr = this.slotAgent();
+    if (this.role && this.slot && (!this.addr || this.role==='feature'&&!this.companion)) this.addr = this.slotAgent() ?? this.addr;
     this.machine = this.addr?.includes("/") ? this.addr.split("/")[0] : null;
     this.phase = "finding";
     this.conv = null;
@@ -526,7 +530,6 @@ export default class Chat extends View {
     this.draftFile = `${appHome()}/data/chat-drafts/${safe(this.companion ? `${this.originKey}:view:${this.companion}` : this.originKey)}.json`;
     if (!this.addr && this.role) this.phase = "fresh";
     if (this.phase === "fresh") this.loadChoice(cx);
-    if (this.feature && this.phase === "fresh" && (this.featureRecord?.session || this.featureRecord?.context)) cx.timer.after(700, cx => this.startAgent(this.featureRecord?.session ? null : {id:`feature-start-${Date.now()}`,text:'Start this feature from the supplied context. Plan its work and coordinate the implementation.',files:[],quote:null}, cx));
     this.loadFirst(cx, labels);
     if (this.addr || this.role) cx.spawn(async (cx) => { await this.loadDraft(cx); attach.prune(); });
     if (this.addr) cx.spawn(async (cx) => this.follow(cx));
@@ -697,7 +700,7 @@ export default class Chat extends View {
   // moment the chat knows its agent (not only once its conversation shows): an agent started
   // from here may ask in its first seconds, and without the flag the hook leaves it to the CLI.
   async flag() {
-    if (this.machine || !this.addr || this.phase === "ended" || this.companion) return;
+    if (this.machine || !this.addr || this.phase === "ended" || this.companion || this.role==='feature'&&this.phase==='unsupported') return;
     await exec("sh", ["-c", 'mkdir -p "$1/open" "$1/req" "$1/ans" && touch "$1/open/$2"', "x", this.askDir, this.addr]);
   }
 
@@ -843,7 +846,7 @@ export default class Chat extends View {
     cx.notify();
     // A task worker's ask may show in its Assistant's chat too: that copy reads how it went.
     const where = howAnswered(ask, text, this.thread || this.t?.labels?.["herdr.task"] ? "in the task's chat" : "in its chat");
-    if (permission) cx.spawn(async () => this.replyPermission(ask, text, where, cx));
+    if (permission) cx.spawn(async cx => this.replyPermission(ask, text, where, cx));
     else cx.spawn(async () => ask.machine ? answerRemote(ask.machine, ask.id, text, where, ask.req) : answerAsk(this.askDir, ask.id, text, where, ask.req));
   }
 
@@ -958,7 +961,7 @@ export default class Chat extends View {
     }
     cx.notify();
     const where = howAnswered(ask, text, "in the Assistant's chat");
-    if (permission) cx.spawn(async () => this.replyPermission(ask, text, where, cx, true));
+    if (permission) cx.spawn(async cx => this.replyPermission(ask, text, where, cx, true));
     else cx.spawn(async () => answerAsk(this.askDir, ask.id, text, where, ask.req));
   }
 
@@ -1149,7 +1152,7 @@ export default class Chat extends View {
     const screen = (await hc(["read", addr, "--lines", "40"]).catch(() => null))?.stdout ?? "";
     if (!LOST.test(screen.split("\n").slice(-30).join("\n"))) return false;
     // Explicit history resumes must never silently turn into a fresh conversation.
-    if (t.labels?.["herdr.session"]) { this.resumeMissing = true; return false; }
+    if (t.labels?.["herdr.session"] || t.labels?.["herdr.role"] === 'feature' || this.role==='feature') { this.resumeMissing = true; return false; }
     // One start for it, whichever chat saw it first (its own, its Assistant's): shared "chat.lost"
     // = { [address]: when }.
     const lost = shared("chat.lost") ?? {};
@@ -1202,13 +1205,30 @@ export default class Chat extends View {
   // agent started in the same terminal writes another file.
   async locate(cx) {
     if (this.swapping) return;
-    const r = await hc(["get", this.addr, "--json"]);
+    const address=this.addr;
+    const r = await hc(["get", address, "--json"]);
+    if(address!==this.addr)return;
     let t = null;
     try { t = JSON.parse(r.stdout || "null"); } catch {}
     // Gone for good (removed after a restart from here), or unreachable for now (another
     // machine offline: try again later, don't call it ended).
-    const gone = /not_found|no terminal/.test(`${r.stdout}\n${r.stderr}`);
-    if (!gone && (!t || t.error)) return;
+    // Only a failed lookup can report a missing terminal. A successful core record contains
+    // the original launch prompt in argv (and foreground.argv), not an error diagnostic.
+    const failed = r.code !== 0 || Boolean(t?.error);
+    const gone = failed && /not_found|no terminal|not found/i.test(`${t && !t.error ? "" : r.stdout}\n${r.stderr}`);
+    if (!gone && (failed || !t)) return;
+    if(this.role==='feature'&&!this.thread&&!this.companion){
+      const record=this.currentFeature();
+      if(gone||!runningFeatureAssistant({...t,address},record)){
+        const current=this.slotAgent();
+        if(current&&current!==address){this.follow_to(current);return;}
+        // An old terminal is not a conversation, and a missing resume must not
+        // enter the generic "start a new one" recovery.
+        if(!gone&&t)await this.checkLost(address,cx,t);
+        this.set('unsupported',cx);return;
+      }
+      if(this.phase==='unsupported'){this.path=null;this.reset();this.set('finding',cx);}
+    }
     if (gone || t?.state !== "live") {
       // Restarted from here (perhaps before Herdr restarted): the new agent carries the origin.
       const next = terminals().find((x) => x.state === "live" && x.address !== this.addr && x.labels?.["herdr.chat.origin"] === this.originKey);
@@ -1270,6 +1290,7 @@ export default class Chat extends View {
       if (this.assistant()) cx.spawn(async (cx) => { await this.loadSpaceTasks(); cx.notify(); });
     }
     const f = await exec("sh", ["-c", FIND, "chat", kind, String(pid)], { on: this.machine });
+    if(address!==this.addr)return;
     let path = f.stdout.trim().split("\n").pop() ?? "";
     // Not in its session yet (no report, no turn): perhaps on its own start screen, which
     // shows as a card under an empty chat.
@@ -1460,11 +1481,14 @@ export default class Chat extends View {
   }
 
   async follow(cx) {
+    if(this.logFollowing)return;
+    this.logFollowing=true;
     const wait = this.logWait = new BoundedWait();
     let last = 0;
     try { for (;;) {
       try {
         if (!this.path || Date.now() - last > 4000) { last = Date.now(); await this.locate(cx); }
+        if(this.role==='feature'&&this.phase==='unsupported') { await cx.sleep(2000); continue; }
         if (this.phase === "ended" && !this.swapping) {
           // A thread stays open on its notice; ✕ closes it.
           if (this.thread || this.companion) return;
@@ -1521,7 +1545,7 @@ export default class Chat extends View {
         wait.clear();
         await cx.sleep(working ? 1500 : 4000);
       }
-    } } finally { wait.dispose(); }
+    } } finally { wait.dispose(); this.logFollowing=false; }
   }
 
   // ---- sending ------------------------------------------------------------------------------
@@ -1802,7 +1826,24 @@ export default class Chat extends View {
   // ---- a chat with no agent yet (Coordinator tab) --------------------------------------------
 
   // This slot's live agent, if one was started.
+  currentFeature() {
+    return (shared('workspace.features')??[]).find(r=>r.id===this.feature) ?? this.featureRecord ?? {id:this.feature,space:this.slotRec()?.space??props()?.space};
+  }
+  rebindFeature(resume,cx) {
+    if(this.slotRec()?.pane!==resume.pane)return;
+    this.featureRecord=resume.record;
+    this.resumeMissing=false;
+    this.endedAssistant=false;
+    if(this.addr!==resume.address||this.phase==='unsupported'||this.phase==='ended')this.follow_to(resume.address);
+    cx.spawn(async cx=>this.follow(cx));
+    cx.spawn(async cx=>this.watchAsks(cx));
+    cx.notify();
+  }
   slotAgent() {
+    if(this.role==='feature'){
+      const owners=terminals().filter(k=>runningFeatureAssistant(k,this.currentFeature()));
+      return owners.length===1?owners[0].address:null;
+    }
     return terminals().find((x) => x.state === "live" && x.labels?.["herdr.chat.slot"] === this.slot)?.address ?? null;
   }
 
@@ -1836,7 +1877,7 @@ export default class Chat extends View {
   }
   slotPane() {
     const rec = this.slotRec();
-    if (rec?.pane && panes().some((p) => p.pane === rec.pane)) return rec.pane;
+    if (rec?.pane && panes().some((p) => p.pane === rec.pane&&p.mod==='chat')) return rec.pane;
     const taken = new Set(terminals().filter((k) => k.state === "live").map(chatPane).filter(Boolean));
     const tab = rec?.tab ?? focused()?.tab;
     const free = panes().filter((p) => p.mod === "chat" && p.tab === tab && !taken.has(p.pane));
@@ -1867,7 +1908,7 @@ export default class Chat extends View {
     // Files here go as their paths; on another machine they follow once it runs (hc put needs it).
     const local = machine || !msg ? [] : msg.files.map((f) => f.path);
     let task = msg ? [reply + msg.text, ...local].filter(Boolean).join("\n\n") : "";
-    const featureRecord = this.featureRecord;
+    const featureRecord = this.feature ? this.currentFeature() : this.featureRecord;
     if (this.feature) task = featureTask(featureRecord ?? { id: this.feature }, task);
     const p = msg ? { id: `pending-${msg.id}`, text: msg.text, replyTo: msg.quote ? excerpt(msg.quote.text, 80) : null, files: msg.files.filter((f) => !f.image).map((f) => f.name),
       paths: msg.files.filter((f) => f.image).map((f) => f.path), at: Date.now(), sent: task, match: norm(msg.text).slice(0, 60) || null } : { failed: null };
@@ -1888,7 +1929,10 @@ export default class Chat extends View {
       let address;
       const spec = { slot: this.slot, pane, tab: rec?.tab, role: this.role, template, space, folder,
         settings: this.choice?.sel ?? props()?.settings, featureRecord, task };
-      try { address = await startRole(spec); }
+      try {
+        if(this.role==='feature')spec.featureRecord=await workspaceCall('feature-get',{id:this.feature});
+        address = await startRole(spec);
+      }
       catch (error) {
         p.failed = String(error.message ?? error);
         toast({ title: "Assistant did not start", body: p.failed, level: "error" });
@@ -2322,6 +2366,7 @@ export default class Chat extends View {
   // Restart Assistant, after its agent ended (GitHub #1039): the same conversation resumed, with its flags, parked
   // behind this chat, which follows it (as the model picker's restart does).
   restartAssistant(cx) {
+    if(this.role==='feature'){featureRequest(this.feature);return;}
     const mine = this.myPane() ?? this.lastPane;
     if (this.restarting || !mine || !this.addr) return;
     this.restarting = true;
@@ -5053,8 +5098,8 @@ export default class Chat extends View {
     // A thread's pane is the one its opener recorded for this worker (openThread()).
     if (this.thread) return threadOf(this.addr);
     const c = chatPane(terminals().find((x) => x.address === this.addr));
-    if (c && panes().some((p) => p.pane === c && p.mod === "chat")) this.lastPane = c;
-    return c || (this.swapping ? this.lastPane : null);
+    if (c && panes().some((p) => p.pane === c && p.mod === "chat")) { this.lastPane = c; return c; }
+    return (this.role==='feature' ? this.slotPane() : c) || (this.swapping ? this.lastPane : null);
   }
 
   // One copy of Herdr's live lists for the whole render (live.js): a render past Herdr's 50 ms
@@ -5101,9 +5146,9 @@ export default class Chat extends View {
   draw(cx) {
     if (this.host) return this.host.render(cx);
     const resume=shared('workspace.feature.resume');
-    if(this.feature&&resume?.record?.id===this.feature&&resume.nonce!==this.featureResumeNonce&&Date.now()-resume.at<5000){
+    if(this.role==='feature'&&!this.companion&&!this.thread&&resume?.record?.id&&resume.address&&resume.record.id===this.feature&&resume.nonce!==this.featureResumeNonce&&Date.now()-resume.at<15000){
       this.featureResumeNonce=resume.nonce;
-      cx.timer.after(0,cx=>{if(this.phase==='starting'||this.status()==='working')return;this.featureRecord=resume.record;this.addr=null;this.phase='fresh';this.startAgent(null,cx);});
+      cx.timer.after(0,cx=>this.rebindFeature(resume,cx));
     }
     const link=shared('workspace.chat-link');
     if(link?.key===(this.pickKey()??this.areaKey())&&link.nonce!==this.chatLinkNonce&&Date.now()-link.at<5000){this.chatLinkNonce=link.nonce;cx.timer.after(0,cx=>this.openChatLink(link.href,cx));}
@@ -5261,12 +5306,14 @@ export default class Chat extends View {
       this.button("chat-close", this.inner ? "Back to tasks" : "Close", null, "secondary", t, () => this.closeSelf())]));
     if (this.phase === "ended" && !this.swapping && this.endedAssistant) return root.child(this.notice(t, WORDS.assistantEnded, WORDS.assistantEndedBody, [
       this.button("chat-restart-assistant", this.restarting ? WORDS.restarting : "Restart Assistant", null, "primary", t, (cx) => this.restartAssistant(cx)),
-      this.role
+      this.role && this.role!=='feature'
         ? this.button("chat-new-assistant", "Start a new one", null, "secondary", t, (cx) => { this.startFresh(); cx.notify(); })
         : this.button("chat-close", "Close chat", null, "secondary", t, () => this.closeSelf())]));
     if (this.phase === "ended" && !this.swapping) return root.child(this.notice(t, WORDS.agentEnded, null, [
       this.button("chat-close", "Close chat", null, "secondary", t, () => this.closeSelf())]));
     const open = this.button("chat-open-terminal", WORDS.openTerminal,"mods/workspace-chrome/terminal.svg", "primary", t, () => this.toTerminal());
+    if (this.phase === "unsupported"&&this.role==='feature') return root.child(this.notice(t,this.resumeMissing?'Couldn’t resume this conversation':'Feature Assistant is stopped',this.resumeMissing?'The saved session was not found. No new conversation was started.':'Resume its saved conversation with its original account.',[
+      this.button('chat-resume-feature','Resume Feature Assistant',null,'primary',t,()=>featureRequest(this.feature))]));
     if (this.phase === "unsupported") return root.child(this.notice(t, this.resumeMissing ? "Couldn’t resume this conversation" : WORDS.unsupported,
       this.resumeMissing ? "Codex couldn’t find the saved session in its original account. Open Terminal to inspect the error." : WORDS.unsupportedBody, [open]));
     if (this.phase === "none") return root.child(this.notice(t, WORDS.notFound, WORDS.notFoundBody, [open]));

@@ -110,6 +110,7 @@ test("discard identity is the exact sole latest turn prompt, not equal text or a
   expect(discardableTurn([...first, ...latest], id(1))).toEqual({ id: "u60", token: id(1) + ":turn2:message2", closed: true });
   expect(discardableTurn([...first, ...latest.slice(0, -1)], id(1)).closed).toBe(false);
   expect(discardableTurn([...first, ...latest.slice(0, -1), user(75, "turn2", "steer", "another prompt"), latest.at(-1)], id(1))).toBeNull();
+  expect(discardableTurn([...first, ...latest.slice(0, -1), { off: 75, kind: "T", data: "" }, latest.at(-1)], id(1))).toBeNull();
   expect(discardableTurn([...first, ...latest.slice(1)], id(1))).toBeNull();
   expect(discardableTurn([...first, ...latest, started(90, "turn3"), ended(100, "turn3")], id(1))).toBeNull();
   expect(discardableTurn([started(40, "turn2"), user(60, "turn2", "message2", "/model")], id(1))).toBeNull();

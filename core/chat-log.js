@@ -1228,8 +1228,12 @@ export function discardableTurn(recs, session) {
   if (!session) return null;
   let turn = null, closed = false, prompts = [], uncertain = false;
   for (const r of recs ?? []) {
+    // A record too large for the display reader could contain another user
+    // input. Don't infer sole-prompt identity from an incomplete turn.
+    if (r.kind === "T") { if (turn) uncertain = true; continue; }
     if (r.kind !== "J") continue;
     const l = parse(r.data), p = l?.payload;
+    if (!l && turn) { uncertain = true; continue; }
     if (l?.type === "event_msg" && p?.type === "task_started") {
       turn = p.turn_id; closed = false; prompts = []; uncertain = false;
     } else if (turn && l?.type === "event_msg" && ["task_complete", "turn_aborted"].includes(p?.type) && p.turn_id === turn) {

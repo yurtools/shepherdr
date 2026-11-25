@@ -322,3 +322,13 @@ test('native rich Markdown and a file name keep their source and precise match c
   expect(rich.text).toBe(table);expect(rich.find.contextOnly).toBe(true);expect(rich.find.projection).toBeUndefined();
   expect(p.rows.find((r:any)=>r.kind==='imgs').find).toMatchObject({imageNames:true,hits:[{text:'needle.png',start:0,end:6}]});
 });
+
+
+test('Find keeps ordinary fenced source from a person on the person’s side',()=>{
+  const raw='My literal source:\n\n```js\nconst needle = 1;\n```';
+  const h=historyHost([{kind:'user',id:'person',text:raw,at:1772946000000}]);h.v.findQuery=()=> 'needle';h.request();h.drain();
+  const p=h.v.history.snapshot;expect(p.findTotal).toBe(1);
+  expect(p.rows.find((r:any)=>r.kind==='codehead')).toMatchObject({side:'user',code:'const needle = 1;'});
+  expect(p.rows.find((r:any)=>r.kind==='code')).toMatchObject({side:'user',code:'const needle = 1;'});
+  expect(p.rows.find((r:any)=>r.kind==='band').bar.target).toBe(raw);
+});

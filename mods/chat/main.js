@@ -267,9 +267,9 @@ function* prepareDiagrams(ps, id, opened, previous, q = "") {
 function codeRows(p,id,n,clip,side,q="",width=800) {
   const mermaid=isMermaid(p);
   const head = { kind:'codehead',id:`${id}:h${n}`,lang:p.lang,code:p.code,
-    ...(mermaid?{side,diagram:!!p.drawing,source:!!p.source,...(p.findSource?{findSource:true}:{})}:{}) };
+    ...(mermaid?{side,diagram:!!p.drawing,source:!!p.source,...(p.findSource?{findSource:true}:{})}:side==='user'?{side}:{}) };
   const body = { kind:p.preview?'diagram':'code',id:`${id}:c${n}`,lang:p.lang,code:p.code,clip:p.preview?undefined:clip,
-    ...(mermaid?{side,drawing:p.preview?p.drawing:undefined,result:p.result,closed:p.closed,eligible:p.eligible,display:p.display,error:p.error}:{}) };
+    ...(mermaid?{side,drawing:p.preview?p.drawing:undefined,result:p.result,closed:p.closed,eligible:p.eligible,display:p.display,error:p.error}:side==='user'?{side}:{}) };
   if(!q || body.kind!=='code')return [head,body];
   const text=String(p.code??'');
   const {ranges,limited}=literalRanges(text,q);

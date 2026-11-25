@@ -68,7 +68,7 @@ export function dispatch(target: Element, name: string, cx: any = {}): Element[]
 const factory = (kind: string) => Object.assign((..._a: unknown[]) => element(kind), { new: (..._a: unknown[]) => element(kind), vertical: (..._a: unknown[]) => element(kind) });
 
 export function fakeGpuiKit(given: Record<string, unknown> = {}): Record<string, unknown> {
-  return { View: Stub, div: factory("div"), svg: factory("svg"), image: factory("image"), ...given };
+  return { View: Stub, PathBuilder: {fill:()=>inert(),stroke:()=>inert()}, div: factory("div"), svg: factory("svg"), image: factory("image"), ...given };
 }
 
 export function fakeGpuiBase(given: Record<string, unknown> = {}): Record<string, unknown> {

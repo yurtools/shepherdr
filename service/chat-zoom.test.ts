@@ -165,6 +165,24 @@ test("expanded and folded replies leave wheel scrolling to the conversation list
  expect(markdownScrolling).toEqual([false,false,false]);
 });
 
+test("native flowchart source and copy controls route separately at the pane's zoom",()=>{
+ zoom=1.7;comfortable=false;const c=chat();c.opened=new Set();c.diagramSources=new Set();
+ const code='graph LR\nA --> B  ',row={kind:'codehead',id:'msg:h0',diagram:true,code};
+ const copies:any[]=[];c.copy=(text:string,id:string)=>copies.push([text,id]);
+ c.paneSize({width:500*zoom,height:800*zoom});
+ const right=c.edges().right;
+ c.notePress({local_position:{x:(right-4-110)*zoom,y:100*zoom}});
+ c.clickRow(row.id,[row],cx,[34]);
+ expect(c.diagramSources.has(row.id)).toBe(true);expect(copies).toEqual([]);
+ c.notePress({local_position:{x:(right-4-36)*zoom,y:100*zoom}});
+ c.clickRow(row.id,[row],cx,[34]);
+ expect(copies).toEqual([[code,row.id]]);expect(c.diagramSources.has(row.id)).toBe(true);
+ c.notePress({local_position:{x:(right-4-110)*zoom,y:100*zoom}});
+ c.clickRow(row.id,[row],cx,[34]);
+ expect(c.diagramSources.has(row.id)).toBe(false);
+ expect(c.historyRevision).toBe(2);
+});
+
 test("a long reply keeps its estimated space until native Markdown finishes, even after the old settling deadline",()=>{
  zoom=1;comfortable=false;handlers.size=[];const c=chat(),row={id:'long',kind:'agent',text:'A paragraph with visible words. '.repeat(200)};
  c.measurer([row],['expanded'],theme);handlers.size[0]({width:600,height:23.2},cx);

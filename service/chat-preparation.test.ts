@@ -1,5 +1,7 @@
 import { expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
+import * as fences from '../core/chat-fences.js';
+import * as flow from '../core/chat-flowchart.js';
 import * as view from '../core/chat-view.js';
 import * as preparation from '../core/chat-preparation.js';
 import * as geometry from '../core/chat-layout.js';
@@ -17,7 +19,7 @@ const names = ['rows', 'rowPlan', 'spaced', 'spacedPlan', 'foldOf', 'key', 'gues
   'historyVisible', 'historyIdentity', 'historyCurrent', 'historyEvent', 'historyContext', 'historyStamp', 'historyPlan', 'prepareHistory', 'scheduleHistory', 'clearHistory'];
 export function historyHost(items: any[], sharedRead: (key: string) => any = () => null) {
   const jobs: any[] = [], stats = { items: 0, keys: 0, guesses: 0, lookups: 0, notifies: 0 };
-  const dependencies: any = { ...view, ...geometry, ...preparation,
+  const dependencies: any = { ...fences, ...flow, ...view, ...geometry, ...preparation,
     // Pending/reply rows belong to "now". Keep calendar arithmetic real and the fixture clock fixed.
     Date: class extends Date { static now() { return 1795132800000; } },
     dayLabel: (at: number) => `Day ${Math.floor(at / 86400000)}`, dayOf: (at: number) => Math.floor(at / 86400000) * 86400000, pilotLine,
@@ -104,6 +106,46 @@ test('unchanged and hover render reuse all prepared rows, keys, estimates and in
   const before = { ...h.stats }, rows = h.v.rows();
   for (let n = 0; n < 50; n++) { h.v.hoverBand = `m${n}`; h.request(); }
   expect(h.stats).toEqual(before); expect(h.v.rows()).toBe(rows); expect(h.jobs).toHaveLength(0);
+});
+
+test('native history prepares user and assistant diagrams independently, retaining exact source and ordinary code',()=>{
+  const at=1772946000000;
+  const fence=(s:string,closed=true)=>'```mermaid\n'+s+(closed?'\n```':'');
+  const first='flowchart TD\n  A([Start]) --> B{Ready?}\n  B -->|Yes| C[Done]  ';
+  const second='graph LR; A --> B --> C';
+  const incomplete='graph TD\nX --> Y';
+  const items=[
+    {kind:'agent',id:'agent',at,text:'Two diagrams:\n'+fence(first)+'\n'+fence(second)+'\n```js\nconst x = 42;\n```'},
+    {kind:'user',id:'user',at:at+1,text:fence(second)},
+    {kind:'agent',id:'stream',at:at+2,text:fence(incomplete,false)},
+  ];
+  const h=historyHost(items);h.v.unfolded.add('agent');h.request();h.drain();
+  expect(h.v.error).toBeUndefined();
+  const rows=h.v.rows(), diagramRows=rows.filter((r:any)=>r.kind==='diagram');
+  expect(diagramRows.map((r:any)=>[r.blk,r.side,r.code])).toEqual([['agent','agent',first],['agent','agent',second],['user','user',second]]);
+  expect(rows.find((r:any)=>r.kind==='code'&&r.lang==='js').code).toBe('const x = 42;');
+  expect(rows.find((r:any)=>r.blk==='stream'&&r.kind==='code')).toMatchObject({code:incomplete,error:flow.FLOW_WORDS.incomplete});
+  const user=diagramRows[2], head=rows.find((r:any)=>r.blk==='user'&&r.kind==='codehead');
+  expect(head.code).toBe(second);
+  // A source/preview switch is a new history presentation, not a mutation of
+  // an older painted row or a new layout job for the same source.
+  h.v.diagramSources=new Set([head.id]);h.v.historyRevision=1;h.request();h.drain();
+  const shown=h.v.rows().find((r:any)=>r.id===user.id);
+  expect(shown).toMatchObject({kind:'code',code:second,display:second});
+  expect(shown.result).toBe(user.result);
+  expect(user.kind).toBe('diagram');
+  h.v.diagramSources.clear();h.v.historyRevision++;h.v.width=320;h.v.column=()=>284;h.request();h.drain();
+  const resized=h.v.rows().find((r:any)=>r.id===user.id);
+  expect(resized.kind).toBe('diagram');
+  expect(resized.drawing).toBe(user.drawing);
+  const earlier=h.v.rows().find((r:any)=>r.blk==='stream'&&r.kind==='code');
+  h.v.conv={items:items.map(x=>x.id==='stream'?{...x,text:fence(incomplete)}:x)};h.request();h.drain();
+  const completed=h.v.rows().find((r:any)=>r.id===earlier.id);
+  expect(completed.kind).toBe('diagram');
+  expect(completed.drawing.nodes.map((n:any)=>n.label)).toEqual(['X','Y']);
+  h.v.clearHistory(true);
+  expect(h.v.history).toBeNull();
+  expect(h.jobs.every((j:any)=>!j.fn)).toBe(true);
 });
 
 test('every callback bounds all stages, and continuous fresh sources cannot starve a commit', () => {

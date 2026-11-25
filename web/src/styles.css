@@ -1176,3 +1176,15 @@
 [data-theme="dark"] .attention-badge { color: black; }
 [data-device="phone"] .attention-badge { height: 18px; border-radius: 9px; font-size: 12px; line-height: 18px; }
 [data-device="phone"] .attention-badge > span { min-width: 18px; padding: 0 5px; }
+
+/* Document Find, separate from chat's CSS highlight registry. */
+.document-match {
+  background: color-mix(in srgb, var(--work) 45%, transparent);
+  color: inherit;
+}
+.document-match-current {
+  background: var(--work);
+  color: var(--bg);
+  outline: 1px solid var(--work);
+  font-weight: 600;
+}

@@ -90,7 +90,7 @@ export function delimiterFor(text, path = '') {
 // For complete editable buffers (including unsaved changes), visit one record
 // at a time, collecting only the requested slice. Larger disk files use the
 // out-of-process indexed reader, never this or the native editor.
-function visitCSV(text, delimiter, visit) {
+export function visitCSV(text, delimiter, visit) {
   let row = [], cell = '', quote = false, afterQuote = false, started = false;
   let recordStart = 0;
   const begin = text.startsWith('\uFEFF') ? 1 : 0;

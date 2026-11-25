@@ -5,13 +5,16 @@
 // checks, a link). Their words are the window's own (core/worktree.js VIEW_WORDS). The server reads only that task's
 // or space's folder (service/worktree.ts).
 import clsx from 'clsx'
-import { useEffect, useMemo, useState, useSyncExternalStore, type ReactNode } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
 import { useCopy } from '@client/copy.ts'
 import { definePlugin, setUI, useStore } from '@client/kernel.ts'
 import { escapeHtml, highlighter, HIGHLIGHT_MAX, highlightLine, highlightLines, languageOf, loadHighlighter } from '@client/highlight.ts'
-import { BackIcon, CheckCircleIcon, ClockIcon, CopyIcon, DiffIcon, FileIcon, FolderIcon, ic, IconButton, MinusCircleIcon, NextIcon, OpenIcon, PrIcon, Small, XCircleIcon } from '@client/ui.tsx'
+import { BackIcon, DownIcon, SearchIcon, XIcon, roundBtn, CheckCircleIcon, ClockIcon, CopyIcon, DiffIcon, FileIcon, FolderIcon, ic, IconButton, MinusCircleIcon, NextIcon, OpenIcon, PrIcon, Small, XCircleIcon } from '@client/ui.tsx'
 import type { Diff, DiffFile, FileText, Patch, PrCheck, PullRequest, Task } from '@shared/types.ts'
 import * as W from '@core/worktree.js'
+import { documentKind } from '@core/documents.js'
+import { FIND, findRanges } from '@core/document-find.js'
+import { markLine, type TextHit } from '@client/document-find.ts'
 
 const WORDS = W.VIEW_WORDS as Record<string, string>
 const CHANGE = W.CHANGE_WORDS as Record<string, string>
@@ -29,6 +32,7 @@ type Got<T> = { data?: T; error?: string; loading: boolean }
 
 /** what each ask last got, kept while the screen is open: a tab shown again draws at once, then reads again */
 const got = new Map<string, Got<unknown>>()
+const pendingAsk = new Map<string, object>()
 const listeners = new Set<() => void>()
 const changed = () => listeners.forEach((l) => l())
 
@@ -36,6 +40,7 @@ const keyOf = (task: string, a: Ask) => `${task}|${a.what}|${'path' in a ? a.pat
 
 async function ask(task: string, a: Ask) {
   const k = keyOf(task, a)
+  const request = {}; if (a.what === 'file') pendingAsk.set(k, request)
   got.set(k, { ...(got.get(k) ?? {}), loading: true })
   changed()
   try {
@@ -44,11 +49,13 @@ async function ask(task: string, a: Ask) {
     const r = await fetch(`api/worktree?${q}`)
     const b = (await r.json().catch(() => ({}))) as { error?: string }
     // the server says why it has nothing as { error } too: the view says those words, as the window's does
+    if (a.what === 'file' && pendingAsk.get(k) !== request) return
     got.set(k, r.ok && !b.error ? { data: b, loading: false } : { error: b.error ?? `It said ${r.status}.`, loading: false })
   } catch {
+    if (a.what === 'file' && pendingAsk.get(k) !== request) return
     got.set(k, { ...(got.get(k) ?? {}), error: "Can't reach Shepherdr right now.", loading: false })
   }
-  changed()
+  pendingAsk.delete(k); changed()
 }
 
 /** an ask's answer, asked when shown and again every `every` ms while it shows (the window reads again every 10 s
@@ -105,19 +112,39 @@ function useHighlighter() {
   return h
 }
 
-/** A file's text with its line numbers, highlighted once highlight.js is in */
-function Code({ text, path }: { text: string; path: string }) {
+/** A file's text with its line numbers, highlighted once highlight.js is in.
+ * Search ranges use original offsets, not syntax HTML or a synthetic limit note. */
+function Code({ text, path, hits, current }: { text: string; path: string; hits: TextHit[]; current: number }) {
   const h = useHighlighter()
+  const scroll = useRef<HTMLDivElement>(null)
   const lines = useMemo(() => {
     const lang = h && text.length <= HIGHLIGHT_MAX ? languageOf(path, h) : null
     const t = text.endsWith('\n') ? text.slice(0, -1) : text
-    return lang && h ? highlightLines(t, lang, h) : t.split('\n').map(escapeHtml)
+    const html = lang && h ? highlightLines(t, lang, h) : t.split('\n').map(escapeHtml)
+    let start = 0
+    return t.split('\n').map((value, i) => {
+      const line = { html: html[i], start, end: start + value.length }
+      start += value.length + 1
+      return line
+    })
   }, [h, text, path])
+  const marked = useMemo(() => {
+    let first = 0
+    return lines.map(line => {
+      while (first < hits.length && hits[first].end <= line.start) first++
+      let last = first
+      while (last < hits.length && hits[last].start < line.end) last++
+      return markLine(line.html, line.start, hits.slice(first, last), current)
+    })
+  }, [lines, hits, current])
+  useLayoutEffect(() => {
+    if (current >= 0) scroll.current?.querySelector('.document-match-current')?.scrollIntoView({ block: 'center', inline: 'center' })
+  }, [current, hits, marked])
   return (
-    <div className="code-view min-h-0 flex-1 overflow-auto">
+    <div ref={scroll} className="code-view min-h-0 flex-1 overflow-auto">
       <table className="min-w-full border-collapse">
         <tbody>
-          {lines.map((l, i) => (
+          {marked.map((l, i) => (
             <tr key={i}>
               <td className="sticky left-0 w-px bg-bg pr-3 pl-4 text-right align-top text-fg3 tabular-nums select-none">{i + 1}</td>
               <td className="pr-4 align-top whitespace-pre" dangerouslySetInnerHTML={{ __html: l || ' ' }} />
@@ -151,7 +178,7 @@ export function FilesView({ task }: { task: Task }) {
     else s.add(p)
     setOpen(s)
   }
-  if (file) return <FileView task={task} path={file} onBack={() => pick(undefined)} />
+  if (file) return <FileView key={`${task.id}:${file}`} task={task} path={file} onBack={() => pick(undefined)} />
   const entries = top.data?.entries ?? []
   return (
     <>
@@ -202,24 +229,72 @@ function Folder({ task, path, depth, open, toggle, pick, marks }: { task: Task; 
 
 function FileView({ task, path, onBack }: { task: Task; path: string; onBack: () => void }) {
   const f = useAsk<FileText>(task.id, { what: 'file', path })
+  const frame = useRef<HTMLDivElement>(null), input = useRef<HTMLInputElement>(null)
+  const [finding, setFinding] = useState(false), [query, setQuery] = useState(''), [index, setIndex] = useState(0)
+  const text = f.data?.text ?? ''
+  const supported = ['text','markdown','csv'].includes(documentKind(path))
+  const usable = supported && !!f.data && !f.data.binary && !f.error
+  const q = finding ? query.trim() : ''
+  const found = useMemo(() => findRanges(usable ? text : '', q.length <= FIND.queryChars ? q : ''), [text, q, usable])
+  const hits = useMemo(() => found.hits.map((hit, i) => ({...hit, index: i})), [found])
+  const current = hits.length ? Math.min(index, hits.length - 1) : -1
+  const partial = !!f.data?.tooBig || found.limited
+  const open = () => { setFinding(true); if (finding) input.current?.focus({preventScroll: true}) }
+  const close = () => { setFinding(false); setQuery(''); setIndex(0); frame.current?.focus({preventScroll: true}) }
+  const step = (by: number) => hits.length && setIndex((current + by + hits.length) % hits.length)
+  useLayoutEffect(() => { frame.current?.focus({preventScroll:true}) }, [])
+  useLayoutEffect(() => { if (finding) input.current?.focus({preventScroll:true}) }, [finding])
+  useEffect(() => { setIndex(0) }, [text])
   return (
-    <>
+    <div ref={frame} tabIndex={0} aria-label={`File preview: ${path}`} className="flex min-h-0 flex-1 flex-col outline-none"
+      onKeyDownCapture={e => {
+        if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === 'f') {
+          e.preventDefault(); e.stopPropagation(); open()
+        } else if (finding && e.key === 'Escape') {
+          e.preventDefault(); e.stopPropagation(); close()
+        } else if (finding && e.key === 'Enter' && e.target === input.current) {
+          e.preventDefault(); e.stopPropagation(); step(e.shiftKey ? -1 : 1)
+        }
+      }}>
       <Bar>
         <IconButton label={WORDS.allFiles} onClick={onBack} className="-ml-1.5">
           <BackIcon className={ic} />
         </IconButton>
         <span className="min-w-0 flex-1 truncate text-fg">{path}</span>
+        <IconButton label="Find in document (Ctrl/Cmd+F)" pressed={finding} onClick={open}>
+          <SearchIcon className={ic} />
+        </IconButton>
       </Bar>
+      {finding && <div className="shrink-0 border-b border-line px-2 py-1.5">
+        <div role="search" className="round-box flex items-center gap-1 bg-bg p-1 pl-2 shadow-box has-[input:focus]:shadow-box-focus">
+          <SearchIcon className={`${ic} text-fg3`} />
+          <input ref={input} type="search" aria-label="Find in document" placeholder="Find in document" value={query}
+            autoComplete="off" enterKeyHint="search" onChange={e => { setQuery(e.target.value); setIndex(0) }}
+            className="h-[34px] min-w-0 flex-1 bg-transparent px-1 outline-none placeholder:text-fg3 phone:h-11 [&::-webkit-search-cancel-button]:hidden" />
+          <span role="status" className="shrink-0 text-[0.75rem] text-fg2 tabular-nums">
+            {!usable ? 'Unavailable' : q.length > FIND.queryChars ? 'Query too long' : !q ? '' : hits.length ? `${current + 1} of ${hits.length}${partial ? '+' : ''}` : partial ? 'No matches here' : 'No matches'}
+          </span>
+          <IconButton label="Previous match (Shift+Enter)" className={roundBtn} disabled={hits.length < 2} onClick={() => step(-1)}><DownIcon className={`${ic} rotate-180`} /></IconButton>
+          <IconButton label="Next match (Enter)" className={roundBtn} disabled={hits.length < 2} onClick={() => step(1)}><DownIcon className={ic} /></IconButton>
+          <IconButton label="Close Find (Escape)" className={roundBtn} onClick={close}><XIcon className={ic} /></IconButton>
+        </div>
+        <div className="px-2 pt-1 text-xs text-fg3">
+          {!usable ? 'Search needs a readable text preview.' : f.data?.tooBig ? 'Only the first 400,000 file bytes are searchable in web Files.' : found.limited ? 'Search stopped at the match limit.' : q.length > FIND.queryChars ? `Find supports up to ${FIND.queryChars} characters.` : 'Web Files searches raw text, not rendered Office or PDF pages.'}
+        </div>
+      </div>}
       {f.error ? (
         <Note>{f.error}</Note>
       ) : !f.data ? (
         <Note>{WORDS.loadingFile}</Note>
-      ) : f.data.binary ? (
-        <Note>{WORDS.binaryFile}</Note>
+      ) : f.data.binary || !supported ? (
+        <Note>{f.data.binary ? WORDS.binaryFile : 'This document format is not rendered in web Files.'} Web Files supports text previews only.</Note>
       ) : (
-        <Code text={f.data.tooBig ? `${f.data.text ?? ''}\n${WORDS.truncated}` : (f.data.text ?? '')} path={path} />
+        <>
+          {f.data.tooBig && <Note>{WORDS.truncated}</Note>}
+          <Code text={text} path={path} hits={hits} current={current} />
+        </>
       )}
-    </>
+    </div>
   )
 }
 

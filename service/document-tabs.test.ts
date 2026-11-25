@@ -273,3 +273,134 @@ test('Office and raster-image panes never become text editors or Save targets',a
  view.open('/project/picture.png',null,cx);await settle();doc=view.docs.get(key('picture.png'));expect(doc.error).toContain('Image preview');expect(reads).toBe(0);
  built.length=0;view.render(cx);expect(byId('save')).toBeUndefined();expect(byId('document-original')).toBeDefined();
 });
+
+// Find tests operate the real per-tab controller, with host Input/scroll APIs
+// substituted. Even the scratch file/draft is checked for unintended writes.
+async function findQuery(doc:any, query:string) {
+  cx.timer.after=(_ms:number,fn:any)=>fn(cx);
+  view.openFind(doc,cx);
+  doc.find.input={value:()=>query,release(){},focus(){}};
+  view.refreshFind(doc,cx);await settle();
+}
+test('literal, Unicode source Find, wrap navigation, and close leave draft and source unchanged',async()=>{
+ const saved='const 🦀 = "saved";\n';
+ const draft='const 🦀 = "Needle";\n// needle [literal]\nconst later = "NEEDLE";';
+ const doc=add('find.ts',draft,saved);view.active=key('find.ts');
+ let selected:any;doc.editor.set_selected_range=(r:any)=>selected=r;doc.editor.focus=()=>{};
+ await findQuery(doc,'needle');
+ expect(doc.find.hits.map((hit:any)=>draft.slice(hit.start,hit.end))).toEqual(['Needle','needle','NEEDLE']);
+ expect(doc.find.index).toBe(0);
+ view.stepFind(doc,-1,cx);expect(doc.find.index).toBe(2);
+ view.stepFind(doc,1,cx);expect(doc.find.index).toBe(0);
+ view.closeFind(doc,cx);expect(doc.find).toBeNull();expect(draft.slice(selected.start,selected.end)).toBe('Needle');
+ expect(doc.text).toBe(draft);expect(doc.saved).toBe(saved);
+ await expect(readFile(view.draftPath(doc))).rejects.toThrow();
+});
+
+test('Markdown rendered Find sees emphasis, link labels, table cells and code, not link targets or markup',async()=>{
+ const md='# **Need**le\n\n[Needle](https://hidden.invalid)\n\n| A | B |\n|---|---|\n| a | needle |\n\n\`\`\`js\nNEEDLE\n\`\`\`';
+ const doc=add('find.md',md,md);doc.kind='markdown';doc.preview=true;view.active=key('find.md');
+ await findQuery(doc,'needle');
+ expect(doc.find.hits).toHaveLength(4);
+ expect(doc.find.rendered.text).not.toContain('https://');
+ expect(doc.find.rendered.text).toContain('Needle');
+ await findQuery(doc,'hidden.invalid');expect(doc.find.hits).toHaveLength(0);
+ view.mode(doc,false,cx);await settle();
+ expect(doc.find.hits).toHaveLength(1);expect(doc.text).toBe(md);expect(doc.saved).toBe(md);
+});
+
+test('buffer CSV Find includes unsaved long cells beyond visible row and column pages',async()=>{
+ const line=Array.from({length:21},(_,i)=>i===20?'x'.repeat(190)+'needle':'cell').join(',');
+ const doc=add('wide.csv',('plain\n').repeat(73)+line,'saved');doc.kind='csv';doc.preview=true;view.active=key('wide.csv');
+ await findQuery(doc,'needle');expect(doc.find.hits).toHaveLength(1);
+ expect([doc.page,doc.col]).toEqual([73,20]);
+ expect(doc.find.current.excerpt).toContain('needle');
+ built.length=0;view.render(cx);expect(built.some(el=>el.calls.some(([name,args]:any)=>name==='accessibility_label'&&String(args[0]).startsWith('Current match')))).toBe(true);
+ expect(doc.text.endsWith(line)).toBe(true);expect(doc.saved).toBe('saved');
+});
+
+test('Office Find navigates later sheet and row/column, labels partial, Word searches rendered table values',async()=>{
+ const doc=add('wide.xlsx');doc.kind='excel';doc.text=doc.saved=null;
+ const rows=Array.from({length:89},()=>[] as string[]);rows[88]=Array(82).fill('');rows[88][81]='needle';
+ doc.office={sheets:[{name:'first',rows:[['needle']]},{name:'second',rows,limited:true}],limited:false};
+ view.active=key('wide.xlsx');await findQuery(doc,'needle');expect(doc.find.hits).toHaveLength(2);expect(doc.find.limited).toBe(true);
+ view.stepFind(doc,1,cx);expect([doc.sheet,doc.page,doc.col]).toEqual([1,88,81]);
+ built.length=0;view.render(cx);expect(built.some(el=>el.calls.some(([n,a]:any)=>n==='accessibility_label'&&a[0]==='Current match · needle'))).toBe(true);
+ const word=add('table.docx');word.kind='docx';word.text=word.saved=null;word.office={markdown:'# Heading\n\n| A | B |\n| --- | --- |\n| **Needle** | two |',limited:true};
+ view.active=key('table.docx');await findQuery(word,'needle');expect(word.find.hits).toHaveLength(1);expect(word.find.limited).toBe(true);
+ expect(word.find.rendered.text).toContain('Needle');
+ expect(doc.find.hits).toHaveLength(2); // per-tab state
+});
+
+test('a large table Find uses the real helper and lands on its later wide cell',async()=>{
+ await enableReader();
+ const path=join(root,'late.csv'),line=Array(19).fill('x').join(',')+',needle\n';
+ await writeFile(path,'x'.repeat(100)+'\n'+('x'.repeat(100)+'\n').repeat(12000)+line);
+ view.open(path,null,cx);await settle();
+ const doc=view.docs.get(`:${path}`);expect(doc.source).toBeTruthy();
+ await findQuery(doc,'needle');expect(doc.find.hits).toHaveLength(1);
+ expect(doc.table.row).toBe(12001);expect(doc.table.col).toBe(19);expect(doc.table.rows[0][0]).toBe('needle');
+ expect(doc.text).toBeNull();expect(doc.saved).toBeNull();
+},30000);
+
+test('obsolete async Find and closed/reopened files cannot receive old highlights',async()=>{
+ const doc=add('large.txt');doc.text=doc.saved=null;doc.source={page:0,start:0,end:10,text:'old needle'};doc.sourceVersion='one';doc.sourceSize=100000;view.active=key('large.txt');
+ let start:()=>void=()=>{},release:(r:any)=>void=()=>{};
+ const began=new Promise<void>(r=>start=r), held=new Promise<any>(r=>release=r);
+ doc.reader={call:async(op:string,args:any)=>{if(op==='find-source'&&args.query==='needle'){start();return held;}return{hits:[{start:0,end:3,page:0}],done:true};}};
+ cx.timer.after=(_ms:number,fn:any)=>fn(cx);
+ view.openFind(doc,cx);
+ doc.find.input={value:()=>'needle',release(){},focus(){}};
+ view.refreshFind(doc,cx);await began;
+ const old=doc.find;
+ doc.find.input={value:()=>'new',release(){},focus(){}};view.refreshFind(doc,cx);
+ expect(doc.find.hits).toEqual([]);
+ release({hits:[{start:4,end:10,page:0}],done:true});await settle();
+ expect(doc.find.query).toBe('new');expect(doc.find.hits[0].start).toBe(0);
+ let beganAgain:()=>void=()=>{},releaseAgain:(r:any)=>void=()=>{};
+ const waiting=new Promise<void>(r=>beganAgain=r),late=new Promise<any>(r=>releaseAgain=r);
+ doc.reader={call:async()=>{beganAgain();return late;}};
+ doc.find.input={value:()=>'again',release(){},focus(){}};view.refreshFind(doc,cx);await waiting;
+ await view.closeFile(view.active,cx);add('large.txt','replacement','replacement');view.active=key('large.txt');
+ releaseAgain({hits:[{start:4,end:10,page:0}],done:true});await settle();
+ expect(old.closed).toBe(true);expect(view.docs.get(view.active).find).toBeUndefined();expect(old.hits).toEqual([]);
+});
+
+test('native PDF Find navigates the matched page and hides obsolete-version boxes',async()=>{
+ const doc=add('report.pdf');doc.kind='pdf';doc.text=doc.saved=null;
+ let loaded=0;
+ doc.pdf={page:1,pages:2,result:{version:'v',page:1,image:'/tmp/page.png',width:1546,height:2000},size:{width:500,height:500},fit:true,
+   call:async()=>({hits:[{page:2,boxes:[[.1,.2,.3,.25]]}],hasText:true,done:true}),load(){loaded++}};
+ view.active=key('report.pdf');await findQuery(doc,'needle');
+ expect(doc.pdf.page).toBe(2);expect(loaded).toBe(1);
+ doc.pdf.result.page=2;built.length=0;view.render(cx);
+ expect(built.some(el=>el.calls.some(([n,a]:any)=>n==='bg'&&a[0]==='#f59e0b66'))).toBe(true);
+ doc.pdf.result.version='changed';built.length=0;view.render(cx);
+ expect(built.some(el=>el.calls.some(([n,a]:any)=>n==='bg'&&a[0]==='#f59e0b66'))).toBe(false);
+});
+
+test('paged source Find loads its actual page and closes without a draft or save',async()=>{
+ await enableReader();
+ const path=join(root,'paged.txt'),content='a'.repeat(400000)+'🦀Needle\n';
+ await writeFile(path,content);view.open(path,null,cx);await settle();
+ const doc=view.docs.get(`:${path}`);expect(doc.source.page).toBe(0);
+ await findQuery(doc,'needle');
+ expect(doc.find.hits).toHaveLength(1);expect(doc.source.page).toBe(Math.floor(400004/32768));
+ expect(doc.source.text.endsWith('🦀Needle\n')).toBe(true);
+ expect(doc.text).toBeNull();expect(doc.saved).toBeNull();
+ view.closeFind(doc,cx);
+ expect(await readFile(path,'utf8')).toBe(content);
+ await expect(readFile(view.draftPath(doc))).rejects.toThrow();
+},30000);
+
+test('switching documents pauses a running Find, reselecting resumes only its query',async()=>{
+ const a=add('a.txt'),b=add('b.txt','second file');a.text=a.saved=null;a.source={page:0,start:0,end:6,text:'needle'};a.sourceVersion='v';a.sourceSize=6;
+ view.active=key('a.txt');
+ let started:()=>void=()=>{},release:(r:any)=>void=()=>{};const began=new Promise<void>(r=>started=r),first=new Promise<any>(r=>release=r);
+ let scans=0;a.reader={call:async()=>{scans++;if(scans===1){started();return first;}return{hits:[{start:0,end:6,page:0}],done:true};}};
+ cx.timer.after=(_ms:number,fn:any)=>fn(cx);view.openFind(a,cx);
+ a.find.input={value:()=>'needle',release(){},focus(){}};view.refreshFind(a,cx);await began;
+ view.selectFile(key('b.txt'),cx);release({hits:[{start:0,end:6,page:0}],done:true});await settle();
+ expect(a.find.paused).toBe(true);expect(a.find.hits).toEqual([]);expect(b.find).toBeUndefined();
+ view.selectFile(key('a.txt'),cx);await settle();expect(a.find.hits).toHaveLength(1);expect(scans).toBe(2);
+});

@@ -3065,7 +3065,7 @@ function FindButton({ chatKey }: { chatKey: string }) {
 function PlaceFind({ place }: { place: Place }) {
   const ui = useUI()
   const tab = ui.term && place.tabs?.find(t => t.term === ui.term)
-  const key = tab && ui.tabView[tab.term] === 'chat' ? tab.term : place.chat
+  const key = tab && ui.tabView?.[tab.term] === 'chat' ? tab.term : place.chat
   if (registry.chatBody.some(body => body.when(ui,key))) return null
   return <FindButton chatKey={key} />
 }

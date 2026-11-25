@@ -24,13 +24,13 @@ import { dayLabel } from './days.ts'
 import { FindBar, openFind } from './find.tsx'
 import { Fold } from './fold.tsx'
 import { Markdown } from './markdown.tsx'
-import { MermaidMessage } from './flowchart.tsx'
+import { MermaidMessage, FlowchartOverlay } from './flowchart.tsx'
 import { answeredBy, cancelReply, canReply, isArtifact, jumpTo, startReply } from './reply.ts'
 import { typing, working } from './typing.ts'
 import { suggestionOf, suggestionsOn } from './suggest.ts'
 import { JobsSheet, JobsTag, NeedsYou, openSubagent, TurnLine, useSubagent, WorkingLine } from './activity.tsx'
 import { ClockIcon, CpuChipIcon, ExclamationTriangleIcon } from '@heroicons/react/16/solid'
-import { AskedRow, Band, BriefRow, Chips, EndedRow, ErrorRow, NoteRow, Notice, HeadRow, ImagesLine, NewsRow, onTerminal, PilotRow, PublishingRow, questionsBelow, ReplyLine, Thumbs, WORDS } from './rows.tsx'
+import { AskedRow, Band, BriefRow, Chips, DiscardDialog, EndedRow, ErrorRow, NoteRow, Notice, HeadRow, ImagesLine, NewsRow, onTerminal, PilotRow, PublishingRow, questionsBelow, ReplyLine, Thumbs, WORDS } from './rows.tsx'
 import { AgentLine, openModelMenu, openRestart, RestartSheet } from '@client/restart.tsx'
 import { Sheet, SheetClose } from '@client/Stack.tsx'
 import { expandPicked, forMarkdown, mentionItems, MentionList, pickable, takeItem, useReach, withChips, type Item } from './mentions.tsx'
@@ -238,19 +238,30 @@ function Bubble({ msg, chat, from, out, last, pics, images, writing }: { msg: Me
 
 /** held until the agent is free (Ctrl+Enter, a long press on Send): not in the conversation yet */
 const isHeld = (m: Message) => !!m.waiting && m.waitsFor === 'turn' && !!m.cid
-const heldOut = (o: Outgoing) => o.state !== 'failed' && (o.hold || o.waitsFor === 'turn')
+const heldOut = (o: Outgoing) => o.state === 'sending' ? !!o.hold : o.state === 'sent' && !!o.waiting && o.waitsFor === 'turn'
 
 /** the window's held messages (mods/chat queued()): a row each over the box, a clock, its words, "Queued · Sends when
  *  the agent is free", Send now, Edit (back in the box), × (taken back) */
 function Held({ chatKey }: { chatKey: string }) {
   const msgs = useStore((s) => s.chats[chatKey]?.messages)
   const outbox = useStore((s) => s.outbox)
-  const rows = new Map<string, { cid: string; text: string; files: string[] }>()
-  for (const m of msgs ?? []) if (isHeld(m)) rows.set(m.cid!, { cid: m.cid!, text: m.text ?? '', files: m.file ? [m.file.name] : [] })
-  for (const o of outbox) if (o.chat === chatKey && heldOut(o) && !rows.has(o.cid)) rows.set(o.cid, { cid: o.cid, text: o.text, files: o.files.map((f) => f.name) })
+  const [taking, setTaking] = useState<string | null>(null)
+  const rows = new Map<string, { cid: string; text: string; files: string[]; held: boolean }>()
+  for (const m of msgs ?? []) if (isHeld(m)) rows.set(m.cid!, { cid: m.cid!, text: m.text ?? '', files: m.file ? [m.file.name] : [], held: true })
+  for (const o of outbox) if (o.chat === chatKey && heldOut(o) && !rows.has(o.cid)) rows.set(o.cid, { cid: o.cid, text: o.text, files: o.files.map((f) => f.name), held: o.state === 'sent' })
   if (!rows.size) return null
   const ghost = 'flex h-[22px] shrink-0 items-center rounded-[6px] px-2 text-[0.75rem] font-medium text-fg2 hover:bg-hover hover:text-fg phone:h-9'
-  const take = (cid: string, then?: () => void) => void act({ type: 'held-drop', cid } as never).then(() => { removeOut(cid); then?.() }, () => { removeOut(cid); then?.() })
+  const take = async (cid: string, then?: () => void) => {
+    if (taking) return
+    setTaking(cid)
+    try {
+      const r = await act({ type: 'held-drop', chat: chatKey, cid } as never)
+      if (!r?.withdrawn) throw new Error('Withdrawal was not confirmed. Check the conversation.')
+      removeOut(cid)
+      then?.()
+    } catch (e) { alert(reasonOf(e)) }
+    finally { setTaking(null) }
+  }
   return (
     <div className="flex flex-col gap-1">
       {[...rows.values()].map((r) => (
@@ -258,11 +269,11 @@ function Held({ chatKey }: { chatKey: string }) {
           <ClockIcon aria-hidden className="size-3.5 shrink-0 fill-[var(--fg3)]" />
           <span className="flex min-w-0 flex-1 flex-col">
             <span className="truncate text-[0.78125rem] text-fg">{r.text || r.files.join(', ')}</span>
-            <span className="truncate text-[0.75rem] text-fg3">{WORDS.queued}</span>
+            <span className="truncate text-[0.75rem] text-fg3">{!r.held ? 'Waiting for delivery confirmation…' : taking === r.cid ? 'Withdrawing…' : WORDS.queued}</span>
           </span>
-          <button type="button" className={ghost} onClick={() => void act({ type: 'held-now', cid: r.cid } as never).catch(() => undefined)}>{WORDS.sendNow}</button>
-          <button type="button" className={ghost} onClick={() => take(r.cid, () => { const now = (getDraft(chatKey) ?? '').trim(); setDraft(chatKey, now ? `${r.text}\n\n${now}` : r.text); setUI({ focus: chatKey }) })}>Edit</button>
-          <button type="button" aria-label="Remove" className="grid size-[22px] shrink-0 place-items-center rounded-[6px] text-fg3 hover:bg-hover hover:text-fg phone:size-9" onClick={() => take(r.cid)}><XIcon className="size-3" /></button>
+          <button type="button" className={ghost} disabled={!r.held || !!taking} onClick={() => void act({ type: 'held-now', chat: chatKey, cid: r.cid } as never).catch((e) => alert(reasonOf(e)))}>{WORDS.sendNow}</button>
+          <button type="button" className={ghost} disabled={!r.held || !!taking} onClick={() => void take(r.cid, () => { const now = (getDraft(chatKey) ?? '').trim(); setDraft(chatKey, now ? `${r.text}\n\n${now}` : r.text); setUI({ focus: chatKey }) })}>Edit</button>
+          <button type="button" aria-label="Withdraw unsent message" disabled={!r.held || !!taking} className="grid size-[22px] shrink-0 place-items-center rounded-[6px] text-fg3 hover:bg-hover hover:text-fg disabled:opacity-50 phone:size-9" onClick={() => void take(r.cid)}><XIcon className="size-3" /></button>
         </div>
       ))}
     </div>
@@ -1873,7 +1884,7 @@ async function deliver(cid: string) {
     if (standIns.length) patch(() => ({ files, up: undefined }))
     // a reload now would cut it off on its way
     const release = holdReload()
-    let r: { waiting?: boolean; waitsFor?: Outgoing['waitsFor']; at?: number }
+    let r: { waiting?: boolean; waitsFor?: Outgoing['waitsFor']; at?: number; withdrawn?: boolean }
     try {
       r = (await retrying(
         () => act({ type: 'send', chat: o.chat, text: o.text, attachments: files.map((f) => f.path), cid, reply: o.reply?.id, human: true, ...(o.hold ? { hold: true } : {}) } as never, AbortSignal.timeout(SEND_TIMEOUT)),
@@ -1883,6 +1894,8 @@ async function deliver(cid: string) {
     } finally {
       release()
     }
+    // A delayed retry may encounter a withdrawal made on another device.
+    if (r?.withdrawn) { removeOut(cid); void dropFiles(standIns); return }
     // the chat may already show it waiting (queued) or gone in: that knows better than the answer
     const serverAt = typeof r?.at === 'number' ? r.at : undefined
     patch((x) => ({ state: 'sent', error: undefined, offline: undefined, up: undefined, serverAt, ...(x.queued || x.wentAt ? {} : { waiting: r?.waiting || undefined, waitsFor: (r?.waiting && r.waitsFor) || undefined }) }))
@@ -3059,7 +3072,7 @@ export default definePlugin({
     reg.composerAbove.push({ order: 5, View: WorkingLine }, { order: 6, View: NeedsYou }, { order: 8, View: Held })
     reg.composerAbove.push({ order: 10, View: JobsTag })
     onTerminal(openTerminal)
-    reg.overlays.push(JobsSheet, SubagentSheet)
+    reg.overlays.push(JobsSheet, SubagentSheet, FlowchartOverlay)
     reg.messageParts.push({ order: 60, View: ({ msg, chat, from }) => (msg.question ? <QuestionCard q={msg.question} chat={chat} msg={msg.id} from={from} /> : null) })
     reg.messageParts.push({ order: 61, View: ({ msg, chat }) => (msg.secret ? <SecretCard ask={msg.secret} chat={chat} source={msg.secret.by ? { id: msg.secret.by.ref, title: msg.secret.by.title } : undefined} /> : null) })
     reg.composerPlus = PlusMenu
@@ -3080,6 +3093,7 @@ export default definePlugin({
     // 3.0 finds in a chat with Ctrl+F (its find bar), and restarts or switches an Assistant from its tab menu
     // (coordinators): no Search or Restart items here
     reg.overlays.push(RestartSheet)
+    reg.overlays.push(DiscardDialog)
     reg.composerAbove.push({ order: 20, View: Attachments }, { order: 30, View: PlusMenu })
     reg.overlays.push(Photo)
     addEventListener('pointerdown', keepBox, true)

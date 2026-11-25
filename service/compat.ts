@@ -521,6 +521,8 @@ export class Compat {
     const messages: Message[] = [];
     let at = 0;
     const items: any[] = reader.conv?.items ?? [];
+    const discard = reader.kind === "codex" && reader.historyMode === "paginated" && !reader.pinned && t?.state === "live"
+      ? CL.discardableTurn(reader.records, AGc.sessionOf("codex", reader.path)) : null;
     const machine = reader.machine ?? null;
     const term = (a: string) => (this as any).terminalsOf?.(a) ?? null;
     // an Assistant's chat: its space's tasks (as the window's newsLines(): Herdr's news in place, a start, ready or done
@@ -588,7 +590,7 @@ export class Compat {
         const mentions = chips.length ? { mentions: chips.map((r: any) => ({ task: machine ? `${machine}:${r.ref}` : r.ref, ref: r.ref ?? `#${r.id}`, title: r.title })) } : {};
         // what it replies to: the message it names, which a press on its line brings into view (the window's goTo)
         const to = x.replyTo ? items.slice(0, i).reverse().find((y: any) => (y.kind === "user" || y.kind === "agent") && y.text && names(y.text, String(x.replyTo).slice(0, 60))) : null;
-        if (x.text) messages.push({ id: x.id, who: "you", text: x.text, at: x.at, ...cid, ...(x.replyTo ? { reply: { text: x.replyTo, ...(to ? { id: to.id, who: to.kind === "user" ? "you" : "agent" } : {}) } } : {}), ...reactions, ...mentions } as Message);
+        if (x.text) messages.push({ id: x.id, who: "you", text: x.text, at: x.at, ...cid, ...(!first && discard && discard.id === x.id ? { discard: discard.token } : {}), ...(x.replyTo ? { reply: { text: x.replyTo, ...(to ? { id: to.id, who: to.kind === "user" ? "you" : "agent" } : {}) } } : {}), ...reactions, ...mentions } as Message);
         // the images sent with it, under its words as the window shows them; only files a chat names are ever served
         // (fileOf)
         for (const [n, path] of (x.paths ?? []).entries()) {
@@ -715,7 +717,8 @@ export class Compat {
     const note = addr ? watch?.notes?.get(addr)?.text : undefined;
     // instead of the conversation, the window's notice: still opening, not a chat agent, its log not found, ended
     const kind = kindOfTerm(t);
-    const notice = !reader.conv && (reader.state === "finding" || reader.state === "pending") ? "opening"
+    const notice = reader.state === "lineage" ? "history-unavailable"
+      : !reader.conv && (reader.state === "finding" || reader.state === "pending") ? "opening"
       : reader.state === "missing" && reader.pinned ? "gone"
       : reader.state === "none" || reader.state === "missing" ? ((t && t.state !== "live") || !t ? "ended" : kind ? "none" : "unsupported")
       : !reader.pinned && (!t || t.state !== "live") && !items.length ? "ended" : null;

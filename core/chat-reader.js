@@ -31,6 +31,7 @@ export class ChatReader {
     this.end = 0;
     this.records = [];
     this.conv = null;
+    this.historyMode = null;
     this.bg = new BgJobs(); // what it left running in the background
     this.state = "finding"; // finding | pending (no log yet) | ready | none (not a chat agent) | missing
   }
@@ -53,10 +54,15 @@ export class ChatReader {
     const kind = kindOf(t);
     const pid = t?.foreground?.pid;
     if (!kind || !pid) { const was = this.state; if (was !== "none") { this.reset(); this.state = "none"; } return was !== "none"; }
-    if (this.path && this.kind === kind && this.pid === pid) return false;
+    const same = this.path && this.kind === kind && this.pid === pid;
+    // Rewind, /clear and /resume can change the rollout *without* replacing
+    // the CLI process. Re-resolve the live writer, as the native chat does.
+    if (same && Date.now() - (this.locatedAt ?? 0) < 4000) return false;
     const f = await this.io.sh(FIND, ["chat", kind, String(pid)], this.machine);
+    this.locatedAt = Date.now();
     const path = String(f.stdout ?? "").trim().split("\n").pop() ?? "";
     if (path === "pending" || !path) {
+      if (same) return false; // a writer can briefly close during a native rewind
       const was = this.state;
       this.reset();
       this.kind = kind;
@@ -70,6 +76,7 @@ export class ChatReader {
     this.path = path;
     this.kind = kind;
     this.pid = pid;
+    this.locatedAt = Date.now();
     return true;
   }
 
@@ -110,18 +117,30 @@ export class ChatReader {
     if (this.start === null) {
       const r = await this.log(["page", path, "999999999999999", String(PAGE)]);
       if (path !== this.path) return false;
+      if (String(r.stdout).startsWith("lineage")) {
+        if (this.state === "lineage") return false;
+        this.conv = null; this.records = []; this.start = null; this.end = 0; this.state = "lineage";
+        return true;
+      }
+      if (r.code) return false;
       if (String(r.stdout).startsWith("missing")) { this.path = null; this.state = "missing"; return true; }
       const { head, records: recs } = records(r.stdout);
       if (head[0] !== "P") return false;
       this.start = Number(head[1]);
       this.end = Number(head[2]);
       this.records = recs;
+      this.historyMode = head[3] ?? null;
       this.rebuild();
       this.state = "ready";
       return true;
     }
     const r = await this.log(["tail", path, String(this.end)]);
     if (path !== this.path) return false;
+    if (String(r.stdout).startsWith("lineage")) {
+      this.conv = null; this.records = []; this.start = null; this.end = 0; this.state = "lineage";
+      return true;
+    }
+    if (r.code) return false;
     if (String(r.stdout).startsWith("missing")) { this.path = null; this.state = "missing"; return true; }
     const { head, records: recs } = records(r.stdout);
     if (head[0] !== "T") return false;
@@ -147,6 +166,7 @@ export class ChatReader {
     if (!want.length || !this.path) return out;
     const offs = [...new Set(want.map((s) => s.out))].slice(0, 40);
     const r = await this.log(["results", this.path, ...offs.map(String)]);
+    if (r.code) return out;
     for (const part of String(r.stdout ?? "").split("\x1e").slice(1)) {
       const nl = part.indexOf("\n");
       const off = Number(part.slice(0, nl));
@@ -161,6 +181,7 @@ export class ChatReader {
     if (!this.start || !this.path) return false;
     const path = this.path, before = this.start;
     const r = await this.log(["page", path, String(before), String(PAGE)]);
+    if (r.code) return false;
     const { head, records: recs } = records(r.stdout);
     if (path !== this.path || this.start !== before || head[0] !== "P") return false;
     this.start = Number(head[1]);

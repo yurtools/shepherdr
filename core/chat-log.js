@@ -13,6 +13,146 @@ import { codexQuestions } from "./asks.js";
 
 export { FIND, CODEX_LOG_PICKER } from './session-find.js';
 
+// Paginated Codex reverts and forks create a new physical rollout which references
+// an exclusive prefix of an earlier physical file. Map logical offsets to the
+// retained byte ranges without rewriting, copying, or reading a discarded tail.
+// The filename's final UUID is the physical generation ID, not necessarily
+// the logical conversation ID. Unknown/missing lineage fails closed.
+const CODEX_LINEAGE = String.raw`
+import json, os, re, sys, subprocess
+from pathlib import Path
+
+UUID = re.compile(r"[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}")
+
+def meta(path):
+    with path.open("rb") as f:
+        line = f.readline(8 * 1024 * 1024)
+    record = json.loads(line)
+    if record.get("type") != "session_meta":
+        raise ValueError("no session metadata")
+    return record
+
+def parent(root, ident):
+    if not isinstance(ident, str) or not UUID.fullmatch(ident):
+        raise ValueError("invalid parent id")
+    paths = []
+    for kind in ("sessions", "archived_sessions"):
+        for p in (root / kind).glob("**/rollout-*" + ident + ".jsonl"):
+            if p.is_file() and os.path.commonpath([p.resolve(), root]) == str(root):
+                paths.append(p.resolve())
+    paths = list(dict.fromkeys(paths))
+    if len(paths) != 1:
+        raise ValueError("missing or ambiguous parent rollout")
+    return paths[0]
+
+def check_cut(path, offset, ordinal):
+    if type(offset) != int or type(ordinal) != int or offset < 0 or ordinal < 0:
+        raise ValueError("invalid cutoff")
+    with path.open("rb") as f:
+        size = f.seek(0, 2)
+        if offset > size:
+            raise ValueError("cutoff beyond parent")
+        if offset:
+            f.seek(offset - 1)
+            if f.read(1) != b"\n":
+                raise ValueError("cutoff not at a line boundary")
+        if offset < size:
+            f.seek(offset)
+            # Paginated lines place ordinal near the start; don't decode
+            # arbitrary large images or tool outputs merely to find a cutoff.
+            expected = re.search(rb'"ordinal"\s*:\s*(\d+)', f.read(512))
+            if not expected or int(expected[1]) != ordinal:
+                raise ValueError("cutoff ordinal mismatch")
+        else:
+            # EOF is a valid cutoff when forking at the end.
+            start = max(0, offset - 8 * 1024 * 1024)
+            f.seek(start)
+            data = f.read(offset - start).rstrip(b"\n")
+            pos = data.rfind(b"\n")
+            if pos < 0 and start:
+                raise ValueError("unverifiable end cutoff")
+            expected = re.search(rb'"ordinal"\s*:\s*(\d+)', data[pos + 1:pos + 513])
+            if not expected or int(expected[1]) + 1 != ordinal:
+                raise ValueError("end cutoff ordinal mismatch")
+
+def plan(path):
+    path = Path(path).resolve()
+    roots = [p.parent for p in path.parents if p.name in ("sessions", "archived_sessions")]
+    if not roots:
+        raise ValueError("not an account session directory")
+    root = roots[0]
+    segments, seen = [], set()
+    length = path.stat().st_size
+    for _ in range(128):
+        if path in seen:
+            raise ValueError("cyclic history")
+        seen.add(path)
+        record = meta(path)
+        payload = record["payload"]
+        if payload.get("history_mode") != "paginated":
+            raise ValueError("unsupported history mode")
+        segments.append([str(path), length])
+        base = payload.get("history_base")
+        if not base:
+            return list(reversed(segments))
+        path = parent(root, base["thread_id"])
+        length = base["end_byte_offset"]
+        ordinal = base["end_ordinal_exclusive"]
+        if record.get("ordinal") != ordinal:
+            raise ValueError("child ordinal mismatch")
+        check_cut(path, length, ordinal)
+    raise ValueError("history chain too deep")
+
+def chunks(segments, lo, hi):
+    for path, n in segments:
+        if lo < n and hi > 0:
+            start, end = max(0, lo), min(hi, n)
+            with open(path, "rb") as f:
+                f.seek(start)
+                remaining = end - start
+                while remaining:
+                    data = f.read(min(remaining, 1024 * 1024))
+                    if not data:
+                        raise ValueError("rollout shortened during read")
+                    yield data
+                    remaining -= len(data)
+        lo -= n
+        hi -= n
+        if hi <= 0:
+            break
+
+try:
+    mode = sys.argv[1]
+    if mode == "plan":
+        segments = plan(sys.argv[2])
+        print(str(sum(n for _, n in segments)) + ":" + json.dumps(segments))
+    else:
+        segments = json.loads(sys.argv[2])
+        lo, hi = map(int, sys.argv[3:5])
+        if mode == "awk":
+            p = subprocess.Popen(sys.argv[5:], stdin=subprocess.PIPE)
+            try:
+                for data in chunks(segments, lo, hi):
+                    p.stdin.write(data)
+            finally:
+                p.stdin.close()
+                code = p.wait()
+            if code:
+                sys.exit(code)
+        elif mode == "line":
+            for data in chunks(segments, lo, hi):
+                line, sep, _ = data.partition(b"\n")
+                sys.stdout.buffer.write(line + sep)
+                if sep:
+                    break
+        else:
+            for data in chunks(segments, lo, hi):
+                sys.stdout.buffer.write(data)
+except (OSError, ValueError, KeyError, TypeError) as e:
+    print("Cannot read Codex history lineage: " + str(e), file=sys.stderr)
+    sys.exit(1)
+`;
+
 // Reads a log on the agent's machine, sending back only what the chat shows. Each kept line
 // comes back as "<offset>\t<kind>\t<data>": J a JSON line (images emptied), R a tool result's
 // ids only (outputs stay in the file, fetched when a row is opened; "TASK=<id>" when the call
@@ -28,6 +168,23 @@ export const LOG = String.raw`
 mode="$1"; f="$2"
 [ -f "$f" ] || { echo "missing"; exit 0; }
 s=$(wc -c < "$f" | tr -d ' ')
+layout=""
+if head -n 1 "$f" | grep -q '"history_base"[[:space:]]*:[[:space:]]*{'; then
+  lineage_code=$(cat <<'SHEP_LINEAGE'
+${CODEX_LINEAGE}
+SHEP_LINEAGE
+)
+  spec=$(python3 -c "$lineage_code" plan "$f") || { echo "lineage"; exit 1; }
+  s=$(printf '%s' "$spec" | cut -d : -f1)
+  layout=$(printf '%s' "$spec" | cut -d : -f2-)
+fi
+bytes() {
+  if [ -n "$layout" ]; then
+    python3 -c "$lineage_code" raw "$layout" "$1" "$2"
+  else
+    tail -c +$(($1 + 1)) "$f" | head -c $(($2 - $1))
+  fi
+}
 X='
 BEGIN { pos = base; first = base; msgs = 0 }
 {
@@ -79,7 +236,7 @@ BEGIN { pos = base; first = base; msgs = 0 }
   } else if (index(head, "\"type\":\"response_item\"")) {
     if (index(head, "\"type\":\"message\"") || index(head, "_call\"")) keep = 1
   } else if (index(head, "\"type\":\"event_msg\"")) {
-    if (index(head, "\"task_complete\"") || index(head, "\"turn_aborted\"") || index(head, "\"token_count\"") || index(head, "\"thread_settings_applied\"")) keep = 1
+    if (index(head, "\"task_started\"") || index(head, "\"task_complete\"") || index(head, "\"turn_aborted\"") || index(head, "\"token_count\"") || index(head, "\"thread_settings_applied\"")) keep = 1
   } else if (index(head, "\"type\":\"turn_context\"")) {
     keep = 1
   }
@@ -101,42 +258,67 @@ BEGIN { pos = base; first = base; msgs = 0 }
   print off "\tJ\t" line
 }
 END { if (first > pos) first = pos; print "#\t" first "\t" msgs }'
-range() { tail -c +$(($1 + 1)) "$f" | head -c $(($2 - $1)) | LC_ALL=C awk -v base="$1" -v skip="$3" -v count="$4" "$X"; }
+range() {
+  if [ -n "$layout" ]; then
+    LC_ALL=C python3 -c "$lineage_code" awk "$layout" "$1" "$2" awk -v base="$1" -v skip="$3" -v count="$4" "$X"
+  else
+    bytes "$1" "$2" | LC_ALL=C awk -v base="$1" -v skip="$3" -v count="$4" "$X"
+  fi
+}
 case "$mode" in
 tail)
   o="$3"; [ "$s" -lt "$o" ] && o=0
   part=0
-  if [ "$s" -gt "$o" ] && [ "$(tail -c +"$s" "$f" | head -c 1 | wc -l | tr -d ' ')" = 0 ]; then
-    part=$(tail -c +$((o + 1)) "$f" | head -c $((s - o)) | LC_ALL=C awk 'END { print length($0) }')
+  if [ "$s" -gt "$o" ] && [ "$(bytes $((s - 1)) "$s" | wc -l | tr -d ' ')" = 0 ]; then
+    part=$(bytes "$o" "$s" | LC_ALL=C awk 'END { print length($0) }')
   fi
   e=$((s - part))
   echo "T $s $o $e"
-  [ "$e" -gt "$o" ] && range "$o" "$e" 0 0
+  if [ "$e" -gt "$o" ]; then range "$o" "$e" 0 0 || exit 1; fi
   ;;
 page)
   e="$3"; want="$4"
+  # Provider storage mode is metadata, not inferred from message text or the
+  # filename. The current native revert operates only on paginated history.
+  history=$(head -n 1 "$f" | python3 -c '
+import json, sys
+try:
+    record = json.load(sys.stdin)
+    mode = record.get("payload", {}).get("history_mode") if record.get("type") == "session_meta" else None
+    print(mode if mode in ("paginated", "legacy") else "unknown")
+except (ValueError, TypeError, AttributeError):
+    print("unknown")
+' 2>/dev/null) || history=unknown
   if [ "$e" -ge "$s" ]; then
     e="$s"
-    if [ "$s" -gt 0 ] && [ "$(tail -c +"$s" "$f" | head -c 1 | wc -l | tr -d ' ')" = 0 ]; then
-      e=$((s - $(tail -c 1048576 "$f" | LC_ALL=C awk 'END { print length($0) }')))
+    if [ "$s" -gt 0 ] && [ "$(bytes $((s - 1)) "$s" | wc -l | tr -d ' ')" = 0 ]; then
+      lo=$((s - 1048576)); [ "$lo" -lt 0 ] && lo=0
+      e=$((s - $(bytes "$lo" "$s" | LC_ALL=C awk 'END { print length($0) }')))
     fi
   fi
   a="$e"; b="$e"; n=0; c=1000000
   while [ "$a" -gt 0 ] && [ "$n" -lt "$want" ]; do
     lo=$((b - c)); [ "$lo" -lt 0 ] && lo=0
     k=0; [ "$lo" -gt 0 ] && k=1
-    r=$(range "$lo" "$b" "$k" 1 | tail -n 1)
+    r=$(range "$lo" "$b" "$k" 1) || exit 1
+    r=$(printf '%s\n' "$r" | tail -n 1)
     first=$(echo "$r" | cut -f2); m=$(echo "$r" | cut -f3)
     if [ "$first" -ge "$b" ] && [ "$lo" -gt 0 ]; then c=$((c * 2)); continue; fi
     n=$((n + m)); a="$first"; b="$first"
     [ "$c" -lt 16000000 ] && c=$((c * 2))
   done
-  echo "P $a $e"
-  [ "$e" -gt "$a" ] && range "$a" "$e" 0 0
+  echo "P $a $e $history"
+  if [ "$e" -gt "$a" ]; then range "$a" "$e" 0 0 || exit 1; fi
   ;;
 results)
   shift 2
-  for o in "$@"; do printf '\036%s\n' "$o"; tail -c +$((o + 1)) "$f" | head -c 65536 | head -n 1; done
+  for o in "$@"; do
+    printf '\036%s\n' "$o"; end=$((o + 65536)); [ "$end" -gt "$s" ] && end="$s"
+    if [ "$o" -lt "$end" ]; then
+      if [ -n "$layout" ]; then python3 -c "$lineage_code" line "$layout" "$o" "$end" || exit 1
+      else bytes "$o" "$end" | head -n 1; fi
+    fi
+  done
   ;;
 esac
 true`;
@@ -1035,6 +1217,42 @@ export function records(stdout) {
     out.push({ off: Number(line.slice(0, a)), kind: line.slice(a + 1, b), data: line.slice(b + 1) });
   }
   return { head: head.trim().split(" "), records: out };
+}
+
+// A current Codex turn's exact, sole user prompt. An offset alone is not
+// identity: after a rewind a different record can occupy the same position.
+// Older logs without native turn/item provenance, a paged-away turn start,
+// multiple prompts steered into one turn, and non-person messages are not
+// candidates. The provider still presents the final rewind selection.
+export function discardableTurn(recs, session) {
+  if (!session) return null;
+  let turn = null, closed = false, prompts = [], uncertain = false;
+  for (const r of recs ?? []) {
+    // A record too large for the display reader could contain another user
+    // input. Don't infer sole-prompt identity from an incomplete turn.
+    if (r.kind === "T") { if (turn) uncertain = true; continue; }
+    if (r.kind !== "J") continue;
+    const l = parse(r.data), p = l?.payload;
+    if (!l && turn) { uncertain = true; continue; }
+    if (l?.type === "event_msg" && p?.type === "task_started") {
+      turn = p.turn_id; closed = false; prompts = []; uncertain = false;
+    } else if (turn && l?.type === "event_msg" && ["task_complete", "turn_aborted"].includes(p?.type) && p.turn_id === turn) {
+      closed = true;
+    } else if (turn && l?.type === "response_item" && p?.type === "message" && p.role === "user") {
+      const info = p.internal_chat_message_metadata_passthrough;
+      if (info?.turn_id !== turn || !Array.isArray(info.content_item_kinds) || info.content_item_kinds.length !== p.content?.length) {
+        uncertain = true; continue;
+      }
+      if (!info.content_item_kinds.some(k => String(k).startsWith("user."))) continue;
+      const text = p.content.filter((c, i) => c.type === "input_text" && info.content_item_kinds[i] === "user.text").map(c => c.text).join("\n\n");
+      const u = cleanUser(text);
+      prompts.push({ id: `u${r.off}`, providerId: p.id, user: u });
+    }
+  }
+  if (!turn || uncertain || prompts.length !== 1) return null;
+  const { id, providerId, user } = prompts[0];
+  if (!providerId || !user?.text || user.from || user.pilot || user.news?.length || user.text.startsWith("/")) return null;
+  return { id, token: `${session}:${turn}:${providerId}`, closed };
 }
 
 // A tool's output from the line LOG's `results` sent back for it (possibly cut at 64 KB):

@@ -27,6 +27,11 @@ messages. **Show source / Show preview** switches views; **Copy** keeps the
 original Mermaid text. See [inline flowcharts](chat-flowcharts.md) for supported
 syntax, web/mobile behavior and fallback limits.
 
+For a mistaken prompt sent to the wrong agent, use the guided **Discard mistaken
+turn…** action on supported Codex history, or withdraw an unsent held message.
+See [discarding a mistaken turn](chat-context.md) for the exact context boundary,
+provider support and what is not undone.
+
 | Action | Control |
 | --- | --- |
 | Use the same agent as chat or a terminal | **Chat / Terminal** in its pane header |

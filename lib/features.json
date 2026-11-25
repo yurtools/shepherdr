@@ -702,6 +702,20 @@
       ]
     },
     {
+      "id": "chat-flowcharts",
+      "addon": "chat",
+      "title": "Chat flowchart viewer",
+      "core": ["chat-flowchart", "chat-flowchart-geometry"],
+      "herdr": { "mods": ["chat", "chat-flowchart"] },
+      "web": { "files": ["plugins/chat/flowchart.tsx"] },
+      "forms": {
+        "herdr": "Fitted overview; expand, pan and zoom in a dialog",
+        "desktop": "Fitted overview; expand, scroll and zoom",
+        "tablet": "Fitted overview; expand, swipe and zoom",
+        "phone": "Fitted overview; expand, swipe and zoom"
+      }
+    },
+    {
       "id": "attachments",
       "addon": "chat",
       "title": "Attachments and images",

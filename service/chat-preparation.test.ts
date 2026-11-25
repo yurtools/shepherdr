@@ -111,8 +111,8 @@ test('unchanged and hover render reuse all prepared rows, keys, estimates and in
 test('native history prepares user and assistant diagrams independently, retaining exact source and ordinary code',()=>{
   const at=1772946000000;
   const fence=(s:string,closed=true)=>'```mermaid\n'+s+(closed?'\n```':'');
-  const first='flowchart TD\n  A([Start]) --> B{Ready?}\n  B -->|Yes| C[Done]  ';
-  const second='graph LR; A --> B --> C';
+  const first='flowchart TD\n  A([Start]) --> B{Ready?}\n  B -->|Yes| C[Done]\n  C --> '+Array.from({length:12},(_,i)=>`V${i}[Step ${i}]`).join(' --> ')+'  ';
+  const second='graph LR; '+Array.from({length:13},(_,i)=>`H${i}[Step ${i}]`).join(' --> ');
   const incomplete='graph TD\nX --> Y';
   const items=[
     {kind:'agent',id:'agent',at,text:'Two diagrams:\n'+fence(first)+'\n'+fence(second)+'\n```js\nconst x = 42;\n```'},
@@ -138,6 +138,8 @@ test('native history prepares user and assistant diagrams independently, retaini
   const resized=h.v.rows().find((r:any)=>r.id===user.id);
   expect(resized.kind).toBe('diagram');
   expect(resized.drawing).toBe(user.drawing);
+  expect(h.v.guess(resized)).toBeLessThan(h.v.guess(user)+100);
+  expect(flow.fitFlowchart(resized.drawing,214).width).toBeLessThanOrEqual(214);
   const earlier=h.v.rows().find((r:any)=>r.blk==='stream'&&r.kind==='code');
   h.v.conv={items:items.map(x=>x.id==='stream'?{...x,text:fence(incomplete)}:x)};h.request();h.drain();
   const completed=h.v.rows().find((r:any)=>r.id===earlier.id);

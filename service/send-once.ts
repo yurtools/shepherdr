@@ -21,12 +21,12 @@ function load(): Map<string, Done> {
   return done;
 }
 
-function save() {
+function save(strict = false) {
   try {
     const tmp = `${FILE()}.tmp`;
     writeFileSync(tmp, JSON.stringify(Object.fromEntries([...load()].filter(([, v]) => !(v.result as { waiting?: boolean })?.waiting))), { mode: 0o600 });
     renameSync(tmp, FILE());
-  } catch {}
+  } catch (e) { if (strict) throw e; }
 }
 
 /** sends on their way now, by the page's id */
@@ -73,6 +73,25 @@ export function noteFailed(addr: string, cid: string, error: string, stayed = fa
 }
 export function failedOf(addr: string | null | undefined): { cid: string; error: string }[] {
   return (heldFailed.get(addr ?? "") ?? []).filter((f) => Date.now() - f.at < KEEP).map(({ cid, error }) => ({ cid, error }));
+}
+
+/** A genuinely unsent held message was taken back. Keep its id spent so a
+ * delayed HTTP retry (even after restart) cannot deliver the withdrawn text.
+ * Record this before removing it from the queue, or do not claim withdrawal. */
+export function noteWithdrawn(addr: string, cid: string) {
+  const d = load(), was = d.get(cid);
+  d.set(cid, { at: Date.now(), result: { ok: true, withdrawn: true, addr } });
+  try { save(true); }
+  catch (e) {
+    if (was) d.set(cid, was); else d.delete(cid);
+    throw e;
+  }
+}
+
+export function wasWithdrawn(addr: string, cid: string) {
+  const entry = load().get(cid);
+  const r = entry?.result as { withdrawn?: boolean; addr?: string } | undefined;
+  return !!entry && Date.now() - entry.at < KEEP && r?.withdrawn === true && r.addr === addr;
 }
 
 /** tests: a restart (what is on disk is read again) */

@@ -71,3 +71,18 @@ test('a manual click losing to native handoff reports the handoff, never an inve
  await v.replyPermission({id:'one',req:{tool_name:'Bash'}},'allow','Allowed in the chat',{notify(){}});
  expect(outcomes).toEqual(['Sent to Codex Auto-review · final result not reported']);
 });
+
+test('own and worker permission replies notify with the spawned context, not the expired click context',async()=>{
+ const C=new Function('howAnswered',`return class {${method('reply')} ${method('replyWorker')}}`)(()=> 'Denied');
+ for(const worker of [false,true]){
+  let valid=true,notifications=0;const jobs:Promise<unknown>[]=[];
+  const ask={id:'request',words:{kind:'permission'},req:{tool_name:'Bash'}};
+  const inner={notify(){notifications++}};
+  const click={notify(){if(!valid)throw Error('expired click context')},spawn(fn:(cx:typeof inner)=>unknown){jobs.push(Promise.resolve().then(()=>fn(inner)))}};
+  const v:any=new C();Object.assign(v,{asks:[ask],answeredAsks:new Set(),replyPermission:async(_ask:any,_text:any,_how:any,cx:any,isWorker=false)=>{
+   await Promise.resolve();expect(isWorker).toBe(worker);cx.notify();
+  }});
+  if(worker)v.replyWorker(ask,'deny',click);else v.reply(ask,'deny',click);
+  valid=false;await Promise.all(jobs);expect(notifications).toBe(1);
+ }
+});

@@ -67,6 +67,7 @@ const {default:Chat}=await import('../../mods/chat/main.js');
 const F=await import('../../mods/tabs-tasks/features.js');
 const {default:NewMenu}=await import('../../mods/new-menu-tasks/main.js');
 const B=await import('../../mods/pane-chat/companions.js');
+const {default:Pane}=await import('../../mods/pane-chat/main.js');
 const {openTaskThread}=await import('../../mods/chat/panel.js');
 const spec=()=>({slot:'slot',space:ss[0],folder:'/project',role:'coordinator',template:'assistant',settings:cfg.everywhere.coordinator});
 const launches=()=>calls.filter(c=>c[0]==='hc'&&c[1][0]==='run');
@@ -234,6 +235,29 @@ test('a stale Chat adopts the exact recovered owner and follows its log, not the
  const chat:any=Object.create(Chat.prototype);Object.assign(chat,{role:'feature',feature:record.id,featureRecord:record,slot:'feature-feature-one',addr:'old',phase:'unsupported',reset(){},flag:async()=>{},follow:async()=>{calls.push(['follow',chat.addr]);},watchAsks:async()=>{}});
  expect(chat.slotAgent()).toBe('restored');chat.rebindFeature({record,address:'restored',pane:'old-chat'},cx);await Promise.all(work);
  expect(chat.addr).toBe('restored');expect(chat.phase).toBe('finding');expect(calls).toContainEqual(['follow','restored']);
+});
+
+test('switching a running Feature with a stale saved pane keeps the same owner and saves both views',async()=>{
+ const record={id:'feature-one',space:'space',folder:'/project',name:'One',kind:'codex',session:'saved-session',home:'/account-two',terminal:'owner'};
+ const owner={address:'owner',state:'live',status:{app:'codex',state:'done'},foreground:{name:'codex',pid:52},labels:{'herdr.role':'feature','herdr.feature':record.id,'herdr.coordinator.space':'space','herdr.chat.slot':'feature-feature-one'}};
+ const worker={address:'worker',state:'live',labels:{'herdr.role':'worker','herdr.feature':record.id,'herdr.task':'TASK-1','herdr.task.space':'space'}};
+ core.set('owner',owner);core.set('worker',worker);ts=[owner,worker];
+ const terminal={pane:'actual-pane',tab:'actual-tab',terminal:'owner',app:'codex'};
+ ss[0].tabs=[{id:'actual-tab',name:'One',named:true}];ps=[terminal];
+ state.set('workspace.features',[record]);state.set('coordinator.slots',{'feature-feature-one':{feature:record.id,space:'space',pane:'stale-pane',tab:'stale-tab'}});
+ const header:any=Object.create(Pane.prototype);const work:Promise<any>[]=[],cx:any={notify(){},spawn:(fn:any)=>{const job=Promise.resolve(fn(cx));work.push(job);return job;}};
+ header.toChat(terminal,cx);await Promise.all(work);
+ const split=calls.find(c=>c[0]==='pane.split')?.[1];expect(split).toMatchObject({pane:'actual-pane',mod:'chat'});
+ expect(JSON.parse(split.props)).toMatchObject({terminal:'owner',feature:record.id,featureRecord:{session:record.session,home:record.home}});
+ expect(core.get('owner').labels['herdr.chat']).toBe('extra-pane');expect(core.get('worker').labels['herdr.chat']).toBeUndefined();
+ expect(state.get('coordinator.slots')['feature-feature-one']).toMatchObject({tab:'actual-tab',pane:'extra-pane'});
+ expect(calls.filter(c=>c[0]==='workspace'&&c[1][1]==='feature-update').map(c=>JSON.parse(c[1][2]))).toEqual([{id:record.id,pane:'extra-pane',tab:'actual-tab',view:'chat'}]);
+ expect(calls).toContainEqual(['terminal.park',{terminal:'owner'}]);
+ ps=[{pane:'extra-pane',tab:'actual-tab',mod:'chat'}];header.toTerminal('extra-pane',cx);await Promise.all(work);
+ expect(calls).toContainEqual(['terminal.keep',{terminal:'owner',place:'right'}]);
+ expect(core.get('owner').labels['herdr.chat']).toBe('');expect(launches()).toEqual([]);
+ expect(state.get('coordinator.slots')['feature-feature-one']).toMatchObject({tab:'actual-tab',pane:'role-pane'});
+ expect(calls.filter(c=>c[0]==='workspace'&&c[1][1]==='feature-update').map(c=>JSON.parse(c[1][2])).at(-1)).toEqual({id:record.id,pane:'role-pane',tab:'actual-tab',view:'terminal'});
 });
 
 test('simultaneous hidden openings in different spaces restore the original focus',async()=>{

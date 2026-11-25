@@ -37,7 +37,16 @@ def main(a):
   out=A.evaluate(a.request,a.terminal,audit_decision=not a.respond) if a.command=='evaluate' else {'action':'answer'}
   if a.command=='answer' or a.respond and out['action'] in ('allow','deny','native'):
    if A.read(a.request)!=req or a.command=='answer' and A.status_key(req)!=a.hash:raise ValueError('This request changed or closed.')
-   ctx=A.request_context(a.request,a.terminal or Path(a.request).stem.split('.')[0])[1] if A.is_permission(req) else None
+   ctx=None
+   if A.is_permission(req):
+    terminal=a.terminal or Path(a.request).stem.split('.')[0]
+    try:ctx=A.request_context(a.request,terminal)[1]
+    except A.RequestContextUnavailable:
+     if a.command!='answer':raise
+     # An explicit human answer is still request-bound. Record it without
+     # guessing an account or creating reusable rule context.
+     ctx={'terminal':terminal}
+   if A.read(a.request)!=req:raise ValueError('This request changed or closed.')
    answer=Path(a.request).parent.parent/'ans'/Path(a.request).name
    value=a.answer if a.command=='answer' else '' if out['action']=='native' else out['response']
    A.answer_once(answer,value)
@@ -124,6 +133,6 @@ if __name__=='__main__':
   if a.command in ('evaluate','review'):
    req=A.read(a.request)
    if isinstance(req,dict) and A.is_permission(req):
-    try:A.status(a.request,req,'person','policy-error')
+    try:A.status(a.request,req,'person','context-unavailable' if isinstance(e,A.RequestContextUnavailable) else 'policy-error')
     except OSError:pass
   print(json.dumps({'error':str(e)}));sys.exit(1)

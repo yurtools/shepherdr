@@ -310,13 +310,15 @@ storage fails, the file stays open with an error. Let an in-progress Save finish
 before closing its tab. The command `workspace-document.close-file` closes the
 active file.
 
-- Markdown: **Source / Preview** switches between the editor and rendered content.
+- Markdown: **Source / Preview** switches between source and bounded rendered content.
+  Larger files offer paged read-only source instead of refusing to open.
 - PDF: read-only visual pages with previous/next, zoom, Fit, Reload and Open
   original. Local native rendering needs Python and Poppler on Linux/macOS;
   remote files and Windows show a fallback. PDFs never enter the text editor or
   Save path. See [PDF preview](pdf-preview.md) for limits and proof boundaries.
 - CSV / TSV: **Source / Preview** switches between raw text and a table. Choose
-  Auto, Comma, Tab or Semicolon for the delimiter. Arrow controls move through rows.
+  Auto, Comma, Tab or Semicolon for the delimiter. Browse row and column pages or
+  jump to a row, including in files much larger than the full editor can hold.
 - Text and code: **Highlight / Edit** for HTML, CSS, TypeScript, JavaScript, Java,
   SQL, Bash, XML, JSON, YAML, Python and Terraform/HCL. Helm YAML and `.tpl` files
   color embedded `{{…}}` templates. Liquibase changelogs use their XML, YAML,
@@ -337,21 +339,23 @@ active file.
 **Save** or Ctrl+S writes a local file only when its disk contents still match the
 version loaded. Unsaved drafts are kept under `data/document-drafts/` and recovered
 when reopening that file. A conflicting external change leaves the draft intact;
-**Discard draft and reload** explicitly accepts the disk version. Clean views
-refresh automatically. Remote text files are read only. Office and PDF files have no Edit or Save action.
+**Discard draft and reload** explicitly accepts the disk version. Clean full-buffer views
+refresh automatically. Large read-only pages ask you to reload if the file changes.
+Remote text files are read only. Office and PDF files have no Edit or Save action.
 
 Ctrl+Shift+P selects Preview; Ctrl+Shift+O selects Source in a document pane.
 The equivalent commands are `workspace-document.preview`,
 `workspace-document.source`, and `workspace-document.save`.
 
-The editor accepts text up to 400,000 characters. CSV preview is bounded to 500
-rows and 100 columns, showing up to 40 rows per page; Source retains the full file.
-The tree retains the inherited limits of 500 entries per folder and 5,000 total.
-Highlight shows at most 12,000 lines while Edit retains the full loaded source.
-Office parsing is bounded to 64 MiB of uncompressed archive members, 16 MiB per
-member and 400,000 output characters. Excel previews include at most 100 sheets,
-500 rows and 100 columns per sheet, with 40 rows per page. A notice identifies
-truncation. Open oversized or layout-sensitive documents in their usual app.
+Full-buffer editing is limited to 400,000 UTF-16 units and 1 MiB of UTF-8. CSV/TSV
+preview supports 32 MiB files and up to two million records, with 40 rows and 16
+columns per page. Larger text files can be read in approximately 32 KiB source
+pages without entering Save. Markdown and source highlighting have separate
+render budgets; Office and PDF keep their format-specific guards. Raster images
+in Files offer Open original instead of attempting text decoding. The tree
+retains the limits of 500 entries per folder and 5,000 total. See
+[Document preview limits](document-preview.md) for the detailed budgets,
+platform/remote requirements, web differences and measured results.
 
 ## Changes across repositories
 

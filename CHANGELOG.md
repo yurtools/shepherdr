@@ -12,6 +12,10 @@ The feature groups below are ordered by importance to the user's workflow.
   model/thinking/permissions controls, local skills picker and native `/status`.
 - Project files: persistent tree, separate editable document panes, Markdown/CSV
   Source / Preview, source highlighting, DOCX/Excel content views and file references.
+  CSV/TSV table browsing supports 32 MiB files and up to two million records with
+  row/column paging; larger text uses read-only source pages independently of
+  guarded full-buffer editing. Markdown renders a bounded excerpt, and sparse
+  Office workbooks have an independent output-slot cap.
   Space settings can edit the project folder, with Browse, validation and an explicit
   save that keeps the native space and Files root aligned.
   Changes groups multiple repositories beneath that folder, with per-repository

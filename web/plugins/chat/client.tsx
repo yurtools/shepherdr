@@ -24,6 +24,7 @@ import { dayLabel } from './days.ts'
 import { FindBar, openFind } from './find.tsx'
 import { Fold } from './fold.tsx'
 import { Markdown } from './markdown.tsx'
+import { MermaidMessage } from './flowchart.tsx'
 import { answeredBy, cancelReply, canReply, isArtifact, jumpTo, startReply } from './reply.ts'
 import { typing, working } from './typing.ts'
 import { suggestionOf, suggestionsOn } from './suggest.ts'
@@ -40,7 +41,7 @@ const mentionTyping = (text: string): string | null => (MNc as any).typingTask(t
 
 /** Human messages, including full task briefs and generated settings, exactly as written. */
 function YourText({ text, chat }: { text: string; chat?: string }) {
-  return <div className="whitespace-pre-wrap wrap-anywhere">{chat ? withChips(text, chat) : text}</div>
+  return <MermaidMessage text={text} renderText={part => <div className="whitespace-pre-wrap wrap-anywhere">{chat ? withChips(part, chat) : part}</div>} />
 }
 
 export { Markdown }

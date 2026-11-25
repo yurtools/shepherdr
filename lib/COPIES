@@ -103,3 +103,7 @@ core/session-find.js: chat tabs-tasks workspace-sessions workspace-launchers new
 
 bounded-wait.js: chat tabs-tasks tasks spaces-chat coordinator artifacts workspace-status-chat
 clipboard.js: chat
+
+core/chat-fences.js: chat
+core/chat-flowchart.js: chat
+core/vendor/dagre.js: chat

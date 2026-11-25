@@ -22,6 +22,11 @@ the main CLI conversation even when Codex also holds internal Auto-review logs.
 Large incoming context messages fold like long replies; expanded text is divided
 into bounded rows, keeping the full message available for Copy.
 
+Chat previews supported Mermaid flowcharts inline in both user and agent
+messages. **Show source / Show preview** switches views; **Copy** keeps the
+original Mermaid text. See [inline flowcharts](chat-flowcharts.md) for supported
+syntax, web/mobile behavior and fallback limits.
+
 | Action | Control |
 | --- | --- |
 | Use the same agent as chat or a terminal | **Chat / Terminal** in its pane header |

@@ -1,12 +1,14 @@
 import {expect,test} from 'bun:test';
 import {readFileSync} from 'node:fs';
+import * as fences from '../core/chat-fences.js';
+import * as flow from '../core/chat-flowchart.js';
 import {sortPlan} from '../core/chat-preparation.js';
 import {messageChunks} from '../core/chat-layout.js';
 const source=readFileSync(new URL('../mods/chat/main.js',import.meta.url),'utf8');
 const method=(name:string)=>{const at=source.indexOf(`  ${['rowPlan','spacedPlan'].includes(name)?'*':''}${name}(`);return at<0?'':source.slice(at,source.indexOf('\n  }',at)+4);};
 test('row ownership keeps source items and reused news immutable across spacing and rebuild',()=>{
  const view=require('../core/chat-view.js');
- const dependencies:any={...view,messageChunks,sortPlan,home:()=>'/test-home',cardsOf:()=>[],pilotLine:()=> 'Wake'};
+ const dependencies:any={...fences,...flow,...view,messageChunks,sortPlan,home:()=>'/test-home',cardsOf:()=>[],pilotLine:()=> 'Wake'};
  const parse=source.slice(source.indexOf('function parts(text)'),source.indexOf('\nlet bound'));
  const helpers=source.slice(source.indexOf('const wrapLines ='),source.indexOf('const ICONS ='));
  const C=new Function(...Object.keys(dependencies),`const KEEP=2000,ACT=22,BAND_IN=4,ACT_ROW=26,GAP=16,QUIET_IN={top:5,bottom:6},FOLD=20,FOLD_TALL=28,LINE_H=21;

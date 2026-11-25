@@ -18,7 +18,7 @@ const { READ, withMove, withSection, withoutSection, withSectionName, withIcon, 
 import type { Compat } from "./compat.ts";
 import { worktreeAct } from "./worktrees.ts";
 import { layoutScript } from "./layout-scripts.ts";
-import { noteFailed, once } from "./send-once.ts";
+import { noteFailed, noteWithdrawn, once, wasWithdrawn } from "./send-once.ts";
 import { execTemplate } from "./spaces.ts";
 import * as MA from "../core/machine-add.js";
 import { exec } from "./model.ts";
@@ -444,9 +444,17 @@ export async function act(hub: Hub, b: any, compat: Compat): Promise<unknown> {
   }
   if ((b?.type === "held-now" || b?.type === "held-drop") && typeof b.cid === "string") {
     // a queued message (the window's Send now and ×): sent at once, or taken back unsent
-    const m = held.find((x) => x.cid === b.cid);
-    if (!m) throw new Error("That message has gone in already.");
-    if (b.type === "held-drop") held.splice(held.indexOf(m), 1);
+    const a = chat(b.chat), cid = str(b.cid, 80);
+    const m = held.find((x) => x.cid === cid && x.addr === a && x.hub === hub);
+    if (b.type === "held-drop" && wasWithdrawn(a, cid)) return { ok: true, withdrawn: true };
+    if (!m) throw new Error("That message is no longer held. It may already have reached the agent. Check the conversation.");
+    if (b.type === "held-drop") {
+      // No await between finding the queue entry and taking it: the drain
+      // claims entries synchronously before beginning delivery.
+      noteWithdrawn(a, cid);
+      held.splice(held.indexOf(m), 1);
+      return { ok: true, withdrawn: true };
+    }
     else { m.now = true; drain(); }
     return { ok: true };
   }

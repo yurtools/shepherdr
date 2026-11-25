@@ -2,7 +2,7 @@ import { afterAll, expect, test, beforeAll } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { failedOf, forgetAll, noteFailed, once } from "./send-once.ts";
+import { failedOf, forgetAll, noteFailed, noteWithdrawn, once, wasWithdrawn } from "./send-once.ts";
 
 const was = process.env.SHEPHERDR_DATA;
 beforeAll(() => { process.env.SHEPHERDR_DATA = mkdtempSync(join(tmpdir(), "send-once-")); forgetAll(); });
@@ -45,4 +45,29 @@ test("a held one that couldn't go is told to its page, and its Retry goes again"
   forgetAll();
   await once("c-3", hold);
   expect(went).toBe(3);
+});
+
+test("a confirmed withdrawal spends the send id, including after a service restart", async () => {
+  let deliveries = 0;
+  const hold = async () => { deliveries++; return { ok: true, waiting: true, waitsFor: "turn" }; };
+  await once("c-4", hold);
+  noteWithdrawn("t9", "c-4");
+  expect(wasWithdrawn("t9", "c-4")).toBe(true);
+  expect(wasWithdrawn("t8", "c-4")).toBe(false);
+  expect(await once("c-4", hold)).toEqual({ ok: true, withdrawn: true, addr: "t9" });
+  forgetAll();
+  expect(wasWithdrawn("t9", "c-4")).toBe(true);
+  expect(await once("c-4", hold)).toEqual({ ok: true, withdrawn: true, addr: "t9" });
+  expect(deliveries).toBe(1);
+});
+
+test("a withdrawal that cannot be saved does not claim success", async () => {
+  const before = process.env.SHEPHERDR_DATA;
+  await once("c-5", async () => ({ ok: true, waiting: true, waitsFor: "turn" }));
+  try {
+    process.env.SHEPHERDR_DATA = join(before!, "missing-directory");
+    expect(() => noteWithdrawn("t9", "c-5")).toThrow();
+    expect(wasWithdrawn("t9", "c-5")).toBe(false);
+  } finally { process.env.SHEPHERDR_DATA = before; }
+  expect(await once("c-5", async () => null)).toEqual({ ok: true, waiting: true, waitsFor: "turn" });
 });

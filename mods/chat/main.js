@@ -1770,10 +1770,22 @@ export default class Chat extends View {
 
   // A held message sent at once (the agent takes it mid-turn).
   sendQueued(msg, cx) {
-    this.queue = this.queue.filter((m) => m !== msg);
+    if (!this.takeQueued(msg)) return;
     if (msg.raw) personHc(["send", this.addr, msg.text]);
     else this.deliver(msg, cx);
     this.saveSoon(cx);
+  }
+
+  // A queued row can still be visible when drainQueue has already claimed
+  // it. In that case neither discard nor Edit may imply it stayed unsent.
+  takeQueued(msg) {
+    const i = this.queue.indexOf(msg);
+    if (i < 0) {
+      toast({ title: "Message is no longer held", body: "It may already have reached the agent. Check the conversation.", level: "info" });
+      return false;
+    }
+    this.queue = this.queue.filter((_, n) => n !== i);
+    return true;
   }
 
   // Stop: the CLI's own interrupt. The working line says "Stopping…" until it is idle.
@@ -1786,7 +1798,7 @@ export default class Chat extends View {
 
   // A held message back into the box, to change it before it goes.
   editQueued(msg, cx) {
-    this.queue = this.queue.filter((m) => m !== msg);
+    if (!this.takeQueued(msg)) return;
     const now = this.box.value().trim();
     this.box.set_value(now ? `${msg.text}\n\n${now}` : msg.text);
     this.addFiles(msg.files);
@@ -4645,8 +4657,9 @@ export default class Chat extends View {
         .child(ghost(`queued-now-${m.id}`, WORDS.sendNow,(cx) => this.sendQueued(m, cx)))
         .child(ghost(`queued-edit-${m.id}`, "Edit", (cx) => this.editQueued(m, cx)))
         .child(div().id(`queued-x-${m.id}`).size(22).flex_none().flex().items_center().justify_center().rounded(6).cursor_pointer().text_color(t.dim)
+          .accessibility_label("Withdraw unsent message")
           .hover((s) => s.bg(t.hover).text_color(t.foreground))
-          .on_click((_e, cx) => { cx.stop_propagation(); this.queue = this.queue.filter((x) => x !== m); this.saveSoon(cx); cx.notify(); })
+          .on_click((_e, cx) => { cx.stop_propagation(); if (this.takeQueued(m)) this.saveSoon(cx); cx.notify(); })
           .child(svg("mods/chat/x.svg").size(12)))));
   }
 

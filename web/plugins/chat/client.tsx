@@ -238,19 +238,30 @@ function Bubble({ msg, chat, from, out, last, pics, images, writing }: { msg: Me
 
 /** held until the agent is free (Ctrl+Enter, a long press on Send): not in the conversation yet */
 const isHeld = (m: Message) => !!m.waiting && m.waitsFor === 'turn' && !!m.cid
-const heldOut = (o: Outgoing) => o.state !== 'failed' && (o.hold || o.waitsFor === 'turn')
+const heldOut = (o: Outgoing) => o.state === 'sending' ? !!o.hold : o.state === 'sent' && !!o.waiting && o.waitsFor === 'turn'
 
 /** the window's held messages (mods/chat queued()): a row each over the box, a clock, its words, "Queued · Sends when
  *  the agent is free", Send now, Edit (back in the box), × (taken back) */
 function Held({ chatKey }: { chatKey: string }) {
   const msgs = useStore((s) => s.chats[chatKey]?.messages)
   const outbox = useStore((s) => s.outbox)
-  const rows = new Map<string, { cid: string; text: string; files: string[] }>()
-  for (const m of msgs ?? []) if (isHeld(m)) rows.set(m.cid!, { cid: m.cid!, text: m.text ?? '', files: m.file ? [m.file.name] : [] })
-  for (const o of outbox) if (o.chat === chatKey && heldOut(o) && !rows.has(o.cid)) rows.set(o.cid, { cid: o.cid, text: o.text, files: o.files.map((f) => f.name) })
+  const [taking, setTaking] = useState<string | null>(null)
+  const rows = new Map<string, { cid: string; text: string; files: string[]; held: boolean }>()
+  for (const m of msgs ?? []) if (isHeld(m)) rows.set(m.cid!, { cid: m.cid!, text: m.text ?? '', files: m.file ? [m.file.name] : [], held: true })
+  for (const o of outbox) if (o.chat === chatKey && heldOut(o) && !rows.has(o.cid)) rows.set(o.cid, { cid: o.cid, text: o.text, files: o.files.map((f) => f.name), held: o.state === 'sent' })
   if (!rows.size) return null
   const ghost = 'flex h-[22px] shrink-0 items-center rounded-[6px] px-2 text-[0.75rem] font-medium text-fg2 hover:bg-hover hover:text-fg phone:h-9'
-  const take = (cid: string, then?: () => void) => void act({ type: 'held-drop', cid } as never).then(() => { removeOut(cid); then?.() }, () => { removeOut(cid); then?.() })
+  const take = async (cid: string, then?: () => void) => {
+    if (taking) return
+    setTaking(cid)
+    try {
+      const r = await act({ type: 'held-drop', chat: chatKey, cid } as never)
+      if (!r?.withdrawn) throw new Error('Withdrawal was not confirmed. Check the conversation.')
+      removeOut(cid)
+      then?.()
+    } catch (e) { alert(reasonOf(e)) }
+    finally { setTaking(null) }
+  }
   return (
     <div className="flex flex-col gap-1">
       {[...rows.values()].map((r) => (
@@ -258,11 +269,11 @@ function Held({ chatKey }: { chatKey: string }) {
           <ClockIcon aria-hidden className="size-3.5 shrink-0 fill-[var(--fg3)]" />
           <span className="flex min-w-0 flex-1 flex-col">
             <span className="truncate text-[0.78125rem] text-fg">{r.text || r.files.join(', ')}</span>
-            <span className="truncate text-[0.75rem] text-fg3">{WORDS.queued}</span>
+            <span className="truncate text-[0.75rem] text-fg3">{!r.held ? 'Waiting for delivery confirmation…' : taking === r.cid ? 'Withdrawing…' : WORDS.queued}</span>
           </span>
-          <button type="button" className={ghost} onClick={() => void act({ type: 'held-now', cid: r.cid } as never).catch(() => undefined)}>{WORDS.sendNow}</button>
-          <button type="button" className={ghost} onClick={() => take(r.cid, () => { const now = (getDraft(chatKey) ?? '').trim(); setDraft(chatKey, now ? `${r.text}\n\n${now}` : r.text); setUI({ focus: chatKey }) })}>Edit</button>
-          <button type="button" aria-label="Remove" className="grid size-[22px] shrink-0 place-items-center rounded-[6px] text-fg3 hover:bg-hover hover:text-fg phone:size-9" onClick={() => take(r.cid)}><XIcon className="size-3" /></button>
+          <button type="button" className={ghost} disabled={!r.held || !!taking} onClick={() => void act({ type: 'held-now', chat: chatKey, cid: r.cid } as never).catch((e) => alert(reasonOf(e)))}>{WORDS.sendNow}</button>
+          <button type="button" className={ghost} disabled={!r.held || !!taking} onClick={() => void take(r.cid, () => { const now = (getDraft(chatKey) ?? '').trim(); setDraft(chatKey, now ? `${r.text}\n\n${now}` : r.text); setUI({ focus: chatKey }) })}>Edit</button>
+          <button type="button" aria-label="Withdraw unsent message" title="Withdraw unsent message" disabled={!r.held || !!taking} className="grid size-[22px] shrink-0 place-items-center rounded-[6px] text-fg3 hover:bg-hover hover:text-fg disabled:opacity-50 phone:size-9" onClick={() => void take(r.cid)}><XIcon className="size-3" /></button>
         </div>
       ))}
     </div>
@@ -1873,7 +1884,7 @@ async function deliver(cid: string) {
     if (standIns.length) patch(() => ({ files, up: undefined }))
     // a reload now would cut it off on its way
     const release = holdReload()
-    let r: { waiting?: boolean; waitsFor?: Outgoing['waitsFor']; at?: number }
+    let r: { waiting?: boolean; waitsFor?: Outgoing['waitsFor']; at?: number; withdrawn?: boolean }
     try {
       r = (await retrying(
         () => act({ type: 'send', chat: o.chat, text: o.text, attachments: files.map((f) => f.path), cid, reply: o.reply?.id, human: true, ...(o.hold ? { hold: true } : {}) } as never, AbortSignal.timeout(SEND_TIMEOUT)),
@@ -1883,6 +1894,8 @@ async function deliver(cid: string) {
     } finally {
       release()
     }
+    // A delayed retry may encounter a withdrawal made on another device.
+    if (r?.withdrawn) { removeOut(cid); void dropFiles(standIns); return }
     // the chat may already show it waiting (queued) or gone in: that knows better than the answer
     const serverAt = typeof r?.at === 'number' ? r.at : undefined
     patch((x) => ({ state: 'sent', error: undefined, offline: undefined, up: undefined, serverAt, ...(x.queued || x.wentAt ? {} : { waiting: r?.waiting || undefined, waitsFor: (r?.waiting && r.waitsFor) || undefined }) }))

@@ -20,7 +20,7 @@ test("Shepherdr's keys.json grouped: the layout's own key replaces the global on
   expect(row("Tabs", "Close tab").keys).toEqual(["Ctrl+Shift+W"]);
   expect(row("App", "Jump to a space, task or artifact").keys).toEqual(["Ctrl+K", "Ctrl+Shift+K"]);
   expect(row("App", "Keybinds").keys).toEqual(["Ctrl+Shift+/", "Ctrl+Shift+?"]);
-  expect(row("Chat", "Find in the chat").keys).toEqual(["Ctrl+F"]);
+  expect(row("Chat", "Find in the chat").keys).toEqual(["Ctrl+F", "Super+F"]);
   expect(row("Documents", "Save document").keys).toEqual(["Ctrl+S"]);
   expect(row("Documents", "Show source").keys).toEqual(["Ctrl+Shift+O"]);
   expect(row("Documents", "Show preview").keys).toEqual(["Ctrl+Shift+P"]);
@@ -37,6 +37,10 @@ test("the web's keys are the window's: each one bound the same in Shepherdr's ke
   expect(g.map((x) => x.group)).toEqual(["Tabs", "Spaces", "Chat", "App"]);
   expect(g[0].rows.map((r) => r.name)).toEqual(["Show tab 1–9", "Previous tab", "Next tab"]);
   expect(g[0].rows[1].keys).toEqual(["Alt+Left", "Alt+["]);
+  for (const keys of [repoKeys, WEB_KEYS]) {
+    const chat = grouped(flatKeys(keys), { layout: "shepherdr", mac: true }).find(x => x.group === "Chat");
+    expect(chat.rows.find(r => r.name === "Find in the chat").keys).toEqual(["⌃F", "⌘F"]);
+  }
 });
 
 test("the filter: every word in the group, name or keys", () => {

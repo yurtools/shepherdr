@@ -109,10 +109,11 @@ export function manualHint(coarse = touch(), apple = mac()) {
 
 let open: (() => void) | null = null
 
-function showManual(text: string) {
+function showManual(text: string, at: Element | null) {
   if (typeof document === 'undefined') return
   open?.()
   const was = document.activeElement as HTMLElement | null
+  const modal = at?.closest('dialog[open]')
   const box = document.createElement('div')
   box.setAttribute('role', 'dialog')
   box.setAttribute('aria-label', 'Copy')
@@ -140,10 +141,12 @@ function showManual(text: string) {
     open = null
     box.remove()
     removeEventListener('keydown', esc, true)
+    modal?.removeEventListener('close', shut)
     was?.focus?.({ preventScroll: true })
   }
   const esc = (e: KeyboardEvent) => {
     if (e.key === 'Escape') {
+      e.preventDefault()
       e.stopPropagation()
       shut()
     }
@@ -155,8 +158,11 @@ function showManual(text: string) {
     setTimeout(shut, 700)
   })
   addEventListener('keydown', esc, true)
-  // on the body, over everything: a menu that closes on the tap must not take it along
-  document.body.append(box)
+  // A native modal is above the body (and makes it inert). Otherwise keep
+  // the fallback on the body so a menu closing on the tap can't remove it.
+  if (modal) box.style.position = 'absolute'
+  ;(modal ?? document.body).append(box)
+  modal?.addEventListener('close', shut, { once: true })
   open = shut
   area.focus({ preventScroll: true })
   area.select()

@@ -833,7 +833,9 @@
       "addon": "chat",
       "title": "Find in chat",
       "core": [
-        "chat-log"
+        "chat-log",
+        "chat-find",
+        "chat-find-markdown"
       ],
       "herdr": {
         "mods": [

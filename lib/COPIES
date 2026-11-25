@@ -109,3 +109,7 @@ flowchart.js: chat chat-flowchart
 core/chat-flowchart-geometry.js: chat chat-flowchart
 core/chat-flowchart.js: chat
 core/vendor/dagre.js: chat
+core/chat-find.js: chat
+core/chat-find-markdown.js: chat
+core/vendor/marked.js: chat
+core/vendor/html-entities.js: chat

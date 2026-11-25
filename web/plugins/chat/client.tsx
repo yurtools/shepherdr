@@ -22,6 +22,8 @@ import { still, useArrive } from '@client/motion.ts'
 import { draggingFiles, dropped, named, pastedEvent } from './paste.ts'
 import { dayLabel } from './days.ts'
 import { FindBar, openFind } from './find.tsx'
+import { FindQuery, FindActive, useFindQuery } from './find-scope.ts'
+import { containsFind } from '@core/chat-find.js'
 import { Fold } from './fold.tsx'
 import { Markdown } from './markdown.tsx'
 import { MermaidMessage, FlowchartOverlay } from './flowchart.tsx'
@@ -102,7 +104,7 @@ function Bubble({ msg, chat, from, out, last, pics, images, writing }: { msg: Me
   const [width, setWidth] = useState(0)
   const shots = pics?.length ? (
     <Thumbs
-      files={pics.map((m) => ({ name: m.file!.alt || m.file!.name, path: m.file!.path, url: fileUrl(chat.key, m.file!.path, false, 'thumb'), caption: caption(m) }))}
+      files={pics.map((m) => ({ messageId:m.id, fileName:m.file!.name, name: m.file!.alt || m.file!.name, path: m.file!.path, url: fileUrl(chat.key, m.file!.path, false, 'thumb'), caption: caption(m) }))}
       chat={chat.key} you={you} faded={!!out && out.state === 'sending'} width={width}
       open={(i) => setUI({ photo: out ? { chat: chat.key, file: pics[i].file } : { chat: chat.key, msg: pics[i].id } })}
     />
@@ -141,6 +143,7 @@ function Bubble({ msg, chat, from, out, last, pics, images, writing }: { msg: Me
       {/* data-whole: the message with its parts (a question's card), which an alert's link brings into view */}
       <div
         data-whole={msg.id}
+        data-find-ignore={msg.waiting || out ? "" : undefined}
         data-chat={chat.key}
         className={clsx(
           'flex flex-col transition-opacity duration-200',
@@ -201,7 +204,7 @@ function Bubble({ msg, chat, from, out, last, pics, images, writing }: { msg: Me
                     return blocker ? <LinkButton onClick={() => jumpTo(chat.key, blocker.id, { card: true })}>Go to question</LinkButton> : null
                   })()}
                 </> : msg.waitsFor === 'queue' ? <InQueue chatKey={chat.key} /> : waitLine(msg.waitsFor)}</div> : null}
-                {msg.text ? <div ref={text} data-text>{you ? <YourText text={msg.text} chat={chat.key} /> : <Fold id={msg.id}><Markdown text={msg.text} chat={chat.key} /></Fold>}</div> : null}
+                {msg.text ? <div ref={text} data-text>{you ? <YourText text={msg.text} chat={chat.key} /> : <Fold id={msg.id} chat={chat.key}><Markdown text={msg.text} chat={chat.key} /></Fold>}</div> : null}
               </div>,
               true,
             )
@@ -640,6 +643,7 @@ export const isPicture = (m: Message) => !!m.file && !m.text && !m.answered && i
  *  that can't play here (another machine's too big to bring, a kind the browser lacks) is a file tile to download */
 function VideoTile({ name, alt, chat, path, tucked }: { name: string; alt?: string; chat: string; path: string; tucked?: boolean }) {
   const [broken, setBroken] = useState(false)
+  const q=useFindQuery()
   if (broken) return <FileTile name={name} chat={chat} path={path} tucked={tucked} />
   return (
     <figure className={clsx('flex w-[min(100%,420px)] flex-col gap-1', tucked && tucks)}>
@@ -653,7 +657,8 @@ function VideoTile({ name, alt, chat, path, tucked }: { name: string; alt?: stri
         onError={() => setBroken(true)}
         className="block max-h-[360px] w-full rounded-[8px] bg-black outline-1 -outline-offset-1 outline-fg/10"
       />
-      <figcaption className="truncate px-0.5 text-[0.75rem] text-fg3 phone:text-[0.8125rem]">{alt || name}</figcaption>
+      <figcaption data-find-field className="truncate px-0.5 text-[0.75rem] text-fg3 phone:text-[0.8125rem]">{alt || name}</figcaption>
+      {q && alt && alt!==name && containsFind(name,q)?<div data-find-field className="text-xs text-fg2 break-all">{name}</div>:null}
     </figure>
   )
 }
@@ -667,7 +672,7 @@ function FileTile({ name, chat, path, tucked }: { name: string; chat: string; pa
           <FileIcon className={ic} />
         </span>
         <span className="min-w-0">
-          <span className="block truncate">{name}</span>
+          <span data-find-field className="block truncate">{name}</span>
           <span className="block text-[0.75rem] text-fg2 phone:text-[0.8125rem]">{ext ? `${ext.toUpperCase()} file` : 'File'}</span>
         </span>
       </a>
@@ -699,11 +704,11 @@ function Album({ msgs, chat, from, out, last: lastPart }: { msgs: Message[]; cha
     return () => ro.disconnect()
   }, [])
   return (
-    <div ref={box} data-slide className={clsx('flex w-full flex-col', you ? 'items-end' : 'items-start', 'transition-opacity duration-200', (msgs[0].waiting || out?.state === 'sending') && 'opacity-60')}>
+    <div ref={box} data-slide data-find-ignore={msgs[0].waiting||out?"":undefined} className={clsx('flex w-full flex-col', you ? 'items-end' : 'items-start', 'transition-opacity duration-200', (msgs[0].waiting || out?.state === 'sending') && 'opacity-60')}>
       {msgs[0].newSession ? <SessionLine /> : null}
       {msgs[0].reply ? <ReplyLine q={msgs[0].reply} chat={chat.key} you={you} /> : null}
       <Thumbs
-        files={msgs.map((m) => ({ name: m.file!.alt || m.file!.name, path: m.file!.path, url: fileUrl(chat.key, m.file!.path, false, 'thumb'), caption: caption(m) }))}
+        files={msgs.map((m) => ({ messageId:m.id, fileName:m.file!.name, name: m.file!.alt || m.file!.name, path: m.file!.path, url: fileUrl(chat.key, m.file!.path, false, 'thumb'), caption: caption(m) }))}
         chat={chat.key} you={you} width={width}
         open={(i) => setUI({ photo: out ? { chat: chat.key, file: msgs[i].file } : { chat: chat.key, msg: msgs[i].id } })}
       />
@@ -1318,9 +1323,9 @@ const Messages = memo(function Messages({ chat, from }: { chat: Chat; from: stri
               ) : 'album' in it ? (
                 <Album msgs={it.album} chat={chat} from={from} out={it.out} last={it.last} />
               ) : it.msg.error ? (
-                <ErrorRow msg={it.msg} />
+                <div data-chat={chat.key} data-msg={it.msg.id}><ErrorRow msg={it.msg} /></div>
               ) : it.msg.asked ? (
-                <AskedRow msg={it.msg} />
+                <div data-chat={chat.key} data-msg={it.msg.id}><AskedRow msg={it.msg} /></div>
               ) : it.msg.images ? (
                 <ImagesLine n={it.msg.images} />
               ) : (
@@ -2969,6 +2974,9 @@ function ChatView({ chatKey, placeholder, unreachable }: { chatKey: string; plac
   const chat = useChat(chatKey)
   const snap = useSnap()
   const override = useUI((u) => registry.chatBody.find((b) => b.when(u, chatKey)))
+  const find = useUI(u => u.find?.chat === chatKey ? u.find : null)
+  const validFind = find && (!find.historyKey || !chat?.historyKey || find.historyKey === chat.historyKey) ? find : null
+  const findQuery = validFind?.q.trim() ?? ""
   if (override) return <override.View chatKey={chatKey} />
   // the window's notice instead of the conversation (opening, not a chat agent, not found, ended); a chat not heard
   // from yet is opening (a space's empty Assistant chat is its own state: no agent yet)
@@ -2976,6 +2984,8 @@ function ChatView({ chatKey, placeholder, unreachable }: { chatKey: string; plac
   if (shown) return <div className="flex min-h-0 flex-1 flex-col"><Notice chat={shown} resume={() => act({ type: 'task-resume', chat: chatKey } as never)} /></div>
   return (
     <DropFiles chatKey={chatKey}>
+      <FindQuery.Provider value={findQuery}>
+      <FindActive.Provider value={validFind?.id ?? null}>
       <FindBar chatKey={chatKey} />
       <StickToBottom key={chatKey} chatKey={chatKey}>
         {unreachable ? (
@@ -2988,6 +2998,8 @@ function ChatView({ chatKey, placeholder, unreachable }: { chatKey: string; plac
         <Messages chat={chat ?? { key: chatKey, cli: 'Claude Code', messages: [] }} from={from} />
       </StickToBottom>
       {chat?.finished && taskChatId(chatKey) ? <Ended chatKey={chatKey} /> : <Composer chatKey={chatKey} placeholder={placeholderOf(chatKey, chat, placeholder)} cli={chat?.cli ?? 'Claude Code'} suggest={suggestionOf(chat, suggestionsOn(snap?.settings))} />}
+      </FindActive.Provider>
+      </FindQuery.Provider>
     </DropFiles>
   )
 }
@@ -3000,6 +3012,7 @@ function DropFiles({ chatKey, children }: { chatKey: string; children: ReactNode
   return (
     <div
       data-drop
+      data-find-chat={chatKey}
       // its own stacking context: the Latest pill, the drop note and a message's menu layer over the chat only, so a
       // drawer, sheet or menu over the chat covers them all, whatever their z
       className="isolate relative flex min-h-0 flex-1 flex-col"
@@ -3045,6 +3058,18 @@ function DropFiles({ chatKey, children }: { chatKey: string; children: ReactNode
   )
 }
 
+function FindButton({ chatKey }: { chatKey: string }) {
+  const on = useUI(u => u.find?.chat === chatKey)
+  return <IconButton label={WORDS.find} pressed={on} onClick={() => openFind(chatKey)}><SearchIcon className={ic} /></IconButton>
+}
+function PlaceFind({ place }: { place: Place }) {
+  const ui = useUI()
+  const tab = ui.term && place.tabs?.find(t => t.term === ui.term)
+  const key = tab && ui.tabView[tab.term] === 'chat' ? tab.term : place.chat
+  if (registry.chatBody.some(body => body.when(ui,key))) return null
+  return <FindButton chatKey={key} />
+}
+
 /** a subagent's own chat (SHEP-54: a reviewer its worker started), opened from its row over the parent's box: the whole
  *  conversation, and a box to talk to it */
 function SubagentSheet() {
@@ -3055,6 +3080,7 @@ function SubagentSheet() {
     <Sheet label={j.title} onClose={close} panel="max-w-[720px] h-[min(85dvh,860px)]">
       <div className="flex shrink-0 items-center gap-2 px-4 pt-3 pb-2">
         <h2 className="min-w-0 flex-1 truncate text-[0.9375rem] font-medium phone:text-base">{j.title}</h2>
+        <FindButton chatKey={j.chat} />
         <SheetClose onClose={close} />
       </div>
       <div data-subagent-chat className="flex min-h-0 flex-1 flex-col">
@@ -3068,6 +3094,8 @@ export default definePlugin({
   name: 'chat',
   setup(reg) {
     reg.views.chat = ChatView
+    reg.placeHeader.push({ order: 16, View: PlaceFind })
+    reg.agentHeader.push({ order: 16, View: FindButton })
     // the window's lines under the conversation, over the box: working (Stop · Esc) or Needs you, then the helpers
     reg.composerAbove.push({ order: 5, View: WorkingLine }, { order: 6, View: NeedsYou }, { order: 8, View: Held })
     reg.composerAbove.push({ order: 10, View: JobsTag })
@@ -3090,8 +3118,7 @@ export default definePlugin({
         return true
       },
     })
-    // 3.0 finds in a chat with Ctrl+F (its find bar), and restarts or switches an Assistant from its tab menu
-    // (coordinators): no Search or Restart items here
+    // Find also has a header button for touch users; Ctrl+F still opens it.
     reg.overlays.push(RestartSheet)
     reg.overlays.push(DiscardDialog)
     reg.composerAbove.push({ order: 20, View: Attachments }, { order: 30, View: PlusMenu })

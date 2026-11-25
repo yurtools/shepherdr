@@ -22,6 +22,11 @@ the main CLI conversation even when Codex also holds internal Auto-review logs.
 Large incoming context messages fold like long replies; expanded text is divided
 into bounded rows, keeping the full message available for Copy.
 
+Use **Ctrl+F** to find literal words and punctuation in the current Chat. Find
+counts each matching occurrence, highlights it, opens folded text or diagram
+source when needed, and can load earlier pages. The web Chat header also has a
+Find button. See [Find in Chat](chat-find.md) for navigation and search limits.
+
 Chat previews supported Mermaid flowcharts inline in both user and agent
 messages. **Show source / Show preview** switches views; **Copy** keeps the
 original Mermaid text. See [inline flowcharts](chat-flowcharts.md) for supported

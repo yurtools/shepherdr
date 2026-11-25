@@ -125,9 +125,9 @@ export default definePlugin({
           toggleCall(chatNow())
           return true
         }
-        if (e.ctrlKey && !e.shiftKey && !e.altKey && !e.metaKey && e.code === 'KeyF') {
+        if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.code === 'KeyF') {
           e.preventDefault()
-          openFind(chatNow())
+          openFind((e.target as Element)?.closest?.<HTMLElement>('[data-find-chat]')?.dataset.findChat ?? chatNow())
           return true
         }
         if (e.shiftKey && e.key === 'F2') {

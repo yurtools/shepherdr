@@ -1,8 +1,9 @@
 // A long reply folds to its first lines with Show more, like Slack: the chat stays easy to scan on a phone. Show less
 // folds it again. Search and a reply's quote open a folded reply when they jump into it.
-import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
+import { useContext, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import { DownIcon } from '@client/ui.tsx'
 import { WORDS } from './rows.tsx'
+import { FindActive, useFindQuery } from './find-scope.ts'
 
 /** as the window's: past 28 lines (of 21px) it folds, to its first 20 */
 const FOLD_AT = 28 * 21
@@ -12,17 +13,28 @@ const FOLD_TO = 20 * 21
 const opened = new Set<string>()
 
 /** open a folded reply, as a jump into it does */
-export function unfold(id: string) {
+export function unfold(chat: string, message: string) {
+  const id = JSON.stringify([chat, message])
   if (opened.has(id)) return
   opened.add(id)
   dispatchEvent(new CustomEvent('shepherdr:unfold', { detail: id }))
 }
 
-export function Fold({ id, children }: { id: string; children: ReactNode }) {
+export function Fold({ id: message, chat, children }: { id: string; chat: string; children: ReactNode }) {
+  const id = JSON.stringify([chat, message])
   const box = useRef<HTMLDivElement>(null)
   const inner = useRef<HTMLDivElement>(null)
   const [tall, setTall] = useState(false)
   const [open, setOpen] = useState(() => opened.has(id))
+  const q = useFindQuery(), active = useContext(FindActive)
+  const [searchOpened, setSearchOpened] = useState('')
+  useLayoutEffect(() => {
+    if (!q) setSearchOpened('')
+    else if (active === message) setSearchOpened(q)
+    else if(searchOpened!==q)setSearchOpened('')
+  }, [q, active, message])
+  const searchOpen = !!q && (active === message || searchOpened === q)
+  const shown = open || searchOpen
   useLayoutEffect(() => {
     const el = inner.current!
     const measure = () => setTall(el.offsetHeight > FOLD_AT)
@@ -36,8 +48,9 @@ export function Fold({ id, children }: { id: string; children: ReactNode }) {
     addEventListener('shepherdr:unfold', on)
     return () => removeEventListener('shepherdr:unfold', on)
   }, [id])
-  const folded = tall && !open
+  const folded = tall && !shown
   const toggle = () => {
+    if (searchOpen) return
     if (open) {
       opened.delete(id)
       setOpen(false)
@@ -65,6 +78,8 @@ export function Fold({ id, children }: { id: string; children: ReactNode }) {
         <button
           type="button"
           aria-expanded={!folded}
+          disabled={searchOpen}
+          aria-label={searchOpen ? "Open to show search matches" : undefined}
           onClick={(e) => {
             e.stopPropagation()
             toggle()

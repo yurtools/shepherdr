@@ -1132,6 +1132,11 @@
     background-color: color-mix(in srgb, var(--work) 45%, transparent);
     color: inherit;
   }
+  ::highlight(find-active) {
+    background-color: color-mix(in srgb, var(--accent) 65%, transparent);
+    color: var(--fg);
+    text-decoration: underline;
+  }
   /* a message a reply's quote jumped to: ringed in the accent colour for a moment */
   [data-flash] {
     outline: 2px solid color-mix(in srgb, var(--accent) 70%, transparent);

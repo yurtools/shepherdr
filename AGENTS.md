@@ -49,6 +49,8 @@ How to run, build and lay out the code: [docs/develop.md](docs/develop.md).
   explicitly instead of relying on whichever pane currently has focus.
 - After reboot, a kept Feature terminal can retain `state=live` and its role/chat labels while its foreground is Bash;
   inspect bounded core metadata and the saved Feature session before treating it as an available Assistant.
+- For a restored native Feature test, `herdr-app do tab.select --id <verified-tab>` selects its space and tab directly,
+  avoiding activation of the space's unrelated selected tab.
 - Mark up (`mods/artifacts/markup.js`) imports must be listed in `MARKUP_HELPERS` in `mods/artifacts/bin/herdr-artifact`
   so each published artifact carries them; `test_every_installed_import_resolves` checks the imports.
 - Header layout checks: the web app keeps its pinned-lists and sidebar state across page loads, so a stub page can

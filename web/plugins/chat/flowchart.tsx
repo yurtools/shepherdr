@@ -1,8 +1,8 @@
-import { Fragment, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { Fragment, memo, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { copyText } from '@client/copy.ts'
 import { CheckIcon, DocumentDuplicateIcon as CopyIcon } from '@heroicons/react/16/solid'
 import { mermaidParts, isMermaid } from '@core/chat-fences.js'
-import { arrowTriangle, flowchart, sourceForDisplay, nodePolygon, FLOW_FONT, FLOW_LINE, FLOW_VIEW_HEIGHT, FLOW_WORDS } from '@core/chat-flowchart.js'
+import { arrowTriangle, flowchart, sourceForDisplay, nodePolygon, FLOW_FONT, FLOW_LIMITS, FLOW_LINE, FLOW_VIEW_HEIGHT, FLOW_WORDS } from '@core/chat-flowchart.js'
 
 type Point = { x: number; y: number }
 type Node = Point & { id: string; shape: string; width: number; height: number; lines: string[] }
@@ -63,10 +63,10 @@ function Preview({ drawing }: { drawing: Drawing }) {
   </>
 }
 
-type Fence = { code: string; closed: boolean }
+type Fence = { code: string; closed: boolean; allowed?: boolean }
 
-export function FlowchartCard({ code, closed }: Fence) {
-  const { drawing, error } = useMemo(() => flowchart(code,closed), [code,closed]) as { drawing?: Drawing; error?: string }
+export const FlowchartCard = memo(function FlowchartCard({ code, closed, allowed = true }: Fence) {
+  const { drawing, error } = useMemo(() => allowed?flowchart(code,closed):{error:FLOW_WORDS.many}, [code,closed,allowed]) as { drawing?: Drawing; error?: string }
   const display = useMemo(()=>sourceForDisplay(code),[code])
   const [source,setSource] = useState(false)
   const [copied,setCopied] = useState(false)
@@ -98,7 +98,7 @@ export function FlowchartCard({ code, closed }: Fence) {
       <pre className="flowchart-source" aria-label="Mermaid source" tabIndex={0} onPointerDown={e=>e.stopPropagation()}><code>{display.text}</code></pre>
     </>}
   </div>
-}
+})
 
 /** Used by the agent's existing Markdown and the person's literal text. The
  * text segments still use their original renderers (including task chips).
@@ -106,7 +106,8 @@ export function FlowchartCard({ code, closed }: Fence) {
 export function MermaidMessage({ text, renderText }: { text:string; renderText:(text:string)=>ReactNode }) {
   const parts=useMemo(()=>[...mermaidParts(text)], [text])
   if(!parts.some(isMermaid))return <>{renderText(text)}</>
+  let count=0
   return <>{parts.map((p,i)=>isMermaid(p)
-    ? <FlowchartCard key={i} code={p.code!} closed={p.closed!}/>
+    ? <FlowchartCard key={i} code={p.code!} closed={p.closed!} allowed={++count<=FLOW_LIMITS.perMessage}/>
     : <Fragment key={i}>{renderText(p.text!)}</Fragment>)}</>
 }

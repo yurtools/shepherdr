@@ -148,6 +148,14 @@ test('native history prepares user and assistant diagrams independently, retaini
   expect(h.jobs.every((j:any)=>!j.fn)).toBe(true);
 });
 
+test('native history bounds preview work in a message with many diagrams and keeps the rest copyable',()=>{
+  const text=Array.from({length:13},(_,i)=>'\n```mermaid\n'+`graph TD; A${i} --> B${i}`+'\n```\n').join('');
+  const h=historyHost([{kind:'agent',id:'many',at:1772946000000,text}]);
+  h.v.unfolded.add('many');h.request();h.drain();
+  expect(h.v.rows().filter((r:any)=>r.kind==='diagram')).toHaveLength(12);
+  expect(h.v.rows().find((r:any)=>r.kind==='code'&&r.error)).toMatchObject({code:'graph TD; A12 --> B12',error:flow.FLOW_WORDS.many});
+});
+
 test('every callback bounds all stages, and continuous fresh sources cannot starve a commit', () => {
   const h = historyHost(large()); h.request();
   let callbacks = 0, maxKeys = 0, maxGuesses = 0;

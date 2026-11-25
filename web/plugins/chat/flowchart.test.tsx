@@ -41,3 +41,11 @@ test('the same message splitter keeps literal and ordinary Markdown parts intact
   expect(rendered).toContain('after')
   expect(renderToStaticMarkup(<MermaidMessage text={normal} renderText={plain} />)).toBe(renderToStaticMarkup(plain(normal)))
 })
+
+test('many diagrams in one message keep all sources without laying out unbounded previews',()=>{
+  const text=Array.from({length:13},(_,i)=>fence(`graph TD; A${i} --> B${i}`)).join('\n')
+  const rendered=renderToStaticMarkup(<MermaidMessage text={text} renderText={s=><div>{s}</div>}/>)
+  expect(rendered.match(/aria-label="Mermaid flowchart"/g)).toHaveLength(12)
+  expect(rendered).toContain('too many diagrams to preview')
+  expect(rendered).toContain('A12 --&gt; B12')
+})

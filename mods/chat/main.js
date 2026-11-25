@@ -6,7 +6,7 @@ import { startRole, roleStart, featureTask } from './role-launch.js';
 import {readShepherdr} from './coordinator.js';
 import LinkedMarkdown from './linked-markdown.js';
 import { fencedParts, isMermaid, mermaidParts } from './core/chat-fences.js';
-import { flowchart, sourceForDisplay, chartHeight, FLOW_WORDS, FLOW_VIEW_HEIGHT } from './core/chat-flowchart.js';
+import { flowchart, sourceForDisplay, chartHeight, FLOW_LIMITS, FLOW_WORDS, FLOW_VIEW_HEIGHT } from './core/chat-flowchart.js';
 import { nativeFlowchart } from './flowchart.js';
 import { chatLink, chatLinkScan, scanChatLink } from './core/chat-links.js';
 import { startFeature, featureRequest, workspaceCall } from "./features.js";
@@ -243,11 +243,14 @@ function parts(text) {
 // Prepared cooperatively with the rest of the timeline, before any row is
 // painted. The same source reuses bounded, theme-independent geometry.
 function* prepareDiagrams(ps, id, opened, previous) {
+  let count=0;
   for (const [n,p] of ps.entries()) {
     yield;
     if (!isMermaid(p)) continue;
     const prior=previous?.get(`${id}:c${n}`);
-    p.result=prior?.code===p.code&&prior?.closed===p.closed&&prior.result?prior.result:flowchart(p.code,p.closed);
+    p.eligible=++count<=FLOW_LIMITS.perMessage;
+    p.result=!p.eligible?{error:FLOW_WORDS.many}
+      :prior?.eligible&&prior.code===p.code&&prior.closed===p.closed&&prior.result?prior.result:flowchart(p.code,p.closed);
     Object.assign(p,p.result);
     const display=sourceForDisplay(p.code);
     p.display=display.text;
@@ -265,7 +268,7 @@ function codeRows(p,id,n,clip,side) {
   const head = { kind:'codehead',id:`${id}:h${n}`,lang:p.lang,code:p.code,side,
     diagram:!!p.drawing,source:!!p.source };
   const body = { kind:p.preview?'diagram':'code',id:`${id}:c${n}`,lang:p.lang,code:p.code,side,
-    drawing:p.preview?p.drawing:undefined,result:p.result,closed:p.closed,display:p.display,error:p.error,clip:p.preview?undefined:clip };
+    drawing:p.preview?p.drawing:undefined,result:p.result,closed:p.closed,eligible:p.eligible,display:p.display,error:p.error,clip:p.preview?undefined:clip };
   return [head,body];
 }
 const diagramAvailable = (width,column,side) => Math.max(1,Math.min(width-36,column,side==='user'?Math.max(240,Math.floor(Math.min(width,column)*0.8)):Infinity)-24);

@@ -3,13 +3,14 @@
 // Dagre is the same pinned, DOM-free layout engine in both Chat clients.
 import dagre from './vendor/dagre.js';
 
-export const FLOW_LIMITS = Object.freeze({ source: 4000, nodes: 20, edges: 28, label: 100, extent: 3600, points: 240, sourceLines: 120 });
+export const FLOW_LIMITS = Object.freeze({ source: 4000, nodes: 20, edges: 28, label: 100, extent: 3600, points: 240, sourceLines: 120, perMessage: 12 });
 export const FLOW_WORDS = Object.freeze({
   source: 'Show source', preview: 'Show preview',
   incomplete: 'Preview waits for a closing fence.',
   unsupported: 'This Mermaid syntax is not supported in Chat. Edit or copy the source below.',
   invalid: 'Could not read this flowchart. Check the syntax or copy the source below.',
   large: 'This flowchart is too large to preview. Copy the source to view it elsewhere.',
+  many: 'This message has too many diagrams to preview them all. Copy the source below.',
   scroll: 'Scroll to see the rest of the diagram.',
   shortened: 'Source display shortened. Copy gets the full source.',
 });
@@ -186,7 +187,10 @@ function layout(parsed) {
     const lines = e.label ? labelLines(e.label, 15) : [];
     g.setEdge(ids.get(e.from), ids.get(e.to), { ...e, lines, width: lines.length ? textWidth(lines) + 8 : 0, height: lines.length * FLOW_LINE + (lines.length ? 6 : 0), labelpos: 'c' }, String(i));
   });
-  dagre.layout(g);
+  // Use the fixed initial ordering rather than the iterative crossing
+  // minimization heuristic. The bounded graph still gets routed by Dagre;
+  // long restored conversations never pay for optimizing every crossing.
+  dagre.layout(g,{disableOptimalOrderHeuristic:true});
   const nodes = g.nodes().map(id => g.node(id));
   const edges = g.edges().map(id => {
     const e = g.edge(id), points = e.points.map(point);

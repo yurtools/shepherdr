@@ -44,6 +44,7 @@ message row until the log supplies the confirmed message.
 
 The preview is bounded to 4,000 source characters, 20 nodes, 28 edges, 100
 characters per label, 240 routed points, and a 3,600-unit drawing extent.
+At most 12 diagrams are laid out per message; further fences show source.
 Oversized source is shown up to 4,000 characters/120 lines with a note; Copy
 still gets all of it. The drawing viewport is at most 420 px high. Horizontal
 overflow stays inside the card rather than enlarging the pane.
@@ -54,6 +55,8 @@ overflow stays inside the card rather than enlarging the pane.
 and media extraction. `core/chat-flowchart.js` parses only the supported data
 grammar, maps node IDs to internal numeric IDs and passes fixed, bounded graph
 inputs to [Dagre](https://github.com/dagrejs/dagre) 1.1.5 (Graphlib 2.2.4).
+The layout uses longest-path ranking and fixed initial ordering rather than
+iterative crossing minimization.
 The vendor file is the exact pinned upstream browser bundle with its MIT
 license and a small ESM wrapper, allowing it to run without Node or a DOM in
 the native mod. The package/lock and a test verify the bundled version and

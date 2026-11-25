@@ -112,6 +112,8 @@ How to run, build and lay out the code: [docs/develop.md](docs/develop.md).
   `subprocess.run(..., start_new_session=True)` and record its actual return code; `OK` alone does not verify a clean exit.
 - If the tool session ends before long guarded Python discovery completes, use a detached `setsid` wrapper with
   `subprocess.run(..., start_new_session=True)` and a scratch exit-code file; keep `home_guard` enabled.
+- If spawn-heavy Bun tests time out or the tool session exits 143, rerun the guarded root suite in a detached
+  subprocess with `start_new_session=True` and record its actual exit code, as for Python.
 - If a restricted Codex sandbox blocks isolated loopback or Unix socket test fixtures, request access for the
   guarded rerun; keep `home_guard` enabled rather than weakening fixture isolation.
 - herdr-task tests that need a real task list on disk plus a faked `begin()`: reuse Scheduled's setUp/run_cmd/tick_at as class

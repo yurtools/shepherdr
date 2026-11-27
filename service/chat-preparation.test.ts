@@ -3,6 +3,8 @@ import { readFileSync } from 'node:fs';
 import * as fences from '../core/chat-fences.js';
 import * as flow from '../core/chat-flowchart.js';
 import * as view from '../core/chat-view.js';
+import * as find from '../core/chat-find.js';
+import * as markdown from '../core/chat-find-markdown.js';
 import * as preparation from '../core/chat-preparation.js';
 import * as geometry from '../core/chat-layout.js';
 import { dayLabel, dayOf } from '../mods/chat/days.js';
@@ -14,12 +16,12 @@ function method(name: string) {
   if (!match) return '';
   return source.slice(match.index, source.indexOf('\n  }', match.index) + 4);
 }
-const names = ['rows', 'rowPlan', 'spaced', 'spacedPlan', 'foldOf', 'key', 'guess', 'guessBare', 'findMatches', 'findRow',
+const names = ['rows', 'rowPlan', 'spaced', 'spacedPlan', 'foldOf', 'key', 'guess', 'guessBare', 'projectFind', 'findData', 'findMatches', 'findRow', 'findOccurrence', 'syncFind', 'findStep', 'refreshFindLink',
   'newsLines', 'newsPlan', 'resolveArts', 'resolveArtsPlan', 'timelineCards', 'timelinePlan',
   'historyVisible', 'historyIdentity', 'historyCurrent', 'historyEvent', 'historyContext', 'historyStamp', 'historyPlan', 'prepareHistory', 'scheduleHistory', 'clearHistory'];
 export function historyHost(items: any[], sharedRead: (key: string) => any = () => null) {
   const jobs: any[] = [], stats = { items: 0, keys: 0, guesses: 0, lookups: 0, notifies: 0 };
-  const dependencies: any = { ...fences, ...flow, ...view, ...geometry, ...preparation,
+  const dependencies: any = { ...fences, ...flow, ...view, ...geometry, ...preparation, ...find, ...markdown, typed: view.literal,
     // Pending/reply rows belong to "now". Keep calendar arithmetic real and the fixture clock fixed.
     Date: class extends Date { static now() { return 1795132800000; } },
     dayLabel: (at: number) => `Day ${Math.floor(at / 86400000)}`, dayOf: (at: number) => Math.floor(at / 86400000) * 86400000, pilotLine,
@@ -277,4 +279,56 @@ test('Find uses prepared match counts and indexed match selection on every repai
  const p=h.v.history.snapshot;expect(p.findTotal).toBe(p.found.reduce((n:number,m:any)=>n+m.n,0));
  let offset=0;for(const match of p.found){h.v.findIdx=offset;expect(h.v.findRow(p.found)).toBe(match);offset+=match.n;}
  h.v.findIdx=p.findTotal+10;expect(h.v.findRow(p.found)).toBe(p.found.at(-1));
+});
+
+test('Find prepares literal occurrences, opens hidden source, keeps Copy and selects another hit after earlier pages',()=>{
+  const at=1772946000000;
+  const code=['const hit = 1;',...Array.from({length:40},(_,i)=>`// code line ${i}`),'const HIT = 2;'].join('\n');
+  const diagram='graph LR\nA[Review hit] --> B[Publish]  ';
+  const items=[{kind:'user',id:'u',text:'hit and HIT [a+b]',at},{kind:'agent',id:'a',text:'**hi**t `HIT`',at:at+1},
+    {kind:'agent',id:'c',text:'```js\n'+code+'\n```',at:at+2},{kind:'agent',id:'d',text:'```mermaid\n'+diagram+'\n```',at:at+3}];
+  const h=historyHost(items);h.v.findQuery=()=> 'hit';h.v.findIdx=0;h.request();h.drain();
+  let p=h.v.history.snapshot;expect(p.findTotal).toBe(7);
+  expect(p.found.filter((m:any)=>m.id.startsWith('c:'))).toHaveLength(2);
+  expect(p.rows.find((r:any)=>r.id==='c:h0').code).toBe(code);
+  expect(p.rows.find((r:any)=>r.id==='d:h0')).toMatchObject({source:true,findSource:true,code:diagram});
+  h.v.syncFind(p);for(let i=0;i<5;i++)h.v.findStep(1,p.rows,h.cx);
+  const selected=h.v.findSelected;expect(selected.text.slice(selected.start,selected.end)).toBe('HIT');expect(selected.id).toContain('c:c0');
+  h.v.conv={items:[{kind:'agent',id:'previous',text:'hit HIT',at:at-1000},...items]};h.request();h.drain();
+  p=h.v.history.snapshot;h.v.syncFind(p);expect(p.findTotal).toBe(9);expect(h.v.findSelected).toEqual(selected);expect(h.v.findIdx).toBe(7);
+  h.v.width=320;h.v.column=()=>284;h.request();h.drain();p=h.v.history.snapshot;h.v.syncFind(p);
+  expect(h.v.findSelected.text.slice(h.v.findSelected.start,h.v.findSelected.end)).toBe('HIT');expect(h.v.findSelected.ordinal).toBe(selected.ordinal);
+  h.v.findQuery=()=> '[a+b]';expect(h.v.findMatches(p.rows)).toEqual([]);h.request();h.drain();expect(h.v.history.snapshot.findTotal).toBe(1);
+  h.v.findQuery=()=> 'unavailable';h.request();h.drain();expect(h.v.history.snapshot.findTotal).toBe(0);
+  h.v.findQuery=()=> '';h.request();h.drain();p=h.v.history.snapshot;expect(p.rows.find((r:any)=>r.id==='d:c0').kind).toBe('diagram');expect(p.findTotal).toBe(0);
+  expect(items[0].text).toBe('hit and HIT [a+b]');
+});
+
+test('Find bounds occurrence storage and uses separate virtual rows for a long Markdown reply',()=>{
+  const at=1772946000000, long='first hit\n\n'+('A paragraph of retained text.\n\n'.repeat(80))+'**last hit**';
+  const h=historyHost([{kind:'agent',id:'long',text:long,at}]);h.v.findQuery=()=> 'hit';h.v.findIdx=0;h.request();h.drain();
+  let p=h.v.history.snapshot;expect(p.findTotal).toBe(2);expect(p.found[0].index).toBeLessThan(p.found[1].index);
+  expect(p.rows.find((r:any)=>r.kind==='band').bar.target).toBe(long);
+  h.v.conv={items:[{kind:'agent',id:'many',text:'x '.repeat(find.FIND_LIMITS.matches+100),at}]};h.v.findQuery=()=> 'x';h.request();h.drain();
+  p=h.v.history.snapshot;expect(p.findTotal).toBe(find.FIND_LIMITS.matches);expect(p.findLimited).toBe(true);
+});
+
+
+test('native rich Markdown and a file name keep their source and precise match context',()=>{
+  const at=1772946000000,table='| Key | Value |\n|---|---|\n| needle | |';
+  const h=historyHost([{kind:'agent',id:'table',text:table,at},{kind:'user',id:'image',text:'Picture',paths:['/synthetic/needle.png'],images:1,at:at+1}]);
+  h.v.findQuery=()=> 'needle';h.request();h.drain();const p=h.v.history.snapshot;
+  expect(p.findTotal).toBe(2);const rich=p.rows.find((r:any)=>r.id==='table');
+  expect(rich.text).toBe(table);expect(rich.find.contextOnly).toBe(true);expect(rich.find.projection).toBeUndefined();
+  expect(p.rows.find((r:any)=>r.kind==='imgs').find).toMatchObject({imageNames:true,hits:[{text:'needle.png',start:0,end:6}]});
+});
+
+
+test('Find keeps ordinary fenced source from a person on the person’s side',()=>{
+  const raw='My literal source:\n\n```js\nconst needle = 1;\n```';
+  const h=historyHost([{kind:'user',id:'person',text:raw,at:1772946000000}]);h.v.findQuery=()=> 'needle';h.request();h.drain();
+  const p=h.v.history.snapshot;expect(p.findTotal).toBe(1);
+  expect(p.rows.find((r:any)=>r.kind==='codehead')).toMatchObject({side:'user',code:'const needle = 1;'});
+  expect(p.rows.find((r:any)=>r.kind==='code')).toMatchObject({side:'user',code:'const needle = 1;'});
+  expect(p.rows.find((r:any)=>r.kind==='band').bar.target).toBe(raw);
 });

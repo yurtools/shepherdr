@@ -1,6 +1,8 @@
 import {expect,test} from 'bun:test';
 import {readFileSync} from 'node:fs';
 import * as links from '../core/chat-links.js';
+import * as find from '../core/chat-find.js';
+import * as findMarkdown from '../core/chat-find-markdown.js';
 import {literal,initialOf,clock,imagesLine,WORDS} from '../core/chat-view.js';
 import * as mentions from '../core/mentions.js';
 import {element,built} from './fake-gpui';
@@ -18,13 +20,13 @@ function host(){
  const stats={chars:0,scans:0,collects:0,notifies:0,reads:0,reconciled:0,cleanup:0};
  const div=()=>element('div');
  let reload:any=[];const execs:any[]=[];
- const dependencies:any={exec:async(...args:any[])=>{execs.push(args);return {stdout:JSON.stringify(reload)};},...links,literal,initialOf,clock,imagesLine,WORDS,mentions,div,h_flex:div,v_flex:div,svg:div,
+ const dependencies:any={exec:async(...args:any[])=>{execs.push(args);return {stdout:JSON.stringify(reload)};},...links,...find,...findMarkdown,literal,initialOf,clock,imagesLine,WORDS,mentions,div,h_flex:div,v_flex:div,svg:div,
   LINE_H:21,QUIET_PY:1,BgJobs:class {},LinkedMarkdown:class {},zoomOf:()=>v.zoom,
-  taskRef:(x:any)=>x?.ref??String(x?.id),TextView:{markdown:(id:string,text:string)=>{const el=element('markdown');el.id(id).child(text);return el;}},
+  taskRef:(x:any)=>x?.ref??String(x?.id),TextView:{markdown:(id:string,text:string)=>{const el=element('markdown');el.id(id).child(text);return el;},html:(id:string,text:string)=>{const el=element('html');el.id(id).child(text);return el;}},
   scanChatLink:(scan:any,limit:number)=>{stats.scans++;const n=links.scanChatLink(scan,limit);stats.chars+=n;return n;},
  };
  const helpers=source.slice(source.indexOf('const wrapLines ='),source.indexOf('const ICONS ='))+'\n'+source.match(/^const typed = .*$/m)![0];
- const methods=['loadTasks','loadSpaceTasks','taskSig','key','findMark','mentionsIn','mentionableTasks','rowBare','clearHistory','reset','close','linkedMarkdownStamp','linkedMarkdownInputs','linkedMarkdownCurrent','retireLinkedMarkdown','drainLinkedMarkdown','disposeLinkedMarkdown','reconcileLinkedMarkdown','clearLinkedMarkdown','prepareLinkedMarkdown','scheduleLinkedMarkdown','stepLinkedMarkdown','linkedMarkdownView'].map(method).join('\n');
+ const methods=['loadTasks','loadSpaceTasks','taskSig','key','projectFind', 'findData','findFor','findActive','findColors','mentionsIn','mentionableTasks','rowBare','clearHistory','reset','close','linkedMarkdownStamp','linkedMarkdownInputs','linkedMarkdownCurrent','retireLinkedMarkdown','drainLinkedMarkdown','disposeLinkedMarkdown','reconcileLinkedMarkdown','clearLinkedMarkdown','prepareLinkedMarkdown','scheduleLinkedMarkdown','stepLinkedMarkdown','linkedMarkdownView'].map(method).join('\n');
  const C=new Function(...Object.keys(dependencies),`${helpers};return class {${methods}}`)(...Object.values(dependencies));
  const v:any=new C();
  Object.assign(v,{measureGen:1,width:1200,zoom:1,columnWidth:1000,opened:new Set(),unfolded:new Set(),rowRevisions:new Map(),results:new Map(),views:{},query:'',route:'pane',end:0,pending:[],replied:[]});
@@ -53,9 +55,9 @@ function host(){
   built.length=0;
  }
  function drain(){let n=0;while(jobs.length){if(++n>10000)throw Error('planner did not settle');one();}}
- function prepare(rows:any[],keys=true){if(keys)rows.forEach(r=>v.key(r));v.prepareLinkedMarkdown(rows,theme,cx,new Map(rows.map(r=>[r.id,r])));}
+ function prepare(rows:any[],keys=true){if(v.query)rows.forEach(r=>{r.find=v.findData(r,v.query);});if(keys)rows.forEach(r=>v.key(r));v.prepareLinkedMarkdown(rows,theme,cx,new Map(rows.map(r=>[r.id,r])));}
  const entry=(id='one')=>v.linkMarkdownWork.rows.get(id);
- const lookup=(row:any)=>{const p=entry(row.id)?.views?.values().next().value;return p?v.linkedMarkdownView(row,p.id,p.text):null;};
+ const lookup=(row:any)=>{const p=entry(row.id)?.views?.values().next().value;return p?v.linkedMarkdownView(row,p.id,p.text,p.format):null;};
  return {execs,reload(value:any){reload=value;},v,stats,jobs,views,steps,cx,one,drain,prepare,entry,lookup,onCreate(fn:()=>void){duringCreate=fn;}};
 }
 
@@ -114,7 +116,7 @@ test('layout, search, route and mention changes replan without rescanning unchan
  for(const mutate of [()=>h.v.measureGen++,()=>h.v.width--,()=>h.v.columnWidth--,()=>h.v.zoom=1.2,()=>h.v.query='doc',()=>h.v.route='other',()=>h.v.reach={spaces:[]},()=>h.v.tasks=[],()=>h.v.spaceTasks=[]]){
   mutate();h.prepare([{...row}]);expect(h.lookup(row)).toBeNull();h.drain();expect(h.lookup(row)).not.toBeNull();
  }
- expect(h.stats.chars).toBe(chars);expect(h.lookup(row).props.key).toBe('other');expect(h.lookup(row).props.text).toContain('**doc**');
+ expect(h.stats.chars).toBe(chars);expect(h.lookup(row).props.key).toBe('other');expect(h.lookup(row).props.text).toContain('<mark color="#0088ff55">doc</mark>');expect(h.lookup(row).props.format).toBe('html');
 });
 
 test('fold revisions, clipping and unfolding replan while preserving content classification',()=>{

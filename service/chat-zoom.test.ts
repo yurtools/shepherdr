@@ -35,7 +35,7 @@ mock.module("herdr", () => fakeHerdr({
   readTextFile: async () => null, writeTextFile: async () => {}, watchFolder: () => {},
 }));
 mock.module("gpui-kit", () => fakeGpuiKit({ View: class {}, div: el, svg: el, image: el }));
-mock.module("gpui-base", () => fakeGpuiBase({ v_flex: el, h_flex: el, v_virtual_list: el, Scrollbar: el, TextView: { markdown: el } }));
+mock.module("gpui-base", () => fakeGpuiBase({ v_flex: el, h_flex: el, v_virtual_list: el, Scrollbar: el, TextView: { markdown: el, html: el } }));
 (globalThis as any).localStorage ??= { getItem: () => null, setItem: () => {}, removeItem: () => {} };
 
 const { default: Chat } = await import("../mods/chat/main.js");

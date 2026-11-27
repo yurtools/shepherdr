@@ -68,7 +68,7 @@ State: ✓ matches, ◇ web-only form (why), ✗ still differs (why).
 | Notice buttons Close / Close chat / Back to tasks | W close the chat pane | none | ◇ the web has no chat pane to close: the sidebar or Back leaves it |
 | "No agent to show" | W a chat pane tied to no agent | none | ◇ every web chat is an agent's or a space's Assistant chat |
 | Scrolled up | W:3688 pill "Latest", or "1 question below" with a red dot that goes to the card | C:2510 the same pill and words (`questionsBelow`), unread count kept | ✓ |
-| Find matches lit | W tinted rows | F CSS highlights on the words | ◇ the browser's text highlight |
+| Find matches lit | W parsed text marks, source spans, active readout | F CSS range highlights on the words | See [Find limits and native navigation](../chat-find.md) |
 
 ## Message actions (the band under a message)
 
@@ -159,12 +159,15 @@ State: ✓ matches, ◇ web-only form (why), ✗ still differs (why).
 
 ## Find (Ctrl+F)
 
+The occurrence-based search, earlier-page bounds and native/web rendering
+boundaries are described in [Find in Chat](../chat-find.md).
+
 | Element | Window | Web | State |
 |---|---|---|---|
-| Box | W:1578 magnifier, "Find in chat" | F:42 WORDS.find | ✓ |
-| Count | W "2 of 7", "No matches" | F "2 of 7", WORDS.noMatches | ✓ |
+| Box | W magnifier, "Find in chat" | F WORDS.find; Chat header button for touch | ✓ |
+| Count | W occurrence "2 of 7", "No matches", partial/loaded status | F same occurrence counter and partial status | ✓ |
 | Search earlier | W "Search earlier" ("Loading…") while pages are left | F:108 same (action `earlier`) | ✓ (was missing) |
-| Up, down, close; Enter, Shift+Enter, Esc | W | F | ✓ |
+| Up, down, close; Enter, Shift+Enter, F3, Shift+F3, Esc | W | F | ✓ |
 
 ## Dictation and calls
 

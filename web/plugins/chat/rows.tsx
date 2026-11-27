@@ -15,6 +15,9 @@ import type { Chat, Message, ReplyQuote } from '@shared/types.ts'
 import { openAccept, useAccepting } from '@client/screens/Accept.tsx'
 import { ForkIcon, openPicker, RewindIcon } from '@plugins/reactions/client.tsx'
 import { Markdown } from './markdown.tsx'
+import { useFindQuery } from './find-scope.ts'
+import { containsFind } from '@core/chat-find.js'
+import { markdownProjection, markdownRanges } from '@core/chat-find-markdown.js'
 import { forkChat } from './fork.ts'
 import { jumpTo, startReply } from './reply.ts'
 
@@ -166,17 +169,20 @@ export function Chips({ msg }: { msg: Message }) {
 
 /** the window's quiet row: a chevron, its label, its first line; it opens to the words */
 function Opens({ label, text, bare, children }: { label: ReactNode; text?: string; bare?: boolean; children?: ReactNode }) {
-  const [open, setOpen] = useState(false)
+  const [manual, setOpen] = useState(false)
+  const q = useFindQuery()
+  const forced = !!q && (containsFind(text, q) || markdownRanges(markdownProjection(text), q, 1).hits.length > 0)
+  const open = manual || forced
   const first = String(text ?? '').split('\n').find((l) => l.trim()) ?? ''
   const Chev = open ? ChevronDownIcon : ChevronRightIcon
   return (
     <div className="flex w-full flex-col">
-      <button type="button" aria-expanded={open} onClick={() => setOpen(!open)} className={clsx('flex w-full min-w-0 items-center gap-1.5 rounded-[7px] px-1.5 py-px text-left hover:bg-hover phone:py-1.5', quiet)}>
+      <button type="button" aria-expanded={open} disabled={forced} onClick={() => setOpen(!manual)} className={clsx('flex w-full min-w-0 items-center gap-1.5 rounded-[7px] px-1.5 py-px text-left hover:bg-hover phone:py-1.5', quiet)}>
         <Chev aria-hidden className="size-3 shrink-0" />
         <span className="shrink-0 text-fg2">{label}</span>
         {!open && !bare && first ? <span className="min-w-0 flex-1 truncate">{first}</span> : null}
       </button>
-      {open ? <div className="pt-1.5 pb-1 pl-[24px] text-[0.78125rem] text-fg2 phone:text-[0.875rem]">{children ?? <Markdown text={text ?? ''} />}</div> : null}
+      {open ? <div data-text className="pt-1.5 pb-1 pl-[24px] text-[0.78125rem] text-fg2 phone:text-[0.875rem]">{children ?? <Markdown text={text ?? ''} />}</div> : null}
     </div>
   )
 }
@@ -208,12 +214,15 @@ function Avatar({ name, own }: { name: string; own?: boolean }) {
  *  bubble in the accent, who (→ whom) a step stronger, its first words, its time; it opens in place to the whole
  *  message as a speech bubble from that agent, its initial beside the name, and closes again from the same line */
 function AgentRow({ from, to, text, at }: { from: string; to?: string; text?: string; at?: number }) {
-  const [open, setOpen] = useState(false)
+  const [manual, setOpen] = useState(false)
+  const q = useFindQuery()
+  const forced = !!q && (containsFind(text, q) || markdownRanges(markdownProjection(text), q, 1).hits.length > 0)
+  const open = manual || forced
   const first = String(text ?? '').split('\n').find((l) => l.trim()) ?? ''
   const time = at ? clock(at) : ''
   return (
     <div data-from={to ? undefined : from} data-to={to} className="flex w-full flex-col">
-      <button type="button" aria-expanded={open} onClick={() => setOpen(!open)}
+      <button type="button" aria-expanded={open} disabled={forced} onClick={() => setOpen(!manual)}
         className="flex w-full min-w-0 items-center gap-1.5 rounded-[7px] px-1.5 py-0.5 text-left text-[0.75rem]/5 text-fg2 hover:bg-hover phone:py-1.5 phone:text-[0.8125rem]/5">
         {open ? <Avatar name={from} own={!!to} /> : <ChatBubbleLeftEllipsisIcon aria-hidden className="size-4 shrink-0 fill-accent" />}
         <span className="shrink-0 font-medium text-fg"><span className="sr-only">Message from </span>{from}</span>
@@ -228,7 +237,7 @@ function AgentRow({ from, to, text, at }: { from: string; to?: string; text?: st
         {time ? <span className="shrink-0 text-fg3 tabular-nums">{time}</span> : null}
       </button>
       {open ? (
-        <div className="mt-1 mb-1 ml-8 max-w-[min(100%_-_2rem,640px)] self-start rounded-[14px] rounded-tl-[4px] bg-bubble px-3 py-2 text-[0.8125rem] text-fg phone:text-[0.9375rem]">
+        <div data-text className="mt-1 mb-1 ml-8 max-w-[min(100%_-_2rem,640px)] self-start rounded-[14px] rounded-tl-[4px] bg-bubble px-3 py-2 text-[0.8125rem] text-fg phone:text-[0.9375rem]">
           <Markdown text={text ?? ''} />
         </div>
       ) : null}
@@ -254,7 +263,7 @@ export function NewsRow({ msg }: { msg: Message }) {
       <span className="grid size-3.5 shrink-0 place-items-center">{mark}</span>
       <span className="shrink-0 font-medium text-fg2">{n.ref}</span>
       <span className={clsx('shrink-0', n.live ? 'text-need' : 'text-fg2')}>{n.what}</span>
-      {n.text ? <><span className="shrink-0">·</span><span className="min-w-0 flex-1 truncate">{n.text}</span></> : <span className="flex-1" />}
+      {n.text ? <><span className="shrink-0">·</span><span data-text className="min-w-0 flex-1 truncate">{n.text}</span></> : <span className="flex-1" />}
       {n.accept ? (
         <button type="button" disabled={busy} onClick={(e) => { e.stopPropagation(); openAccept(n.task) }}
           className="press-dim ml-1 h-5 shrink-0 rounded-[6px] bg-fg px-2 text-[0.6875rem]/5 font-medium text-bg disabled:opacity-60 phone:h-7 phone:px-2.5 phone:text-xs/7">
@@ -270,7 +279,7 @@ export function EndedRow({ msg }: { msg: Message }) {
   return (
     <div className={clsx('flex w-full min-w-0 items-center gap-1.5 px-1.5 py-px', quiet)}>
       <CheckIcon className="size-3 shrink-0" />
-      <span className="min-w-0 truncate">{msg.ended}</span>
+      <span data-text className="min-w-0 truncate">{msg.ended}</span>
     </div>
   )
 }
@@ -280,7 +289,7 @@ export function PilotRow({ msg }: { msg: Message }) {
   return (
     <div data-pilot className={clsx('flex w-full min-w-0 items-center gap-1.5 px-1.5 py-px', quiet)}>
       <AutopilotIcon aria-hidden className="size-3 shrink-0" />
-      <span className="min-w-0 truncate">{msg.pilot}</span>
+      <span data-text className="min-w-0 truncate">{msg.pilot}</span>
     </div>
   )
 }
@@ -335,7 +344,7 @@ export function ImagesLine({ n }: { n: number }) {
 
 /** an error the CLI wrote: its words in red */
 export function ErrorRow({ msg }: { msg: Message }) {
-  return <div className="w-full self-start text-[0.78125rem] text-need phone:text-[0.875rem]">{msg.text}</div>
+  return <div data-text className="w-full self-start text-[0.78125rem] text-need phone:text-[0.875rem]">{msg.text}</div>
 }
 
 /** the agent's own question as the log has it: red while its dialog is open; once it's gone, calm */
@@ -346,7 +355,7 @@ export function AskedRow({ msg }: { msg: Message }) {
       <div className={clsx('text-[0.75rem] font-medium phone:text-[0.8125rem]', closed ? 'text-fg3' : 'text-need')}>
         {msg.asked === 'answered' ? WORDS.askedAnswered : closed ? WORDS.askedClosed : WORDS.asked}
       </div>
-      <div className={closed ? 'text-fg2' : 'text-fg'}><Markdown text={msg.text ?? ''} /></div>
+      <div data-text className={closed ? 'text-fg2' : 'text-fg'}><Markdown text={msg.text ?? ''} /></div>
     </div>
   )
 }
@@ -368,7 +377,7 @@ export function HeadRow({ chat }: { chat: Chat }) {
   const count = chat.messages.length
   useEffect(() => {
     const el = ref.current
-    if (!el || !chat.earlier) return
+    if (!el || !chat.earlier || chat.historyLimited) return
     const io = new IntersectionObserver(([e]) => {
       // only while the person scrolls up (the window's wheel): a page loaded in its place doesn't load the next
       if (!e?.isIntersecting || asked.current === count || Date.now() - scrolledUp > 1500) return
@@ -377,22 +386,23 @@ export function HeadRow({ chat }: { chat: Chat }) {
     })
     io.observe(el)
     return () => io.disconnect()
-  }, [chat.earlier, chat.key, count])
+  }, [chat.earlier, chat.historyLimited, chat.key, count])
   if (!chat.top && !chat.earlier) return null
-  return <div ref={ref} data-head={chat.top ? 'top' : 'earlier'} className="w-full py-[7px] text-center text-[0.75rem] text-fg3 phone:text-[0.8125rem]">{chat.top ? WORDS.top : WORDS.loading}</div>
+  return <div ref={ref} data-head={chat.top ? 'top' : 'earlier'} className="w-full py-[7px] text-center text-[0.75rem] text-fg3 phone:text-[0.8125rem]">{chat.top ? WORDS.top : chat.historyLimited ? "Earlier history limit reached" : WORDS.loading}</div>
 }
 
 /* ---------- images under a message ---------- */
 
 /** each image whole, its shape kept, fitted in 320×220 (one) or 200×140 (several), on the message's side; a press opens
  *  the viewer. sizes are learnt as each one loads */
-export function Thumbs({ files, chat, you, faded, open, width }: { files: { name: string; path: string; url: string; caption?: string }[]; chat: string; you: boolean; faded?: boolean; open: (i: number) => void; width: number }) {
+export function Thumbs({ files, chat, you, faded, open, width }: { files: { name: string; path: string; url: string; caption?: string; messageId?:string; fileName?:string }[]; chat: string; you: boolean; faded?: boolean; open: (i: number) => void; width: number }) {
+  const q=useFindQuery()
   const [sizes, setSizes] = useState<Record<string, { w: number; h: number }>>({})
   const fit = fitThumbs(files.map((f) => sizes[f.path] ?? null), width || Infinity)
   return (
     <div className={clsx('flex max-w-full items-start', you ? 'justify-end self-end' : 'justify-start self-start', faded && 'opacity-55')} style={{ gap: THUMB_GAP }} data-thumbs={chat}>
       {files.map((f, i) => (
-        <div key={f.path} className="flex shrink-0 flex-col gap-1" style={{ width: fit.boxes[i].w }}>
+        <div key={f.path} data-find-row={f.messageId} data-chat={f.messageId?chat:undefined} data-find-ignore={faded?"":undefined} className="flex shrink-0 flex-col gap-1" style={{ width: fit.boxes[i].w }}>
           <button type="button" aria-label={`Open ${f.name}`} onClick={() => open(i)}
             style={{ width: fit.boxes[i].w, height: fit.boxes[i].h }}
             className="relative shrink-0 overflow-hidden rounded-[8px] bg-bubble after:pointer-events-none after:absolute after:inset-0 after:rounded-[inherit] after:shadow-[inset_0_0_0_1px_color-mix(in_srgb,var(--fg)_10%,transparent)]">
@@ -400,7 +410,8 @@ export function Thumbs({ files, chat, you, faded, open, width }: { files: { name
               onLoad={(e) => { const im = e.currentTarget; if (!sizes[f.path] && im.naturalWidth) setSizes((s) => ({ ...s, [f.path]: { w: im.naturalWidth, h: im.naturalHeight } })) }} />
           </button>
           {/* an agent's words for it ("Before", "After"), when it gave some */}
-          {f.caption ? <div className="truncate px-0.5 text-[0.75rem] text-fg3 phone:text-[0.8125rem]">{f.caption}</div> : null}
+          {f.caption ? <div data-find-field className="truncate px-0.5 text-[0.75rem] text-fg3 phone:text-[0.8125rem]">{f.caption}</div> : null}
+          {q&&f.fileName&&f.fileName!==f.caption&&containsFind(f.fileName,q)?<div data-find-field className="break-all text-xs text-fg2">{f.fileName}</div>:null}
         </div>
       ))}
     </div>

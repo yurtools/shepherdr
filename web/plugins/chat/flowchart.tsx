@@ -1,6 +1,8 @@
 import { Fragment, memo, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode, type MouseEvent } from 'react'
 import { copyText } from '@client/copy.ts'
 import { CheckIcon, DocumentDuplicateIcon as CopyIcon } from '@heroicons/react/16/solid'
+import { useFindQuery } from './find-scope.ts'
+import { containsFind, FIND_LIMITS, diagramLabelTexts } from '@core/chat-find.js'
 import { mermaidParts, isMermaid } from '@core/chat-fences.js'
 import { arrowTriangle, flowchart, sourceForDisplay, nodePolygon, FLOW_FONT, FLOW_LIMITS, FLOW_LINE, FLOW_WORDS, fitFlowchart, fitCamera, flowCamera, zoomFlowchart, FLOW_ZOOM_STEP } from '@core/chat-flowchart.js'
 
@@ -189,20 +191,28 @@ export const FlowchartCard = memo(function FlowchartCard({ code, closed, allowed
   const display = useMemo(()=>sourceForDisplay(code),[code])
   const [source,setSource] = useState(false)
   const {copied,copy}=useFlowCopy(code)
-  const preview = !!drawing && !source
+  const query = useFindQuery()
+  const searchSource = !!query && containsFind(code, query)
+  const shown = query ? code.slice(0, FIND_LIMITS.chars) : display.text
+  const labels = query && !searchSource && drawing ? diagramLabelTexts(drawing).filter((label:string)=>containsFind(label,query)) : []
+  const preview = !!drawing && !source && !searchSource
   return <div className="flowchart-card" data-flowchart="" style={{width:Math.max(260,Math.min(drawing?.width??360,720))}}
     onPointerDown={e=>e.stopPropagation()} onKeyDown={e=>e.stopPropagation()}>
     <div className="flowchart-head">
       <span className="flowchart-lang">mermaid</span>
-      {drawing && <button type="button" aria-expanded={!preview}
-        onClick={e=>{e.stopPropagation();setSource(!source)}}>{preview?FLOW_WORDS.source:FLOW_WORDS.preview}</button>}
+      {drawing && <button type="button" aria-expanded={!preview} disabled={searchSource}
+        onClick={e=>{e.stopPropagation();setSource(!source)}}>{searchSource?"Search source":preview?FLOW_WORDS.source:FLOW_WORDS.preview}</button>}
       <button type="button" aria-label={copied?'Copied':'Copy code'} onClick={copy}>{copied?<CheckIcon className="size-3 text-ready"/>:<CopyIcon className="size-3"/>}{copied?'Copied':'Copy'}</button>
     </div>
     {preview ? <Preview drawing={drawing!} expand={button=>openDiagram(drawing!,code,button)} /> : <>
       {error && <p className="flowchart-error" role="status">{error}</p>}
-      {display.shortened && <p className="flowchart-error">{FLOW_WORDS.shortened}</p>}
-      <pre className="flowchart-source" aria-label="Mermaid source" tabIndex={0} onPointerDown={e=>e.stopPropagation()}><code>{display.text}</code></pre>
+      {(shown.length < code.length) && <p className="flowchart-error">{FLOW_WORDS.shortened}</p>}
+      <pre data-find-limited={query && shown.length < code.length ? "" : undefined} className="flowchart-source" aria-label="Mermaid source" tabIndex={0} onPointerDown={e=>e.stopPropagation()}><code>{shown}</code></pre>
     </>}
+    {labels.length>0 ? <div className="px-3 pb-2 text-sm">
+      <div data-find-ignore className="text-xs text-fg3">Matching diagram labels</div>
+      {labels.map((label:string,i:number)=><div data-find-field key={i}>{label}</div>)}
+    </div> : null}
   </div>
 })
 

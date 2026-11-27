@@ -1,3 +1,4 @@
+import { FIND_LIMITS } from "../core/chat-find.js";
 import { artifactOwner } from "../core/artifact-owner.js";
 // The web app is Shepherdr 2.1's screen (its design, phone layout and motion, kept as they were), fed with
 // Shepherdr 3's data: this turns what the service builds with the shared core (spaces, tasks, chats) into the
@@ -706,7 +707,7 @@ export class Compat {
       agent = { kind, words, ...(c.model ? { model: c.model, modelLabel: label } : {}), ...(c.effort ? { effort: c.effort } : {}), ...(c.model ? { runtime: { model: c.model, modelLabel: label, ...(c.effort ? { effort: c.effort } : {}), speed: c.fast ? "fast" : "normal", source: "session", at: Date.now() } } : {}) };
     } catch {}
     // the first row: the log's very start, or earlier pages to load as it scrolls up
-    const head = reader.start === 0 ? { top: true } : reader.start ? { earlier: true } : {};
+    const head = reader.start === 0 ? { top: true } : reader.start ? { earlier: true, ...((reader.records?.length ?? 0) >= FIND_LIMITS.pageRecords ? { historyLimited: true } : {}) } : {};
     // the window's lines over the box: what it does while it works (its log's call, else its CLI's status report:
     // core/chat-view.js, as the window's), only waiting (no spinner); asking in its terminal with no card here (Needs you)
     const report = CV.reportMsg(t);
@@ -723,6 +724,6 @@ export class Compat {
       : reader.state === "none" || reader.state === "missing" ? ((t && t.state !== "live") || !t ? "ended" : kind ? "none" : "unsupported")
       : !reader.pinned && (!t || t.state !== "live") && !items.length ? "ended" : null;
     const failed = failedOf(addr);
-    return { key, messages, ...(failed.length ? { failed } : {}), ...head, ...under, ...(note ? { note } : {}), ...(notice ? { notice } : {}), ...(agent ? { agent } : {}), ...(jobs.length ? { jobs } : {}), working: st === "working", cli: reader.kind === "codex" ? "codex" : "claude", ...(reader.pinned || (t && t.state !== "live") ? { finished: true } : {}) };
+    return { key, messages, ...(reader.historyKey ? { historyKey: reader.historyKey } : {}), ...(failed.length ? { failed } : {}), ...head, ...under, ...(note ? { note } : {}), ...(notice ? { notice } : {}), ...(agent ? { agent } : {}), ...(jobs.length ? { jobs } : {}), working: st === "working", cli: reader.kind === "codex" ? "codex" : "claude", ...(reader.pinned || (t && t.state !== "live") ? { finished: true } : {}) };
   }
 }

@@ -863,6 +863,9 @@ export interface Chat {
    *  as the chat scrolls up ("Loading earlier…") */
   top?: boolean
   earlier?: boolean
+  historyLimited?: boolean
+  /** Opaque identity of the current retained log, not its path. */
+  historyKey?: string
   /** 3.0's working line over the box: what it does now (empty: "Working"); waits: only waiting (a clock, no spinner) */
   doing?: string
   waits?: boolean

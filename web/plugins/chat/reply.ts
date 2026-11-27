@@ -60,7 +60,7 @@ const lit = new WeakMap<HTMLElement, ReturnType<typeof setTimeout>>()
 /** scroll a message into view (opened, if it was folded) and light it up for a moment; false when the chat no longer
     has it. card: its card (a question) rather than its words, with the card's buttons in view */
 export function jumpTo(chat: string, id: string, { card = false } = {}) {
-  unfold(id)
+  unfold(chat, id)
   const at = `[data-chat="${CSS.escape(chat)}"]`
   const el = document.querySelector<HTMLElement>(`[data-msg="${CSS.escape(id)}"]${at}`)
   // a question's card sits beside the message's words (or alone, the CLI's own question)

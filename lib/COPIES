@@ -67,10 +67,10 @@ core/pending.js: tasks accept-card tasks-menu chat
 
 core/documents.js: workspace-files workspace-document
 core/document-find.js: workspace-document
-core/vendor/marked.js: workspace-document
-core/vendor/marked.LICENSE: workspace-document
-core/vendor/html-entities.js: workspace-document
-core/vendor/html-entities.LICENSE: workspace-document
+core/vendor/marked.js: workspace-document chat
+core/vendor/marked.LICENSE: workspace-document chat
+core/vendor/html-entities.js: workspace-document chat
+core/vendor/html-entities.LICENSE: workspace-document chat
 pdf-view.js: workspace-document artifacts
 pdf-render.py: workspace-document artifacts
 
@@ -114,3 +114,5 @@ flowchart.js: chat chat-flowchart
 core/chat-flowchart-geometry.js: chat chat-flowchart
 core/chat-flowchart.js: chat
 core/vendor/dagre.js: chat
+core/chat-find.js: chat
+core/chat-find-markdown.js: chat

@@ -412,6 +412,7 @@ export class PanelHost {
   // reaching past it), and on the right the task's base and Accept
   // (no Pin: the task's row menu pins it, SHEP-62).
   barRow(t, st, addr) {
+    const usage = this.taskUsage();
     return h_flex().id("thread-bar").h(24).flex_none().pl(EDGE - 6).pr(EDGE).gap(4).items_center()
       .child(h_flex().id("thread-back").h(24).pl(2).pr(8).gap(2).flex_none().items_center().rounded(RADIUS.control).cursor_pointer()
         .text_size(TEXT.label).text_color(t.muted).hover((s) => s.bg(t.hover).text_color(t.foreground))
@@ -419,21 +420,16 @@ export class PanelHost {
         .child(svg("mods/workspace-chrome/chevron-left.svg").size(14).flex_none())
         .child("Tasks"))
       .child(div().flex_1())
+      .when(Boolean(usage), (el) => el.child(div().id("thread-usage").flex_shrink_1().min_w(0).truncate().text_size(TEXT.label).text_color(t.dim).child(usage)))
       // A task's own base (herdr-task add --base), where it merges into; the folder's default isn't shown.
-      .when(Boolean(this.rec?.base_set && this.rec?.base), (el) => el.child(div().id("thread-base").flex_none().max_w(160).truncate().pr(4)
+      .when(Boolean(this.rec?.base_set && this.rec?.base), (el) => el.child(div().id("thread-base").flex_shrink(1000).min_w(0).max_w(160).truncate().pr(4)
         .text_size(TEXT.label).text_color(t.muted).child(`→ ${this.rec.base}`)))
       // Review: the header's one primary button, opens the Accept card (its Accept merges first when there's something to merge).
       .when(this.acceptable(st, addr), (el) => el.child(button("thread-accept", this.accepting ? "Accepting…" : "Review",
         { kind: "primary", disabled: this.accepting, onClick: (_e, cx) => this.accept(cx) })));
   }
 
-  // The task: its status dot (as its Tasks row, Needs you with its halo) beside the title line,
-  // the id (the list's monospace) and title; under them what its agent says it's doing, with the
-  // minutes left ("Fixing the two failing tests · ~6 min"), on the title's left edge. No agent
-  // logo or name: the chat input's model button says which agent it is. Both lines always keep
-  // their height, so nothing jumps as reports come and go.
-  taskBlock(t, { want, st, addr }) {
-    const report = this.reportLine(st, t);
+  taskUsage() {
     const r = this.rec;
     // Use the list's status rules, not the selected worker alone (another worker/helper may be busy).
     const ts = r ? terminals().filter((k) => k.state === "live" && machineOf(k.address) === (r.machine ?? null)
@@ -446,7 +442,16 @@ export class PanelHost {
     const mine = new Set(live.map((a) => a.address.split("/").pop()));
     const helpers = ts.filter((k) => isHelper(k) && mine.has(String(k.parent).split("/").pop())).map(liveInfo);
     const section = r ? place({ machine: r.machine }, r, { live, helpers }).section : null;
-    const usage = usageLabel(usageOf(r?.usage, section, live));
+    return usageLabel(usageOf(r?.usage, section, live));
+  }
+
+  // The task: its status dot (as its Tasks row, Needs you with its halo) beside the title line,
+  // the id (the list's monospace) and title; under them what its agent says it's doing, with the
+  // minutes left ("Fixing the two failing tests · ~6 min"), on the title's left edge. No agent
+  // logo or name: the chat input's model button says which agent it is. Both lines always keep
+  // their height, so nothing jumps as reports come and go.
+  taskBlock(t, { want, st, addr }) {
+    const report = this.reportLine(st, t);
     const title = want?.title ?? this.rec?.title ?? "";
     return h_flex().id("thread-task").flex_none().px(EDGE).gap(8).items_start().text_color(t.foreground)
       .child(h_flex().w(16).h(22).flex_none().items_center().justify_center().child(this.dot(st, addr)))
@@ -454,8 +459,7 @@ export class PanelHost {
         .child(h_flex().h(22).min_w(0).gap(8).items_center()
           .when(Boolean(want?.task), (el) => el.child(div().flex_none().font_family(ID_FONT).text_size(TEXT.label).text_color(t.dim).child(want.task)))
           .child(div().id("thread-title").flex_1().min_w(0).truncate().text_size(TEXT.title).font_medium().child(title)))
-        .child(h_flex().h(16).min_w(0).gap(6).items_center()
-          .when(Boolean(usage), (el) => el.child(div().id("thread-usage").flex_shrink_1().min_w(0).truncate().text_size(TEXT.label).text_color(t.dim).child(usage)))
+        .child(h_flex().h(16).min_w(0).items_center()
           .child(div().flex_1().min_w(0).when(Boolean(report), (el) => el.child(report)))));
   }
 }

@@ -494,18 +494,20 @@ function TaskPage({ task, middle, pane }: { task: Task; middle?: boolean; pane?:
   // them), else where it merges
   const ref = task.id.slice(task.id.lastIndexOf(':') + 1)
   const usage = usageText(task, useUsageExpiry([task]))
-  const usageEl = usage ? <span data-task-usage title={usageHelp(task)} className="min-w-0 shrink-0 truncate text-fg3 tabular-nums">{usage}</span> : null
+  const usageEl = usage ? <span data-task-usage title={usageHelp(task)} className="block min-w-0 truncate text-fg3 tabular-nums">{usage}</span> : null
   const doing = task.report ? <ReportLine w={task.report} head /> : task.status === 'work' && task.sub ? <span className="truncate">{task.sub}</span> : null
   // its helper agent at work or asking (SHEP-54: its reviewer), named after what it does; its row is over the box
   const helper = [...(task.subagents ?? [])].reverse().find((s) => s.status !== 'done')
   const sub = (
-    <span className="flex min-w-0 items-center gap-1.5">
-      {/* its status leads its quiet line, so Back alone hangs in the gutter and the title starts where the Assistant's does */}
-      {phone ? null : <Dot s={task.status} p={task.report?.progress} className="size-3" />}
-      <span className="shrink-0 text-fg3">{ref}</span>
-      {usageEl ? <><span aria-hidden className="text-fg3">·</span>{usageEl}</> : null}
-      {doing ? <span className="flex min-w-0 items-center gap-1.5"><span aria-hidden className="text-fg3">·</span>{doing}</span> : task.base ? <span className="min-w-0 truncate"><span aria-hidden className="text-fg3">· </span>→ {task.base}</span> : null}
-      {helper ? <span data-task-subagent className="flex min-w-0 shrink-[4] items-center gap-1.5 whitespace-nowrap"><span aria-hidden className="text-fg3">·</span><span className="truncate">{`${helper.title} ${helper.status === 'needs' ? 'needs it' : 'at work'}`}</span></span> : null}
+    <span className="block min-w-0">
+      <span className="flex min-w-0 items-center gap-1.5">
+        {/* its status leads its quiet line, so Back alone hangs in the gutter and the title starts where the Assistant's does */}
+        {phone ? null : <Dot s={task.status} p={task.report?.progress} className="size-3" />}
+        <span className="shrink-0 text-fg3">{ref}</span>
+        {doing ? <span className="flex min-w-0 items-center gap-1.5"><span aria-hidden className="text-fg3">·</span>{doing}</span> : task.base ? <span className="min-w-0 truncate"><span aria-hidden className="text-fg3">· </span>→ {task.base}</span> : null}
+        {helper ? <span data-task-subagent className="flex min-w-0 shrink-[4] items-center gap-1.5 whitespace-nowrap"><span aria-hidden className="text-fg3">·</span><span className="truncate">{`${helper.title} ${helper.status === 'needs' ? 'needs it' : 'at work'}`}</span></span> : null}
+      </span>
+      {usageEl}
     </span>
   )
   // in focus it sits at the window's edge: no line there

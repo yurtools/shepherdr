@@ -24,6 +24,10 @@ herdr-artifact preview <id>             # see it here as the person does: the we
 - Publish checks it first (every block, every picture there); a broken one is refused with why.
 - Don't open it on the person's screen unasked; tell them it's there. Asked to show it: `open`, and give
   them the link it prints.
+- In the native window, `open --tab` (or opening when there is no terminal to split
+  beside) names the new tab after the artifact. Existing unnamed, artifact-only
+  tabs get a title when their installed artifact can be verified; manually named
+  or split tabs keep their names. Sidebar and proof viewers open as before.
 
 ## The recipe
 

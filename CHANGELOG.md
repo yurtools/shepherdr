@@ -35,6 +35,9 @@ The feature groups below are ordered by importance to the user's workflow.
   longer create false unreadable-request cards, and fallback text is agent-neutral.
   Reply menus use Copy message with a keyboard hint for selections; opening the
   menu leaves the clipboard untouched and its text snapshots stay local to Chat.
+  Dedicated native artifact tabs show the report or proof title instead of a number;
+  safely identified older unnamed artifact-only tabs are repaired without renaming
+  custom-named or mixed tabs.
 
 The entries below are retained upstream Shepherdr release history.
 

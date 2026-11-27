@@ -490,7 +490,10 @@ function TaskPage({ task, middle, pane }: { task: Task; middle?: boolean; pane?:
   // as 3.0's task header (mods/chat/panel.js barRow): Review (opens the Accept card) once it is Ready ("Accepting…" while
   // its accept runs), sized as the header's other buttons; then its tabs (TaskTabs). No Pin here (SHEP-62): the task row's
   // menu pins it
-  const tools = ['ready', 'deferred'].includes(task.status) && !task.archived ? <HeadButton disabled={accepting} onClick={() => openAccept(task.id)}>{accepting ? 'Accepting…' : 'Review'}</HeadButton> : null
+  const sheet = useUI(u => u.sheet)
+  const review = ['ready', 'deferred'].includes(task.status) && !task.archived ? <HeadButton disabled={accepting} onClick={() => openAccept(task.id)}>{accepting ? 'Accepting…' : 'Review'}</HeadButton> : null
+  const search = g && !gone && (!sheet || pane !== undefined) ? registry.agentHeader.map(({View},i)=><View key={i} chatKey={g.chat}/>) : null
+  const tools = review || search?.length ? <>{review}{search}</> : null
   // its title alone on the first line, so it keeps the room; under it, quieter, its id in the list's monospace, then what
   // its agent is doing (working with no % yet, or a provider retry's line: its row's words, as the window's header says
   // them), else where it merges

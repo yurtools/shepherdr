@@ -3,8 +3,8 @@
 //   "group"   the header's ⋯: group the list For you, by space or by status (shared "tasks.group",
 //             kept; props().current, the panel's grouping now: core/tasks.js groupNow)
 //   "filter"  the filter row's More: the statuses that don't get a chip of their own;
-//             props().items = [{ key, label, count }], props().current. A pick goes to the
-//             panel as shared "tasks.filterreq" = { key, at }.
+//             props().items = [{ key, label, count }], props().current = selected keys. Each pick
+//             sends the full selection as shared "tasks.filterreq" = { keys, at }; the menu stays open.
 //   "row"     a task row's right-click: Pin or Unpin (props().on) the task props().key, in shared
 //             "tasks.pinned" (mods/tasks keeps the same list). A task not started yet (props().status
 //             todo, queued or scheduled) also starts later (SHEP-38): herdr-task edit --in / --at on
@@ -17,17 +17,17 @@ import { v_flex } from "gpui-base";
 import { props, closeOverlay, theme, shared, setShared, exec, appHome } from "herdr";
 import { menuRow, heading, toast, TEXT } from "./ui.js";
 import { taskMenu } from "./core/menus.js";
+import { normalizeFilters, toggleFilter } from "./core/task-filters.js";
 import { settle } from "./core/pending.js";
 
 // Shepherdr's GROUP_WORDS (core/tasks.js GROUP_BY).
 const GROUPS = [{ key: "you", label: "For you" }, { key: "space", label: "Space" }, { key: "status", label: "Status" }];
 
 // The menu's sections, each a title (or none), its items, which is checked and what a pick does.
-function sections() {
+function sections(selected) {
   const p = props() ?? {};
   if (p.menu === "row") return rowSections(p);
-  if (p.menu === "filter") return [{ title: null, items: p.items ?? [], current: p.current,
-    pick: (key) => setShared("tasks.filterreq", { key, at: Date.now() }) }];
+  if (p.menu === "filter") return [{ title: null, items: p.items ?? [], current: selected }];
   const current = GROUPS.some((g) => g.key === p.current) ? p.current : "you";
   return [{ title: "Group by", items: GROUPS, current, pick: (key) => setShared("tasks.group", key) }];
 }
@@ -72,12 +72,13 @@ function rowPick(p, key) {
 }
 
 // Every item in order, with its section: ↑/↓ run through all of them.
-const flat = () => sections().flatMap((s) => s.items.map((x) => ({ ...x, s })));
+const flat = (selected) => sections(selected).flatMap((s) => s.items.map((x) => ({ ...x, s })));
 
 export default class TasksMenu extends View {
   init(_props, cx) {
-    const s0 = sections()[0];
-    this.at = Math.max(0, flat().findIndex((x) => x.s.title === s0.title && x.key === s0.current));
+    this.selected = props()?.menu === "filter" ? normalizeFilters(props()?.current) : null;
+    const s0 = sections(this.selected)[0];
+    this.at = Math.max(0, flat(this.selected).findIndex((x) => x.s.title === s0?.title && (this.selected ? this.selected.includes(x.key) : x.key === s0.current)));
     this.keyed = false; // the ↑/↓ highlight shows only once a key moved it: opening lights no row
     // The filter row draws More as open while this names an open More menu.
     if (props()?.menu === "filter") setShared("tasks.menuopen", props()?.overlay ?? true);
@@ -90,26 +91,35 @@ export default class TasksMenu extends View {
   }
 
   choose(i) {
-    const x = flat()[i];
+    const x = flat(this.selected)[i];
+    if (this.selected && x) {
+      this.selected = toggleFilter(this.selected, x.key);
+      // Absolute selection, not a stream of toggle events: multiple clicks before a panel render
+      // still arrive intact. A strictly newer timestamp also handles two picks in one millisecond.
+      const at = Math.max(Date.now(), (shared("tasks.filterreq")?.at ?? 0) + 1);
+      setShared("tasks.filterreq", { keys: this.selected, at });
+      return;
+    }
     if (x) x.s.pick(x.key);
     closeOverlay(props()?.overlay);
   }
 
   render(cx) {
     const t = theme();
-    const n = flat().length;
+    const n = flat(this.selected).length;
     let i = 0;
     return v_flex().id("tasks-menu").track_focus(this.handle).w_full().min_h(0).p(4).bg(t.popover).text_size(TEXT.body)
       .on_key_down((e, cx) => {
-        if (e.key === "down") this.at = (this.at + 1) % n;
-        else if (e.key === "up") this.at = (this.at + n - 1) % n;
-        else if (e.key === "enter") this.choose(this.at);
+        if (e.key === "down" && n) this.at = (this.at + 1) % n;
+        else if (e.key === "up" && n) this.at = (this.at + n - 1) % n;
+        else if (e.key === "enter" || (this.selected && (e.key === "space" || e.key === " "))) this.choose(this.at);
         else if (e.key === "escape") closeOverlay(props()?.overlay);
         else return;
+        cx.stop_propagation();
         this.keyed = true;
         cx.notify();
       })
-      .children(sections().map((s, si) => v_flex().flex_none().when(si > 0, (el) => el.mt(4))
+      .children(sections(this.selected).map((s, si) => v_flex().flex_none().when(si > 0, (el) => el.mt(4))
         .when(Boolean(s.title), (el) => el.child(div().px(8).child(heading(s.title))))
         .children(s.items.map((x) => this.item(x, s, i++, t)))));
   }
@@ -118,7 +128,7 @@ export default class TasksMenu extends View {
   // pick (none in an action menu: checks false).
   item(x, s, i, t) {
     return menuRow(`tm-${x.key}`, x.label, { icon: x.icon ?? null, hint: x.count > 0 ? String(x.count) : null,
-      check: s.checks === false ? null : x.key === s.current,
+      check: s.checks === false ? null : this.selected ? this.selected.includes(x.key) : x.key === s.current,
       onClick: () => this.choose(i) })
       .when(this.keyed && i === this.at, (el) => el.bg(t.hover));
   }

@@ -3,6 +3,7 @@
 // saying its machine and space; Done last, behind its count. Place: a group per space, under its machine when more than
 // one machine has tasks, every status mixed in each (the row's icon says which); Done last too. Pinned tasks get a
 // Pinned group on top in both.
+import { filterKey, ORDER } from "@core/task-filters.js"
 import { doneNewestFirst, type Machine, type Place, type Task } from '@shared/types.ts'
 
 export type GroupBy = 'status' | 'place'
@@ -116,6 +117,12 @@ export function groupTasks(places: Place[], machines: Machine[], ts: Task[], by:
     ...(by === 'status' ? GROUPS.filter(([s]) => s !== 'done').map(([s, label]) => ({ key: s, label, tasks: open.filter((t) => t.status === s), names })).filter((g) => g.tasks.length) : projectGroups(places, machines, open)),
     ...(done.length ? [{ key: 'done', label: 'Done', tasks: done, names }] : []),
   ]
+}
+
+/** A status selection shows every matching non-archived task, regardless of pins/folded groups.
+ * Automations are not tasks and are rendered separately by the panel. */
+export function selectedTaskRows(ts: Task[], selected: string[]): Task[] {
+  return doneNewestFirst(ORDER.filter((key) => selected.includes(key)).flatMap((key) => ts.filter((t) => !t.archived && filterKey(t.status) === key)))
 }
 
 /** what rows must say of where each task is, in a view of this level grouped by nothing that says it: the machine

@@ -6,6 +6,7 @@
 
 import { FIND, LOG, Conversation, records, resultText } from "./chat-log.js";
 import { BgJobs } from "./bg-jobs.js";
+import { FIND_LIMITS } from "./chat-find.js";
 
 export const PAGE = 200;
 export const KEEP = 2000;
@@ -23,6 +24,9 @@ export class ChatReader {
   }
 
   reset() {
+    this.epoch = (this.epoch ?? 0) + 1;
+    this.historyKey = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+    this.keep = KEEP;
     this.pinned = false;
     this.path = null;
     this.kind = null;
@@ -31,6 +35,7 @@ export class ChatReader {
     this.end = 0;
     this.records = [];
     this.conv = null;
+    this.historyMode = null;
     this.bg = new BgJobs(); // what it left running in the background
     this.state = "finding"; // finding | pending (no log yet) | ready | none (not a chat agent) | missing
   }
@@ -53,10 +58,15 @@ export class ChatReader {
     const kind = kindOf(t);
     const pid = t?.foreground?.pid;
     if (!kind || !pid) { const was = this.state; if (was !== "none") { this.reset(); this.state = "none"; } return was !== "none"; }
-    if (this.path && this.kind === kind && this.pid === pid) return false;
+    const same = this.path && this.kind === kind && this.pid === pid;
+    // Rewind, /clear and /resume can change the rollout *without* replacing
+    // the CLI process. Re-resolve the live writer, as the native chat does.
+    if (same && Date.now() - (this.locatedAt ?? 0) < 4000) return false;
     const f = await this.io.sh(FIND, ["chat", kind, String(pid)], this.machine);
+    this.locatedAt = Date.now();
     const path = String(f.stdout ?? "").trim().split("\n").pop() ?? "";
     if (path === "pending" || !path) {
+      if (same) return false; // a writer can briefly close during a native rewind
       const was = this.state;
       this.reset();
       this.kind = kind;
@@ -70,6 +80,7 @@ export class ChatReader {
     this.path = path;
     this.kind = kind;
     this.pid = pid;
+    this.locatedAt = Date.now();
     return true;
   }
 
@@ -110,18 +121,30 @@ export class ChatReader {
     if (this.start === null) {
       const r = await this.log(["page", path, "999999999999999", String(PAGE)]);
       if (path !== this.path) return false;
+      if (String(r.stdout).startsWith("lineage")) {
+        if (this.state === "lineage") return false;
+        this.conv = null; this.records = []; this.start = null; this.end = 0; this.state = "lineage";
+        return true;
+      }
+      if (r.code) return false;
       if (String(r.stdout).startsWith("missing")) { this.path = null; this.state = "missing"; return true; }
       const { head, records: recs } = records(r.stdout);
       if (head[0] !== "P") return false;
       this.start = Number(head[1]);
       this.end = Number(head[2]);
       this.records = recs;
+      this.historyMode = head[3] ?? null;
       this.rebuild();
       this.state = "ready";
       return true;
     }
     const r = await this.log(["tail", path, String(this.end)]);
     if (path !== this.path) return false;
+    if (String(r.stdout).startsWith("lineage")) {
+      this.conv = null; this.records = []; this.start = null; this.end = 0; this.state = "lineage";
+      return true;
+    }
+    if (r.code) return false;
     if (String(r.stdout).startsWith("missing")) { this.path = null; this.state = "missing"; return true; }
     const { head, records: recs } = records(r.stdout);
     if (head[0] !== "T") return false;
@@ -130,9 +153,9 @@ export class ChatReader {
     this.end = Number(head[3]);
     if (!recs.length) return false;
     this.records.push(...recs);
-    if (this.records.length > KEEP) {
+    if (this.records.length > this.keep) {
       // Down to three quarters, so the rebuild is now and then, not on every message.
-      this.records = this.records.slice(-Math.floor(KEEP * 0.75));
+      this.records = this.records.slice(-Math.floor(this.keep * 0.75));
       this.start = this.records[0].off;
       this.rebuild();
     } else this.conv.feed(recs);
@@ -147,6 +170,7 @@ export class ChatReader {
     if (!want.length || !this.path) return out;
     const offs = [...new Set(want.map((s) => s.out))].slice(0, 40);
     const r = await this.log(["results", this.path, ...offs.map(String)]);
+    if (r.code) return out;
     for (const part of String(r.stdout ?? "").split("\x1e").slice(1)) {
       const nl = part.indexOf("\n");
       const off = Number(part.slice(0, nl));
@@ -158,13 +182,16 @@ export class ChatReader {
 
   // The page before what is read. -> true when there was one.
   async earlier() {
-    if (!this.start || !this.path) return false;
-    const path = this.path, before = this.start;
-    const r = await this.log(["page", path, String(before), String(PAGE)]);
+    if (!this.start || !this.path || this.records.length >= FIND_LIMITS.pageRecords) return false;
+    const path = this.path, before = this.start, epoch = this.epoch;
+    const r = await this.log(["page", path, String(before), String(Math.min(PAGE,FIND_LIMITS.pageRecords-this.records.length))]);
+    if (r.code) return false;
     const { head, records: recs } = records(r.stdout);
-    if (path !== this.path || this.start !== before || head[0] !== "P") return false;
+    if (epoch !== this.epoch || path !== this.path || this.start !== before || head[0] !== "P" || this.records.length + recs.length > FIND_LIMITS.pageRecords) return false;
     this.start = Number(head[1]);
     this.records = [...recs, ...this.records];
+    // Explicitly loaded history should not vanish on the next streamed reply.
+    this.keep = FIND_LIMITS.pageRecords;
     this.rebuild();
     return true;
   }

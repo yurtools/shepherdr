@@ -343,6 +343,7 @@
       "title": "Tasks list",
       "core": [
         "tasks",
+        "task-filters",
         "tasklists",
         "needs"
       ],
@@ -357,7 +358,7 @@
         ]
       },
       "forms": {
-        "herdr": "Groups, filters, group by, search (F), dots and %, Review on Ready rows, Scheduled and Start later, automations, archived",
+        "herdr": "Groups, multi-select status filters, group by, search (F), dots and %, Review on Ready rows, Scheduled and Start later, automations, archived",
         "desktop": "Right column",
         "tablet": "Column beside the chat",
         "phone": "Tasks tab in the bottom bar"
@@ -540,7 +541,8 @@
       "addon": "tasks",
       "title": "Pin from a row",
       "core": [
-        "tasks"
+        "tasks",
+        "task-filters"
       ],
       "herdr": {
         "mods": [
@@ -553,7 +555,7 @@
         ]
       },
       "forms": {
-        "herdr": "Right-click a row: Pin/Unpin, group by, filters",
+        "herdr": "Right-click a row: Pin/Unpin, group by, multi-select status filters",
         "desktop": "Right-click or \u22ef",
         "tablet": "Long-press",
         "phone": "Long-press: sheet"
@@ -702,6 +704,20 @@
       ]
     },
     {
+      "id": "chat-flowcharts",
+      "addon": "chat",
+      "title": "Chat flowchart viewer",
+      "core": ["chat-flowchart", "chat-flowchart-geometry"],
+      "herdr": { "mods": ["chat", "chat-flowchart"] },
+      "web": { "files": ["plugins/chat/flowchart.tsx"] },
+      "forms": {
+        "herdr": "Fitted overview; expand, pan and zoom in a dialog",
+        "desktop": "Fitted overview; expand, scroll and zoom",
+        "tablet": "Fitted overview; expand, swipe and zoom",
+        "phone": "Fitted overview; expand, swipe and zoom"
+      }
+    },
+    {
       "id": "attachments",
       "addon": "chat",
       "title": "Attachments and images",
@@ -819,7 +835,9 @@
       "addon": "chat",
       "title": "Find in chat",
       "core": [
-        "chat-log"
+        "chat-log",
+        "chat-find",
+        "chat-find-markdown"
       ],
       "herdr": {
         "mods": [

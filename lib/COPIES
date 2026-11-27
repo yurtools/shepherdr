@@ -13,9 +13,10 @@ core/menus.js: spaces-chat tasks tasks-menu menu-tasks new-menu-tasks pane-chat 
 core/asks.js: chat jump spaces-chat tabs-tasks tasks workspace-status-chat toasts
 core/needs.js: chat jump spaces-chat tabs-tasks tasks workspace-status-chat toasts
 core/tasks.js: chat jump tasks
+core/task-filters.js: chat jump tasks tasks-menu
 core/notify.js: chat spaces-chat tabs-tasks tasks shepherdr-settings workspace-status-chat
 parked.js: chat spaces-chat tabs-tasks workspace-status-chat
-keyholder.js: shepherdr-settings workspace-agents workspace-approvals workspace-file-search chat tasks newspace workspace-sessions workspace-launchers workspace-clipboard
+keyholder.js: chat-flowchart shepherdr-settings workspace-agents workspace-approvals workspace-file-search chat tasks newspace workspace-sessions workspace-launchers workspace-clipboard
 unread.js: chat spaces-chat
 agent.js: chat newspace shepherdr-settings coordinator menu-tasks new-menu-tasks spaces-chat tabs-tasks tasks workspace-sessions workspace-launchers pane-chat workspace-agents
 settings.js: chat newspace shepherdr-settings
@@ -66,6 +67,11 @@ core/paths.js: accept-card artifacts chat chat-models coordinator jump menu-task
 core/pending.js: tasks accept-card tasks-menu chat
 
 core/documents.js: workspace-files workspace-document
+core/document-find.js: workspace-document
+core/vendor/marked.js: workspace-document chat
+core/vendor/marked.LICENSE: workspace-document chat
+core/vendor/html-entities.js: workspace-document chat
+core/vendor/html-entities.LICENSE: workspace-document chat
 pdf-view.js: workspace-document artifacts
 pdf-render.py: workspace-document artifacts
 
@@ -107,5 +113,9 @@ bounded-wait.js: chat tabs-tasks tasks spaces-chat coordinator artifacts workspa
 clipboard.js: chat
 
 core/chat-fences.js: chat
+flowchart.js: chat chat-flowchart
+core/chat-flowchart-geometry.js: chat chat-flowchart
 core/chat-flowchart.js: chat
 core/vendor/dagre.js: chat
+core/chat-find.js: chat
+core/chat-find-markdown.js: chat

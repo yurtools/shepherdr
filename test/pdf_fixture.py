@@ -1,5 +1,5 @@
 """Small, nonprivate PDF fixtures using only the standard library."""
-def pdf_bytes(pages=2, label='PDF preview'):
+def pdf_bytes(pages=2, label='PDF preview', rotate=0, no_text=False):
     objects = [b'', b'']
     kids = []
     for page in range(1, pages + 1):
@@ -10,7 +10,10 @@ def pdf_bytes(pages=2, label='PDF preview'):
                    f'1 1 1 rg BT /F1 28 Tf 70 670 Td ({text}) Tj ET\n'
                    f'0.1 0.1 0.1 rg BT /F1 18 Tf 70 550 Td (Readable text and actual page graphics.) Tj ET\n'
                    f'0.85 0.4 0.15 rg 70 {180 + page % 4 * 40} 220 120 re f\n').encode()
-        objects.extend([f'<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> >> >> /Contents {n+1} 0 R >>'.encode(),
+        if no_text:
+            content = b'0.10 0.35 0.65 rg 48 600 516 130 re f\n'
+        rotation = f' /Rotate {rotate}' if rotate else ''
+        objects.extend([f'<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792]{rotation} /Resources << /Font << /F1 << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> >> >> /Contents {n+1} 0 R >>'.encode(),
                         f'<< /Length {len(content)} >>\nstream\n'.encode() + content + b'endstream'])
     objects[0] = b'<< /Type /Catalog /Pages 2 0 R >>'
     objects[1] = f'<< /Type /Pages /Count {pages} /Kids [{" ".join(kids)}] >>'.encode()

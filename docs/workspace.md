@@ -22,10 +22,20 @@ the main CLI conversation even when Codex also holds internal Auto-review logs.
 Large incoming context messages fold like long replies; expanded text is divided
 into bounded rows, keeping the full message available for Copy.
 
+Use **Ctrl+F** to find literal words and punctuation in the current Chat. Find
+counts each matching occurrence, highlights it, opens folded text or diagram
+source when needed, and can load earlier pages. The web Chat header also has a
+Find button. See [Find in Chat](chat-find.md) for navigation and search limits.
+
 Chat previews supported Mermaid flowcharts inline in both user and agent
 messages. **Show source / Show preview** switches views; **Copy** keeps the
 original Mermaid text. See [inline flowcharts](chat-flowcharts.md) for supported
 syntax, web/mobile behavior and fallback limits.
+
+For a mistaken prompt sent to the wrong agent, use the guided **Discard mistaken
+turn…** action on supported Codex history, or withdraw an unsent held message.
+See [discarding a mistaken turn](chat-context.md) for the exact context boundary,
+provider support and what is not undone.
 
 | Action | Control |
 | --- | --- |
@@ -343,9 +353,15 @@ when reopening that file. A conflicting external change leaves the draft intact;
 refresh automatically. Large read-only pages ask you to reload if the file changes.
 Remote text files are read only. Office and PDF files have no Edit or Save action.
 
+**Find** (Ctrl/Cmd+F in the active document) highlights matching text or cells
+and goes to the matching page/sheet. Enter/Shift+Enter or the arrows step
+through matches; Escape closes Find without altering the file. Bounded or
+unsearchable previews explain their limits. See [Document Find](document-preview.md#find-within-a-document)
+for mode-specific behavior, including searchable PDFs and the web text-prefix limit.
+
 Ctrl+Shift+P selects Preview; Ctrl+Shift+O selects Source in a document pane.
 The equivalent commands are `workspace-document.preview`,
-`workspace-document.source`, and `workspace-document.save`.
+`workspace-document.source`, `workspace-document.find`, and `workspace-document.save`.
 
 Full-buffer editing is limited to 400,000 UTF-16 units and 1 MiB of UTF-8. CSV/TSV
 preview supports 32 MiB files and up to two million records, with 40 rows and 16

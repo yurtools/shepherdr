@@ -63,12 +63,14 @@ test('deleted or unrecorded owners do not open under B', async () => {
 test('Accept proof and task artifact cards use the same owner route', async () => {
  viewProps = { machine: 'vm' };
  const accept: any = Object.create(Accept.prototype); accept.opening = false;
- accept.openProof(cx, { id: record.id, title: 'Proof' }); await Promise.all(work);
+ accept.openProof(cx, { id: record.id, title: 'Stale proof title' }); await Promise.all(work);
  expect(overlays()[0][1]).toBe('vm/A'); expect(overlays()[0][2].kind).toBe('dialog');
+ expect(overlays()[0][2].layout.children[0].content.props.artifact.title).toBe('Proof');
  active('B'); work = [];
  const task: any = Object.create(TaskArtifacts.prototype); task.opening = null;
  task.open({ id: record.id, title: 'Proof', v: 3 }, null, cx); await Promise.all(work);
  expect(overlays()[1][1]).toBe('A');
+ expect(actions.some(a => a[0] === 'tab.rename' || a[1]?.includes?.('tab.new'))).toBe(false);
 });
 test('chat card keeps the captured machine through retrieval', async () => {
  const src = readFileSync(new URL('../../mods/chat/main.js', import.meta.url), 'utf8');
@@ -83,7 +85,9 @@ test('sidebar reselects its owner after the layout write and keeps Back local', 
  await openViewer({ id: record.id }, null, showInSidebar);
  expect(ss.find(s => s.active)?.id).toBe('A');
  expect(state.get('artifacts.view').space).toBe('A');
+ expect(state.get('artifacts.view').title).toBe('Proof');
  expect(actions.filter(a => a[0] === 'layout.select').length).toBe(2);
+ expect(actions.some(a => a[0] === 'tab.rename' || a[1]?.includes?.('tab.new'))).toBe(false);
 });
 test('late task-artifact lists cannot overwrite another stopped task', async () => {
  const h: any = Object.create(PanelHost.prototype); const first = { terminal: null, task: 'SHOP-4' };

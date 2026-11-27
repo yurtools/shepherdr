@@ -458,21 +458,89 @@
 }
 .flowchart-head button:hover { color: var(--fg); background: var(--hover); }
 [data-device="phone"] .flowchart-head button { min-height: 40px; }
-.flowchart-viewport {
+.flowchart-overview { width: 100%; min-width: 0; }
+.flowchart-overview svg { display: block; margin: auto; }
+.flowchart-expand {
+  display: block;
   width: 100%;
-  overflow: auto;
-  touch-action: auto;
-  overscroll-behavior: contain;
+  min-height: 32px;
+  border-bottom: 1px solid var(--line);
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 500;
 }
-.flowchart-viewport svg { display: block; margin: auto; max-width: none; }
-.flowchart-scroll-hint, .flowchart-error {
+.flowchart-expand:hover { background: var(--hover); }
+.flowchart-dialog {
+  position: fixed;
+  inset: 0;
+  margin: auto;
+  width: 92vw;
+  height: 90dvh;
+  max-width: none;
+  max-height: none;
+  padding: 0;
+  border: 1px solid var(--line2);
+  border-radius: 12px;
+  background: var(--bg);
+  color: var(--fg);
+  overflow: hidden;
+  font: 13px/1.4 var(--font-sans);
+}
+.flowchart-dialog[open] { display: flex; flex-direction: column; }
+.flowchart-dialog::backdrop { background: rgb(0 0 0 / 0.55); }
+.flowchart-dialog-head, .flowchart-tools {
+  display: flex;
+  align-items: center;
+  flex: none;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 4px 8px;
+}
+.flowchart-dialog-head { padding-top: 8px; }
+.flowchart-dialog-head strong { flex: 1; min-width: 0; }
+.flowchart-dialog button {
+  flex: none;
+  min-width: 32px;
+  min-height: 32px;
+  padding: 0 8px;
+  border-radius: 6px;
+  background: var(--bubble);
+  color: var(--fg);
+}
+.flowchart-dialog button:hover { background: var(--hover); }
+.flowchart-pct, .flowchart-hint { color: var(--fg2); font-size: 12px; }
+.flowchart-pct { padding-inline: 4px; font-variant-numeric: tabular-nums; }
+.flowchart-full-viewport {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: auto;
+  overscroll-behavior: contain;
+  touch-action: pan-x pan-y;
+  background: var(--well);
+}
+.flowchart-full-canvas { flex: none; margin: auto; }
+.flowchart-full-canvas svg { display: block; max-width: none; }
+.flowchart-dialog button:focus-visible, .flowchart-expand:focus-visible, .flowchart-full-viewport:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
+}
+[data-device="phone"] .flowchart-expand, [data-device="phone"] .flowchart-dialog button { min-height: 40px; min-width: 40px; }
+@media (max-width: 600px) {
+  .flowchart-dialog {
+    width: 100vw; height: 100dvh; border-radius: 0;
+    padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+  }
+}
+.flowchart-error {
   margin: 0;
   padding: 6px 10px;
   color: var(--fg2);
   font-size: 12px;
   line-height: 17px;
 }
-.flowchart-scroll-hint { border-top: 1px solid var(--line); }
 .flowchart-source {
   margin: 0;
   max-height: 420px;
@@ -1064,6 +1132,11 @@
     background-color: color-mix(in srgb, var(--work) 45%, transparent);
     color: inherit;
   }
+  ::highlight(find-active) {
+    background-color: color-mix(in srgb, var(--accent) 65%, transparent);
+    color: var(--fg);
+    text-decoration: underline;
+  }
   /* a message a reply's quote jumped to: ringed in the accent colour for a moment */
   [data-flash] {
     outline: 2px solid color-mix(in srgb, var(--accent) 70%, transparent);
@@ -1108,3 +1181,15 @@
 [data-theme="dark"] .attention-badge { color: black; }
 [data-device="phone"] .attention-badge { height: 18px; border-radius: 9px; font-size: 12px; line-height: 18px; }
 [data-device="phone"] .attention-badge > span { min-width: 18px; padding: 0 5px; }
+
+/* Document Find, separate from chat's CSS highlight registry. */
+.document-match {
+  background: color-mix(in srgb, var(--work) 45%, transparent);
+  color: inherit;
+}
+.document-match-current {
+  background: var(--work);
+  color: var(--bg);
+  outline: 1px solid var(--work);
+  font-weight: 600;
+}

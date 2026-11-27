@@ -110,7 +110,7 @@ export function rememberChatSession(chat, cx) {
     }
   }
   if (chat.kind !== "codex" || chat.companion || chat.thread || !chat.dflt?.home || !chat.path || chat.dfltFor!==`${chat.kind}|${chat.t?.foreground?.pid}`) return;
-  const session = /([0-9a-fA-F-]{36})\.jsonl$/.exec(chat.path)?.[1];
+  const session = sessionOf("codex", chat.path);
   const pane = panes().find(p => p.pane === chat.myPane());
   const space = spaces().find(s => s.tabs.some(t => t.id === pane?.tab));
   if (!session || !space || space.machine) return;

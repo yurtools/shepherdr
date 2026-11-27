@@ -1,4 +1,5 @@
 import { taskRoute } from "./task-route.ts";
+import { loadFilters, normalizeFilters, saveFilters, toggleFilter } from "@core/task-filters.js"
 import { findArtifact } from "@core/artifact-owner.js"
 import { artifactRoute } from "./artifact-route.ts"
 import { actionable, attentionCounts } from './attention.ts'
@@ -9,7 +10,7 @@ import { expire, loadOutbox, prune, saveOutbox, settle, type Outgoing } from './
 import { HttpError, wakeAll } from './uploads.ts'
 import { keptOf, mayReload, type Kept } from './reload.ts'
 import { OPEN_WITHIN, PONG_WITHIN, retryIn, SAY_LOST_AFTER } from './link.ts'
-import { groupTasks, loadAllDone, loadGroups, loadShut, keepTasks, namesFor, saveAllDone, saveGroups, saveShut, shownGroup, type GroupBy, type TaskGroup } from './groups.ts'
+import { groupTasks, loadAllDone, loadGroups, loadShut, keepTasks, namesFor, saveAllDone, saveGroups, saveShut, selectedTaskRows, shownGroup, type GroupBy, type TaskGroup } from './groups.ts'
 import { canDock, CHAT_READ, fit as fitSidebars, focused, loadSidebars, PANEL, RIGHT, saveSidebars, showPanel, toggleFocus as focusTo, type Sidebars } from './sidebars.ts'
 import { hush } from './motion.ts'
 import { closed, loadPanes, MAX_PANES, normal, only, opened, PANE_MIN, replaced, samePane, savePanes, type Pane, type Panes } from './panes.ts'
@@ -269,6 +270,8 @@ export interface UI {
   menu: boolean
   /** how the Tasks panel groups its tasks (by status or by place), remembered on this device */
   groups: GroupBy
+  /** Chosen status categories (empty: all), remembered on this device. */
+  taskStatuses: string[]
   /** task groups showing all their Done tasks ("place|group"), remembered on this device */
   allDone: string[]
   /** task headings folded shut, each view its own ("place|group", "place|m:machine"), remembered on this device */
@@ -309,7 +312,7 @@ export interface UI {
   dictError: { chat: string; text: string } | null
   files: Record<string, { name: string; path?: string }[]>
   /** search in a chat: its words, and the match shown (by message id; none: the newest) */
-  find: { chat: string; q: string; id: string | null } | null
+  find: { chat: string; q: string; id: string | null; part?: number; start?: number; historyKey?: string } | null
   /** the message each chat's box replies to, with its quote */
   reply: Record<string, ReplyQuote & { id: string }>
   offline: number | null
@@ -442,6 +445,7 @@ let state: State = {
     plus: null,
     menu: false,
     groups: loadGroups(),
+    taskStatuses: loadFilters("shepherdr.taskStatuses"),
     allDone: loadAllDone(),
     shut: loadShut(),
     archived: null,
@@ -528,6 +532,7 @@ export function setUI(patch: Partial<UI> | ((ui: UI) => Partial<UI>)) {
   if (p.sidebars) saveSidebars(p.sidebars)
   if (p.split) savePanes(p.split)
   if (p.groups) saveGroups(p.groups)
+  if (p.taskStatuses) saveFilters("shepherdr.taskStatuses", p.taskStatuses)
   if (p.allDone) saveAllDone(p.allDone)
   if (p.shut) saveShut(p.shut)
   if (p.lists) saveLists(p.lists)
@@ -1158,7 +1163,8 @@ export function removeSpace(placeId: string): Promise<{ ok?: boolean; error?: st
 export function openNeeds() {
   const { ui, snap } = state
   if (!snap) return
-  // 3.0: the Tasks panel, its Needs you
+  // The Tasks panel, its Needs you (even if another status was selected).
+  setTaskStatusFilter("needs")
   setUI(ui.device === 'phone' ? { task: null, tab: 'tasks', pick: null, plus: null, menu: false } : { task: ui.task && !taskInMiddle(ui, snap) ? null : ui.task, side: 'tasks' })
 }
 
@@ -1217,6 +1223,14 @@ export function setGroup(by: GroupBy) {
   setUI((ui) => ({ groups: by, lists: { ...ui.lists, chips: state.snap ? ownChips(ui, state.snap) : [], at: ui.place }, cur: 0 }))
 }
 
+/** The status chips toggle independently; explicit navigation replaces the selection. */
+export function pickTaskStatus(key: string) {
+  setUI((ui) => ({ taskStatuses: toggleFilter(ui.taskStatuses, key), cur: 0 }))
+}
+export function setTaskStatusFilter(value: unknown) {
+  setUI({ taskStatuses: normalizeFilters(value), cur: 0 })
+}
+
 /** whether every word typed is in one of these, any case: ⌘K's search and the lists' filters */
 export function matches(q: string, ...fields: (string | number | undefined)[]) {
   const words = q.trim().toLowerCase().split(/\s+/).filter(Boolean)
@@ -1246,6 +1260,7 @@ export function filteredGroups(snap: Snapshot, list: ListView, q: string, ui: Pi
 export function orderedTasks(snap: Snapshot, list: ListView) {
   if (state.ui.archived === list.key) return archivedIn(snap, list)
   const q = filterOf(state.ui, list.search, 'tasks')
+  if (snap.look?.filters !== false && state.ui.taskStatuses.length) return selectedTaskRows(tasksIn(snap, list), state.ui.taskStatuses).filter((t) => !q || taskMatches(t, q))
   if (q) return filteredGroups(snap, list, q).flatMap((g) => g.tasks)
   return shownGroups(snap, list).flatMap((g) => g.tasks)
 }

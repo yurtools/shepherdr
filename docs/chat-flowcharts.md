@@ -15,9 +15,20 @@ flowchart TD
 
 Chat draws the flowchart in place. **Show source** replaces the picture with
 the original Mermaid text; **Show preview** restores it. **Copy** copies the
-original source in either mode. Wide or tall drawings scroll within the card,
-so labels remain readable on narrow panes and phones. Ordinary code blocks
-and the message's own Copy and other actions are unchanged.
+original source in either mode. Every supported picture has an **Expand
+diagram** action above it. The inline overview fits the whole drawing into the
+card (including wide and tall diagrams), and scrolling there continues to
+scroll the conversation. Open the diagram to inspect smaller labels.
+
+The separate viewer opens fitted to the available window. **Fit** restores the
+whole overview; **100%**, **−** and **+** change label size. Use the four pan
+buttons, scroll or drag (native), or scroll/swipe (web) to move across the
+picture. The arrows and Page Up/Down move a viewport at a time; Home/End go to
+the ends, `0` fits, `1` selects 100%, and `+`/`−` zoom. Copy in the viewer gets
+the same original source. **Close** or Escape returns to the conversation.
+In native Chat, Find (`Ctrl+F`) with a diagram's label or source selects that
+historical diagram; `Ctrl+Enter` or the Find bar's **Expand** opens the match,
+even when it is showing source. Ordinary code and message actions are unchanged.
 
 ## Syntax and boundaries
 
@@ -46,8 +57,10 @@ The preview is bounded to 4,000 source characters, 20 nodes, 28 edges, 100
 characters per label, 240 routed points, and a 3,600-unit drawing extent.
 At most 12 diagrams are laid out per message; further fences show source.
 Oversized source is shown up to 4,000 characters/120 lines with a note; Copy
-still gets all of it. The drawing viewport is at most 420 px high. Horizontal
-overflow stays inside the card rather than enlarging the pane.
+still gets all of it. The inline drawing is at most 420 px high plus its
+32 px Expand action. It has no independent scroll region. The expanded viewer
+fits both axes, then allows readable actual size and zoom up to 250%; the
+camera or browser scroll bounds keep each edge reachable without enlarging Chat.
 
 ## Implementation
 
@@ -69,16 +82,24 @@ SVG/HTML injection or evaluation of message text. Both surfaces use only
 known shapes, numbers and literal labels from the shared geometry. The
 web draws React SVG elements with CSS theme colors; the native mod uses
 GPUI's `PathBuilder` and `window.paint_path` plus text and layout elements.
+`core/chat-flowchart-geometry.js` owns the shared viewport sizing, camera and
+control words. `lib/flowchart.js` owns the native drawing copied to `chat` and
+`chat-flowchart`. The expanded native mod receives the already prepared drawing
+and source, not a new layout job; the web reuses the same React SVG renderer.
 The latter are available in Herdr App 0.1.16 / gpui-shell 0.7.1.
 
 Native layout happens during cooperative history preparation, not a virtual
 row's paint. Geometry from unchanged rows is reused across snapshots; the
 shared source cache holds at most 96 entries and only plain data. Measurement
 uses a height-only placeholder rather than constructing paths. Source switches
-use the list's existing click routing; no per-row callbacks, subprocesses,
-temporary graphics or retained native paths. Web source/copy state lives in
-the card; its resize observer and feedback timer are cleaned up when the card
-leaves the view. Both renderers use their current theme at paint time.
+and Expand use the list's existing click routing; no per-row callbacks,
+subprocesses, temporary graphics or retained native paths. The native expanded
+modal has its own keyboard focus, bounded camera and input handlers, separate
+from the virtual list. The web's single plugin overlay survives a phone/desktop
+Chat reparent and uses native browser scrolling for the expanded view; it
+returns focus to the original card or its reparented counterpart. Resize
+observers, clipboard feedback timers and viewer state are discarded on close.
+Both renderers use their current theme at paint time.
 
 ## Isolated checks
 
@@ -94,10 +115,16 @@ scratch=$(mktemp -d)
 mkdir -p "$scratch/core/vendor"
 cp test/fixtures/chat-flowchart-native.js "$scratch/main.js"
 cp mods/chat/flowchart.js "$scratch/"
-cp core/chat-flowchart.js "$scratch/core/"
+cp core/chat-flowchart.js core/chat-flowchart-geometry.js "$scratch/core/"
 cp core/vendor/dagre.js "$scratch/core/vendor/"
 printf '%s\n' '{"place":"none","title":"Synthetic flowchart fixture"}' > "$scratch/mod.json"
-herdr-app check "$scratch"
+herdr-app check "$scratch" --print-spec
+# Expanded viewer at the far end of a branching LR chart. Its scratch init
+# deliberately avoids live keyboard ownership, conversations and overlays.
+cp test/fixtures/chat-flowchart-expanded-native.js "$scratch/main.js"
+cp mods/chat-flowchart/main.js "$scratch/viewer.js"
+cp mods/chat-flowchart/keyholder.js "$scratch/"
+herdr-app check "$scratch" --print-spec
 ```
 
 The hidden check materializes eager elements but does not prove native paint,
@@ -109,11 +136,20 @@ For the real web Chat with synthetic messages only, build the branch and run
 19444). Open `http://127.0.0.1:19444` in the task browser. The fixture serves
 the built app and a minimal chat WebSocket, not the real service. The
 `/fixture/complete` endpoint sends the closing fence for the incomplete
-message, exercising the real update path. Check **Show source**, **Copy** and
-**Show preview**, horizontal scroll, light/dark media and a phone-sized
-viewport. No live account, log or data is used.
+message, exercising the real update path. The browser regression program can drive an already-open task
+browser at that URL (use its `get cdp-url` command to obtain the endpoint):
 
-## SHEP-44 validation
+```sh
+bun test/fixtures/chat-flowchart-browser.ts <cdp-url> http://127.0.0.1:19444
+```
+
+It checks the historical/multiple charts, fit, actual-size endpoints, real
+emulated touch swipe, buttons and keyboard, resize/reparent, focus return,
+source/copy, malformed/incomplete fences and ordinary code. Restart the stub
+for each run so its streaming fixture begins incomplete. No live account, log
+or data is used.
+
+## SHEP-44 validation (original nested preview)
 
 On Linux with Herdr App 0.1.16 and Bun 1.4.4, the final implementation passed
 shared-copy, JavaScript, shell, JSON and TypeScript helper checks, TypeScript
@@ -135,3 +171,27 @@ synthetic composer reproduced the original 123 characters exactly.
 Native on-screen paint, native pointer scrolling/copy in an actual
 conversation, macOS and physical phone hardware remain unverified. The
 branch was not installed in the live window.
+
+## SHEP-48 regression and live acceptance boundary
+
+The installed SHEP-44 renderer matched the unchanged branch. A synthetic
+13-step TD graph produced a 1,130 px canvas in a 420 px viewport; the equivalent
+LR graph at 230 px available width produced a 1,452 px canvas. In the hidden
+native spec the two axes were accessible only through nested `overflow_scrollbar`
+inside deferred list rows, whose parent also tracks wheel input for following
+and history loading. Raising the cap would neither make that route reliable nor
+provide zoom. SHEP-48 removes the nested scroll surface rather than trying to
+synchronize two independently scrolling lists. Hidden native materialization
+and geometry/input tests are not evidence of on-screen paint or gestures.
+
+A live trial of this candidate needs separate approval: use only the existing
+Herdr window and one synthetic conversation in a test Chat, after the candidate
+is made available through the normal install/update path. Reopen its saved
+history; inspect a tall TD, wide LR and branching graph (including two diagrams
+in one message) in narrow, wide and Comfortable Chat, and at non-default app
+zoom. Click Expand, Fit and 100%, wheel/drag, pan all four ways and use keys to
+reach the first/last nodes and edge labels. Resize/reparent while open, close
+with Escape and Close, check the original scroll position and exact copy, and
+scroll the surrounding conversation normally. Do not use another window or a
+second live configuration. No native runtime rebuild or deployment is part of
+SHEP-48.

@@ -4,9 +4,11 @@ Policy comes from core/documents.js. A scan retains only sparse record offsets
 and one page, not a second copy of the file. No cache or file writes are needed.
 """
 import csv
+import codecs
 import io
 import json
 import os
+import re
 import stat
 import sys
 
@@ -185,6 +187,99 @@ def table(f, path, size, request, policy):
     finally:
         stream.detach()  # caller still owns f for the version check
 
+def find_request(request):
+    query = request['query']
+    if not isinstance(query, str) or not 0 < len(query) <= 256:
+        raise ValueError('Find needs 1–256 characters.')
+    limit = min(5000, max(1, int(request['limit'])))
+    # Python's re.I additionally folds dotted and dotless I into ASCII I;
+    # match the Unicode-simple literal folding used by JavaScript /giu.
+    parts = {'i': '(?-i:[iI])', 'I': '(?-i:[iI])', 'İ': '(?-i:İ)', 'ı': '(?-i:ı)'}
+    return re.compile(''.join(parts.get(ch, re.escape(ch)) for ch in query), re.I), limit
+
+
+def source_find(f, size, req, policy):
+    """Read at most 4 MiB plus one query of lookahead; continue at a UTF-8
+    boundary, after any match crossing it. Never return duplicate matches."""
+    pattern, limit = find_request(req)
+    start = int(req.get('start', 0))
+    if not 0 <= start <= size:
+        raise ValueError('Invalid Find source offset.')
+    f.seek(start)
+    # Leave enough lookahead for the largest possible UTF-8 query.
+    chunk = f.read(min(size - start, 4 * 1024 * 1024 + 1024 + 4))
+    cutoff = min(len(chunk), 4 * 1024 * 1024)
+    while cutoff < len(chunk) and chunk[cutoff] & 0xc0 == 0x80:
+        cutoff += 1
+    # Decode strict UTF-8; only an incomplete trailing lookahead character
+    # may be deferred. The continuation is always a complete boundary.
+    if b'\0' in chunk:
+        raise ValueError('Binary file. Find is unavailable.')
+    decoder = codecs.getincrementaldecoder('utf-8')()
+    value = decoder.decode(chunk, final=start + len(chunk) >= size)
+    hits, at, byte = [], 0, start
+    for match in pattern.finditer(value):
+        byte += len(value[at:match.start()].encode('utf-8'))
+        at = match.start()
+        if byte >= start + cutoff:
+            break
+        finish = byte + len(match[0].encode('utf-8'))
+        if len(hits) == limit:
+            return {'hits': hits, 'limited': True, 'done': True}
+        # source_page assigns a character crossing a nominal boundary to
+        # the next page, because the boundary is adjusted backwards.
+        page = (byte + len(match[0][0].encode('utf-8')) - 1) // policy['sourceBytes']
+        hits.append({'start': byte, 'end': finish, 'page': page})
+    next_at = max(start + cutoff, hits[-1]['end'] if hits else 0)
+    return {'hits': hits, 'next': next_at, 'done': next_at >= size}
+
+
+def table_find(f, path, size, req, policy):
+    pattern, limit = find_request(req)
+    if size > policy['csvBytes']:
+        raise ValueError('Table Find is limited to 32 MiB. Choose Source to search the original.')
+    delimiter = req.get('delimiter') or detect(f, path, policy)
+    if delimiter not in (',', ';', '\t'):
+        raise ValueError('Unsupported delimiter.')
+    base = int(req.get('row', 0))
+    offset = int(req.get('offset', '0'))
+    if not 0 <= base <= policy['csvRows']:
+        raise ValueError('Invalid Find record offset.')
+    stream = io.TextIOWrapper(f, encoding='utf-8', newline='')
+    try:
+        stream.seek(offset)
+        lines = RecordLines(stream, policy, base == 0)
+        csv.field_size_limit(policy['recordBytes'])
+        reader = csv.reader(lines, delimiter=delimiter, strict=True)
+        hits, row = [], base
+        while row - base < 65536 and policy['csvBytes'] - lines.remaining < 4 * 1024 * 1024:
+            try:
+                record = lines.record(reader)
+            except StopIteration:
+                return {'hits': hits, 'done': True}
+            if row >= policy['csvRows']:
+                return {'hits': hits, 'done': True, 'limited': True}
+            for col, cell in enumerate(record):
+                for match in pattern.finditer(cell):
+                    if len(hits) == limit:
+                        return {'hits': hits, 'done': True, 'limited': True}
+                    hit = {'row': row, 'col': col}
+                    # The active snippet's offsets are UTF-16 for the UI.
+                    # When no excerpt is needed, the prefix is at most 11 chars.
+                    if match.start() < 12:
+                        hit['start'] = len(cell[:match.start()].encode('utf-16-le')) // 2
+                    if match.start() >= 12 or match.end() > policy['cellChars'] or len(cell) > policy['cellChars']:
+                        left = max(0, match.start() - 2)
+                        right = left + policy['cellChars']
+                        hit['excerpt'] = ('…' if left else '') + cell[left:right] + ('…' if right < len(cell) else '')
+                        hit['excerptOffset'] = len(cell[left:match.start()].encode('utf-16-le')) // 2 + bool(left)
+                    hits.append(hit)
+            row += 1
+        return {'hits': hits, 'row': row, 'offset': str(stream.tell()), 'done': False}
+    finally:
+        stream.detach()
+
+
 def read(request):
     path, policy = request['path'], request['policy']
     before = regular(os.stat(path))
@@ -205,6 +300,10 @@ def read(request):
             out = source_open(f, size, policy)
         elif op == 'source':
             out = {'source': source_page(f, size, request['page'], policy)}
+        elif op == 'find-source':
+            out = source_find(f, size, request, policy)
+        elif op == 'find-table':
+            out = table_find(f, path, size, request, policy)
         elif op in ('scan', 'table'):
             out = table(f, path, size, request, policy)
         else:

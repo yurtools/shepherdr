@@ -23,18 +23,18 @@ const shared = () => null, dialogHolds = () => false, keysElsewhere = () => fals
 const KEY_HOLDER = "keyboard.holder";
 const obj = { %(method)s };
 const input = %(input)s;
-const focusCalls = [];
+const focusCalls = [], findCalls = [];
 const timers = [];
-const self = Object.assign({ box: { focus: () => focusCalls.push(1) }, wasFocused: false, hadBox: false,
+const self = Object.assign({ box: { focus: () => focusCalls.push(1) }, findBox:{focus:()=>findCalls.push(1)}, wasFocused: false, hadBox: false,
   focused: false, call: null, press: null, refocusAt: 0, areaKey: () => "pane" }, input.self);
 const cx = { timer: { after: (ms, fn) => timers.push([ms, fn]) } };
 obj.refocus.call(self, input.paneFocused, input.showsBox, cx);
 for (const [, fn] of timers) fn();
-console.log(JSON.stringify({ focus: focusCalls.length }));
+console.log(JSON.stringify({ focus: focusCalls.length, find: findCalls.length }));
 """
 
 
-def run(self_state, paneFocused=True, showsBox=True):
+def run(self_state, paneFocused=True, showsBox=True, field="focus"):
     method = MATCH.group(0).strip()
     inp = {"self": self_state, "paneFocused": paneFocused, "showsBox": showsBox}
     script = HARNESS % {"method": method, "input": json.dumps(inp)}
@@ -43,7 +43,7 @@ def run(self_state, paneFocused=True, showsBox=True):
         with open(path, "w") as f:
             f.write(script)
         out = subprocess.run(["node", path], capture_output=True, text=True, check=True).stdout
-    return json.loads(out)["focus"]
+    return json.loads(out)[field]
 
 
 class RefocusKeepsSelection(unittest.TestCase):
@@ -68,6 +68,13 @@ class RefocusKeepsSelection(unittest.TestCase):
     def test_without_a_selection_that_later_render_refocuses_the_box(self):
         state = {"wasFocused": True, "hadBox": True, "focused": False, "pressMoved": False, "press": {"at": 0}}
         self.assertEqual(run(state), 1)
+
+    def test_active_find_keeps_composer_refocus_from_stealing_its_keyboard(self):
+        state = {"finding": True, "wasFocused": True, "hadBox": True, "focused": False, "pressMoved": False, "press": {"at": 0}}
+        self.assertEqual(run(state), 0)
+        self.assertEqual(run(state, field="find"), 0)
+        self.assertEqual(run({**state, "wasFocused": False}, field="find"), 1)
+        self.assertEqual(run({**state, "wasFocused": False}), 0)
 
 
 class ChatTracksDrags(unittest.TestCase):

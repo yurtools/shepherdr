@@ -24,6 +24,8 @@ export type Where = {
   /** what the app shows now: a space (place id), a task, the task's tab, an artifact open, Settings */
   place?: string | null;
   task?: string | null;
+  taskFolder?: string | null;
+  taskMachine?: string | null;
   tab?: string | null;
   artifact?: string | null;
   settings?: boolean;
@@ -41,7 +43,7 @@ export type Nav =
   | { kind: "needs" }
   | { kind: "artifact"; artifact: string; title: string; v: number; machine?: string | null }
   | { kind: "settings"; section?: string }
-  | { kind: "chat"; chat: string; addr?: string | null }
+  | { kind: "chat"; chat: string; addr?: string | null; ref?: string; folder?: string; machine?: string | null }
   /** SHEP-124: the web call's own view: full screen (full) or minimized */
   | { kind: "call"; full: boolean };
 
@@ -128,9 +130,20 @@ const placeName = (snap: Snapshot, id: string | null | undefined) => snap.places
 const taskOfChat = (snap: Snapshot, key: string) => (key.endsWith("/worker") ? snap.tasks.find((t) => t.id === key.slice(0, -7)) ?? null : null);
 const placeOfChat = (snap: Snapshot, key: string) => snap.places.find((p) => p.chat === key) ?? null;
 
+// Native windows report the canonical source folder because a display ref
+// can occur in several lists. Web windows report their exact snapshot ID.
+function shownTask(snap: Snapshot, where: Where): Task | null {
+  if (!where.task) return null;
+  if (!where.taskFolder) return snap.tasks.find(t => t.id === where.task) ?? null;
+  const matches = snap.tasks.filter(t => t.taskFolder === where.taskFolder &&
+    (t.reviewMachine ?? (t.on === snap.host ? null : t.on)) === (where.taskMachine ?? null) &&
+    (t.id === where.task || (t.ref ?? t.id.split(":").pop()) === where.task!.split(":").pop()));
+  return matches.length === 1 ? matches[0] : null;
+}
+
 /** the chat the screen shows: an open task's agent, else the shown space's Assistant, else the one the call started from */
 export function screenChat(snap: Snapshot, where: Where): string | null {
-  const t = where.task ? snap.tasks.find((x) => x.id === where.task) : null;
+  const t = shownTask(snap, where);
   if (t) return t.agent?.chat ?? `${t.id}/worker`;
   const p = where.place ? snap.places.find((x) => x.id === where.place) : null;
   return p?.chat ?? where.call ?? null;
@@ -139,22 +152,25 @@ const callKey = (where: Where) => where.call ?? "";
 
 /** the task meant: "this" (on screen, else the call's), its id ("SHEP-45", "shep 45", "45"), or words of its title */
 export function findTask(snap: Snapshot, id: unknown, where: Where): Task | null {
-  if (isHere(id)) return (where.task ? snap.tasks.find((t) => t.id === where.task) : null) ?? taskOfChat(snap, callKey(where));
+  if (isHere(id)) return shownTask(snap, where) ?? (where.task ? null : taskOfChat(snap, callKey(where)));
   const want = norm(id);
-  const live = snap.tasks.filter((t) => !t.archived);
-  const byId = (ts: Task[]) => ts.find((t) => norm(t.id) === want || norm(t.id.split(":").pop()) === want);
-  const hit = byId(live) ?? byId(snap.tasks);
-  if (hit) return hit;
-  // just its number: the one in the space on screen first
+  const exact = snap.tasks.find(t => t.id === String(id).trim());
+  if (exact) return exact;
+  const live = snap.tasks.filter(t => !t.archived);
+  const matches = (ts: Task[]) => ts.filter(t => norm(t.ref ?? t.id.split(":").pop()) === want);
+  const byRef = matches(live);
+  const old = byRef.length ? byRef : matches(snap.tasks);
+  if (old.length) return old.length === 1 ? old[0] : null;
   if (/^\d+$/.test(want)) {
-    const num = live.filter((t) => t.id.split("-").pop() === want);
-    const here = where.place ?? placeOfChat(snap, callKey(where))?.id ?? taskOfChat(snap, callKey(where))?.place;
-    return num.find((t) => t.place === here) ?? (num.length === 1 ? num[0] : null);
+    const num = live.filter(t => t.id.split("-").pop() === want);
+    return num.length === 1 ? num[0] : null;
   }
   const ws = words(id);
   if (!ws.length) return null;
-  const match = (t: Task) => ws.every((w) => `${t.id} ${t.name}`.toLowerCase().includes(w));
-  return live.find(match) ?? snap.tasks.find(match) ?? null;
+  const match = (t: Task) => ws.every(w => `${t.id} ${t.name}`.toLowerCase().includes(w));
+  const hits = live.filter(match);
+  const found = hits.length ? hits : snap.tasks.filter(match);
+  return found.length === 1 ? found[0] : null;
 }
 
 /** every name a machine goes by: its name, its own name, its key ("eliass-mac-mini"), and "this computer" for the one
@@ -298,7 +314,7 @@ export function lookHere(snap: Snapshot, where: Where) {
   const out = [`The call runs in ${from}. It is with Shepherdr, not one agent.`];
   const shows: string[] = [];
   if (where.settings) shows.push("Settings");
-  const t = where.task ? snap.tasks.find((x) => x.id === where.task) : null;
+  const t = shownTask(snap, where);
   if (t) shows.push(`task ${spoken(t.id)}, "${cut(t.name, 80)}" (${STATUS[t.status] ?? t.status})${where.tab && where.tab !== "chat" ? `, its ${where.tab} tab` : ""}`);
   const p = where.place ? snap.places.find((x) => x.id === where.place) : null;
   if (p) shows.push(`${t ? "in " : ""}the ${p.name} space on ${machineSaid(snap, p.machine)}`);
@@ -701,7 +717,9 @@ function open(snap: Snapshot, where: Where, io: VoiceIO, what: string, id: strin
     case "chat": {
       const c = findChat(snap, id || "here", where);
       if ("error" in c) return fail(c.error);
-      return showing(`${c.name}'s chat`, { kind: "chat", chat: c.key, addr: io.addrOf?.(c.key) ?? null });
+      const task = taskOfChat(snap, c.key);
+      const at = task && io.taskWhere?.(task.id);
+      return showing(`${c.name}'s chat`, { kind: "chat", chat: c.key, addr: io.addrOf?.(c.key) ?? null, ...(at ? { ref: at.ref, folder: at.folder, machine: at.machine } : {}) });
     }
   }
   return fail("open can show: space, task, tasks, needs, artifacts, files, changes, terminal, artifact, settings, chat.");

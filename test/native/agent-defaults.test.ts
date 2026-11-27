@@ -17,7 +17,7 @@ mock.module('herdr',()=>fakeHerdr({
  spaces:()=>ss,panes:()=>ps,terminals:()=>ts,machines:()=>[{name:null,layout:'ready'},{name:'remote',layout:'ready'}],
  focused:()=>({...focus}),props:()=>props,layout:()=>tree,theme:()=>new Proxy({},{get:()=> '#444444'}),settings:()=>({zoom:1}),keys:()=>[],window:()=>({platform:'linux'}),
  knownAgents:async()=>[{key:'codex',name:'Codex',installed:true,run:['codex']}],
- readTextFile:async(path:string)=>path.endsWith('workspace-folders.json')?'{}':JSON.stringify(cfg),
+ readTextFile:async(path:string)=>path.endsWith('/task-fixture.json')?JSON.stringify({folder:'/project',prefix:'T',tasks:[{id:1,title:'One',space:'space',state:'running'},{id:2,title:'Two',space:'space',state:'running'}]}):path.endsWith('workspace-folders.json')?'{}':JSON.stringify(cfg),
  run:(name:string,data:any)=>{calls.push([name,data]);if(name==='space.select')focus.space=data.id;if(name==='pane.focus')focus.pane=data.pane;},
  hc:async(args:string[])=>{
   calls.push(['hc',args]);
@@ -27,7 +27,7 @@ mock.module('herdr',()=>fakeHerdr({
    if(holdRun)await holdRun;
    return runTimeout?{code:1,stdout:"",stderr:"trust timeout"}:ok({address,first_message:{sent}});
   }
-  if(args[0]==='get')return getResults.get(args[1])??ok(core.get(args[1])??{state:'done'});
+  if(args[0]==='get')return getResults.get(args[1])??ok(core.get(args[1])??ts.find(t=>t.address===args[1])??{state:'done'});
   if(args[0]==='read')return ok(screen);
   if(args[0]==='ls'){const [key,value]=args[args.indexOf('--label')+1]?.split('=')??[];return ok({terminals:[...core.values()].filter(t=>(args.includes('--all')||t.state==='live')&&(!args.includes('--label')||t.labels?.[key]===value))});}
   if(args[0]==='label'){const t=core.get(args[1]);if(t)for(const label of args.slice(2)){const at=label.indexOf('=');t.labels[label.slice(0,at)]=label.slice(at+1);}}
@@ -155,11 +155,12 @@ test('opening a lazy Feature beside starts its exact slot and keeps the original
  expect(launches()[0][1]).toContain('herdr.feature=feature-one');expect(core.get('t1').labels['herdr.chat']).toBe('feature-pane');
  expect(B.companionFor('extra-pane')?.mode).toBe('terminal');B.closeCompanion('extra-pane');expect(calls.some(c=>c[0]==='terminal.kill')).toBe(false);
 });
-test('task opening selects Terminal through its header and focusing preserves an explicit Chat selection',()=>{
- openTaskThread('worker-one','T-1',null);expect(state.get('tasks.thread.termreq').terminal).toBe('worker-one');
- calls=[];state.delete('tasks.thread.termreq');openTaskThread('worker-one','T-1',null);
+const taskWorkers = () => ts = ['worker-one','worker-two'].map((address,i)=>({address,state:'live',program:{key:'codex'},labels:{'herdr.task':'task-fixture#'+(i+1),'herdr.task.space':'space'}}));
+test('task opening selects Terminal through its header and focusing preserves an explicit Chat selection',async()=>{
+ taskWorkers(); await openTaskThread('worker-one','T-1',null);expect(state.get('tasks.thread.termreq').terminal).toBe('worker-one');
+ calls=[];state.delete('tasks.thread.termreq');await openTaskThread('worker-one','T-1',null);
  expect(state.has('tasks.thread.termreq')).toBe(false);expect(calls.some(c=>c[1]?.stack==='tasks-thread-body')).toBe(false);
- openTaskThread('worker-two','T-2',null);expect(state.get('tasks.thread.termreq').terminal).toBe('worker-two');
+ await openTaskThread('worker-two','T-2',null);expect(state.get('tasks.thread.termreq').terminal).toBe('worker-two');
 });
 test('ordinary and terminal-only launcher menu actions remain Terminal launches',()=>{
  const menu:any=Object.create(NewMenu.prototype);menu.agents=[{key:'codex',name:'Codex',installed:true,run:['codex']},{key:'goose',name:'Goose',installed:true,run:['goose']}];menu.catalog={chats:[],hidden_agents:[]};
@@ -514,8 +515,9 @@ test('a configured unavailable account is refused without any fallback launch',a
  await expect(R.startRole({...spec(),settings:{agent:'codex',profile:'missing'}})).rejects.toThrow();expect(launches()).toHaveLength(0);
 });
 
-test('focusing the current task in Terminal preserves its selection and pending approvals',()=>{
- state.set('tasks.thread',{terminal:'worker-one'});tree.active='tasks-thread-term';state.set('approval',{id:'pending',terminal:'worker-one'});
- openTaskThread('worker-one','T-1',null);expect(calls.some(c=>c[1]?.stack==='tasks-thread-body')).toBe(false);
+test('focusing the current task in Terminal preserves its selection and pending approvals',async()=>{
+ taskWorkers(); await openTaskThread('worker-one','T-1',null); calls=[];
+ tree.active='tasks-thread-term';state.set('approval',{id:'pending',terminal:'worker-one'});
+ await openTaskThread('worker-one','T-1',null);expect(calls.some(c=>c[1]?.stack==='tasks-thread-body')).toBe(false);
  expect(state.get('approval')).toEqual({id:'pending',terminal:'worker-one'});
 });

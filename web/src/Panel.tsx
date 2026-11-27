@@ -35,7 +35,7 @@ export function FocusToggle({ task }: { task: Task }) {
   const snap = useSnap()!
   const name = placeOf(snap, task.place).name
   return (
-    <IconButton label={focus ? `Show ${name}` : middle ? `Focus on ${task.id}` : `Hide ${name}`} pressed={focus} aria-expanded={!focus} onClick={toggleFocus}>
+    <IconButton label={focus ? `Show ${name}` : middle ? `Focus on ${task.ref ?? task.id.split(":").pop()}` : `Hide ${name}`} pressed={focus} aria-expanded={!focus} onClick={toggleFocus}>
       <SidebarIcon className={ic} />
     </IconButton>
   )
@@ -185,7 +185,7 @@ export function TaskTabs({ task, head }: { task: Task; head?: boolean }) {
     </button>
   )
   return (
-    <div ref={bar} role="tablist" aria-label={`${task.id} views`} className={clsx('scroll-x flex items-center gap-0.5', head ? 'max-w-full min-w-0 rounded-full bg-hover p-0.5' : 'shrink-0 border-b border-line px-3 py-1.5 phone:px-4')}>
+    <div ref={bar} role="tablist" aria-label={`${task.ref ?? task.id.split(":").pop()} views`} className={clsx('scroll-x flex items-center gap-0.5', head ? 'max-w-full min-w-0 rounded-full bg-hover p-0.5' : 'shrink-0 border-b border-line px-3 py-1.5 phone:px-4')}>
       {tab('chat', 'Chat', null, closeSheet)}
       {items.map((i) => tab(i.id, i.label, i.id === 'terminal' && !termRunning(task) ? 'Not running' : null, () => setUI({ sheet: i.id, taskMenu: false, plus: null, pick: null }), i.count?.(task)))}
     </div>
@@ -216,7 +216,7 @@ export function PanelSheet() {
   if (!open) return null
   const phone = ui.device === 'phone'
   return (
-    <Pushed role="dialog" label={`${item.label} · ${task.id}`} onBack={closeSheet} className="z-6">
+    <Pushed role="dialog" label={`${item.label} · ${task.ref ?? task.id.split(":").pop()}`} onBack={closeSheet} className="z-6">
       {phone ? (
         <PhoneTop
           left={
@@ -225,14 +225,14 @@ export function PanelSheet() {
             </RoundButton>
           }
           name={item.label}
-          kind={`${task.id} · ${task.name}`}
+          kind={`${task.ref ?? task.id.split(":").pop()} · ${task.name}`}
         />
       ) : (
         <Head>
           <IconButton label="Back to the chat" onClick={closeSheet}>
             <BackIcon className={ic} />
           </IconButton>
-          <Who name={item.label} kind={`${task.id} · ${task.name}`} />
+          <Who name={item.label} kind={`${task.ref ?? task.id.split(":").pop()} · ${task.name}`} />
         </Head>
       )}
       <div className={clsx('flex min-h-0 flex-1 flex-col', phone && !ui.keyboard && 'pb-[env(safe-area-inset-bottom)]')}>

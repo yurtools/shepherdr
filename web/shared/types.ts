@@ -293,6 +293,14 @@ export interface TaskAgent {
   note: string
 }
 
+export interface TaskUsage {
+  state: 'current' | 'stale' | 'unavailable'
+  at: number | null
+  cpu_pct: number | null
+  rss_bytes: number | null
+  coverage?: 'scope+tree' | 'tree'
+}
+
 export interface Task {
   ref?: string
   feature?: string
@@ -308,6 +316,8 @@ export interface Task {
   place: string
   /** second line in lists */
   sub?: string
+  /** Host-sampled task-owned process usage, only while Working. */
+  usage?: TaskUsage
   /** Working: the minutes left under its row's dot, in the window's words ("6m", "<1m", "2h"), once its agent gave them;
    *  Scheduled: the time until it starts ("6h", "2d") */
   left?: string
@@ -361,7 +371,7 @@ export interface Task {
   pinned?: number
   /** the shared browser (the browser plugin), for a task not merged: whether it works on its machine, and if not why */
   browser?: { ready: boolean; hint?: string }
-  /** what its row says it is in (3.0's Tasks): the space working in its list's folder, else the list's name */
+  /** its recorded owning space's name, else the source list's name */
   listName?: string
 }
 

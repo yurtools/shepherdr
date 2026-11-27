@@ -8,11 +8,8 @@ import { REASONS } from "./needs.js";
 
 // An agent's own status, most urgent first.
 export const RANK = { blocked: 4, done: 3, working: 2, idle: 1 };
-export const STATUS = { needs: "Needs you", working: "Working", merging: "Merging", ready: "Ready · active", deferred: "Deferred", queued: "Queued", scheduled: "Scheduled", todo: "To do", done: "Done" };
+export { STATUS, ORDER } from "./task-filters.js";
 export const RANK_OF = Object.fromEntries(["needs", "ready", "deferred", "merging", "working", "queued", "scheduled", "todo", "done"].map((id, i) => [id, i]));
-// The list's order: its groups, and the filter row's chips.
-// Scheduled (SHEP-38, herdr-task --at/--in): a task that starts by itself at a time, after Queued (it waits longer).
-export const ORDER = ["needs", "ready", "deferred", "merging", "working", "queued", "scheduled", "todo", "done", "automations"];
 // How the list can be grouped (the ⋯ menu's Group by; Shepherdr's GROUP_WORDS). "folder" was Space's old key.
 export const GROUP_BY = ["you", "space", "status"];
 // A grouping's key: "folder" was Space's; Machine and Machine › Space are gone (SHEP-98): For you.
@@ -43,13 +40,13 @@ export function fromLine(events, where) {
 // group sits under no machine or space heading); its machine only when more than one machine has tasks.
 export const autoWhere = (machine, space, multi) => [multi ? machine : null, space].filter(Boolean).join(" · ") || null;
 // This space (SHEP-72, the filter row's toggle): a task, automation or Needs-you item is a space's when it is on the
-// space's machine and either its list's folder is the space's folder, or it was started for that space (the space id
+// space's machine and its recorded space matches, or (only for older unowned entries) its folder matches (the space id
 // herdr-task keeps on it: "sp3", or "vm/sp3" once read from another machine). space: { id, machine, folder };
 // thing: { machine, folder, space }.
 const bareId = (id) => (id == null ? null : String(id).slice(String(id).lastIndexOf("/") + 1));
 export function inSpace(space, thing) {
   if (!space || !thing || (thing.machine ?? null) !== (space.machine ?? null)) return false;
-  return (Boolean(thing.folder) && thing.folder === space.folder) || (thing.space != null && bareId(thing.space) === bareId(space.id));
+  return thing.space != null ? bareId(thing.space) === bareId(space.id) : Boolean(thing.folder) && thing.folder === space.folder;
 }
 // A list's task id: HAT-4.
 export const refOf = (list, task) => `${list.prefix}-${task.id}`;
@@ -58,13 +55,7 @@ export const taskKey = (list, task) => `${list.machine ?? ""}:${list.folder}#${t
 
 // herdr-task's auto_prefix: the initials of the folder name's words (herdr-app-ttt -> HAT, up to
 // 5), or a single word's first 4 letters (shepherdr -> SHEP); at least 2 letters.
-export function autoPrefix(folder) {
-  const name = String(folder ?? "").split("/").filter(Boolean).pop() ?? "";
-  const ws = name.replace(/([a-z])([A-Z])/g, "$1 $2").split(/[^A-Za-z]+/).filter(Boolean);
-  let p = ws.length > 1 ? ws.map((w) => w[0]).join("").slice(0, 5) : (ws[0] ?? "").slice(0, 4);
-  if (p.length < 2) p = ws.join("").length >= 2 ? ws.join("").slice(0, 2) : "TASK";
-  return p.toUpperCase();
-}
+export { autoPrefix } from './task-owner.js';
 
 // An agent was started for the task under STARTING_MS ago and hasn't ended (as herdr-task's).
 export const STARTING_MS = 90000;
@@ -326,3 +317,32 @@ export function untilShort(ms, now = Date.now()) {
 }
 // A scheduled row's second line: "Starts Today 18:00"; "Starts now" once due.
 export const startsLine = (ms, now = Date.now()) => (typeof ms !== "number" ? "Scheduled" : ms <= now ? "Starts now" : `Starts ${startsAt(ms, now)}`);
+
+// Task usage is sampled by herdr-task's existing host tick, not by either UI. A cached
+// sample belongs to this task's exact live terminal(s), on the list's own machine.
+export const USAGE_FILE = ".task-usage.json";
+export const USAGE_MAX_AGE = 45_000;
+export const USAGE_HELP = "CPU: 100% = one logical core, averaged since the preceding sample. RSS: sum of resident process memory (shared pages may count in each process). Includes owned descendants and dedicated scopes where available; tree-only sampling can miss detached or short-lived processes.";
+export function usageOf(sample, section, live, now = Date.now()) {
+  if (section !== "working") return null;
+  const missing = (state) => ({ state, at: null, cpu_pct: null, rss_bytes: null });
+  if (!sample || !Number.isFinite(sample.at) || !live?.length || !sample.workers || Object.keys(sample.workers).length !== live.length ||
+      live.some((a) => !Object.hasOwn(sample.workers, String(a.address).split("/").pop()) ||
+        (a.created != null && sample.workers[String(a.address).split("/").pop()] !== a.created))) return missing("unavailable");
+  if (now - sample.at > USAGE_MAX_AGE || sample.at - now > 5000) return missing("stale");
+  const number = (n) => Number.isFinite(n) && n >= 0 ? n : null;
+  return { state: "current", at: sample.at, cpu_pct: number(sample.cpu_pct), rss_bytes: number(sample.rss_bytes),
+    coverage: sample.coverage === "scope+tree" ? "scope+tree" : "tree" };
+}
+
+// Use the same compact wording on both surfaces. No figure for an unknown CPU baseline,
+// an unreachable machine, or a task that no longer works; real zero remains a number.
+export function usageLabel(usage, now = Date.now()) {
+  if (!usage) return null;
+  if (usage.state === "stale" || (usage.state === "current" && (now - usage.at > USAGE_MAX_AGE || usage.at - now > 5000))) return "Usage stale";
+  if (usage.state !== "current") return "Usage unavailable";
+  const cpu = usage.cpu_pct == null ? "—" : `${Math.round(usage.cpu_pct)}%`;
+  const b = usage.rss_bytes;
+  const rss = b == null ? "—" : b >= 2 ** 30 ? `${(b / 2 ** 30).toFixed(1)} GiB` : `${Math.round(b / 2 ** 20)} MiB`;
+  return `CPU ${cpu} · RSS ${rss}`;
+}

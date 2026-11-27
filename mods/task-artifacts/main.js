@@ -6,6 +6,7 @@
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { theme, shared } from "herdr";
+import { activeTaskThread, threadIdentity } from "./task-thread-state.js";
 import { openViewer } from "./artview.js";
 import { titleInTask } from "./core/task-artifacts.js";
 import { TEXT, RADIUS } from "./ui.js";
@@ -21,8 +22,8 @@ function ago(ms) {
 
 // The shown task's, once the header has found them (null: not yet).
 function mine() {
-  const a = shared("tasks.thread.artifacts"), w = shared("tasks.thread");
-  return a && w && a.terminal === (w.terminal ?? null) && JSON.stringify(a.key ?? null) === JSON.stringify(w.key ?? null) && (w.terminal || a.ref === w.task) ? a : null;
+  const a = shared("tasks.thread.artifacts"), w = activeTaskThread();
+  return a && w && a.identity === threadIdentity(w) ? a : null;
 }
 
 export default class TaskArtifacts extends View {
@@ -70,7 +71,7 @@ export default class TaskArtifacts extends View {
   render(_cx) {
     const t = theme();
     const root = v_flex().id("task-artifacts").size_full().min_h(0).overflow_hidden().bg(t.background).text_color(t.foreground).text_size(13);
-    const w = shared("tasks.thread");
+    const w = activeTaskThread();
     if (!w) return root.child(this.note(t, "No task open."));
     const a = mine();
     if (!a) return root.child(this.note(t, "Looking for its artifacts…"));

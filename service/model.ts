@@ -9,9 +9,10 @@ import type { Live } from "./live.ts";
 import { HOME, settingsFile, where } from "./paths.ts";
 import { READ_LISTS, taskLists, fileIn } from "../core/tasklists.js";
 import * as T from "../core/tasks.js";
+import { liveTaskTerminal, taskOwner } from "../core/task-owner.js";
 import { isHelper, subagentsOf } from "../core/chat-view.js";
 // The core is plain JavaScript; its defaults read as narrow types to TypeScript.
-const { place, refOf, taskKey, autoPrefix, reportOf, secondLine, leftOf, queueReason, machineOf } = T as any;
+const { place, refOf, taskKey, autoPrefix, reportOf, secondLine, leftOf, queueReason, machineOf, usageOf, USAGE_FILE } = T as any;
 import * as S from "../core/spaces.js";
 const { spacesFromDoc, sidebarOf, assistantOf, isUnread, inOrder, byMachineOrder, machineOrderOf } = S as any;
 import * as N from "../core/notify.js";
@@ -211,16 +212,16 @@ export class Model {
       const r = await sh(this.hub, READ_LISTS, [], m);
       if (r.code !== 0) return;
       if (m) this.pilots.set(m, fileIn(r.stdout, ".autopilot.json") ?? {});
-      this.lists.set(m, taskLists(r.stdout).map((d: any) => ({ ...d, machine: m, prefix: d.prefix || autoPrefix(d.folder), tasks: Array.isArray(d.tasks) ? d.tasks : [] })));
+      const usage = fileIn(r.stdout, USAGE_FILE);
+      this.lists.set(m, taskLists(r.stdout).map((d: any) => ({ ...d, usage, machine: m, prefix: d.prefix || autoPrefix(d.folder), tasks: Array.isArray(d.tasks) ? d.tasks : [] })));
     } catch {}
   }
 
   /** A task's agents now: live terminals labelled with its key, on the folder's machine, not shells. */
   private agentsOf(list: List, task: any) {
-    const key = `${list.slug}#${task.id}`;
-    const out: { address: string; status: string | null; role: string; turn: number; since: number }[] = [];
+    const out: { address: string; status: string | null; role: string; turn: number; since: number; created?: number }[] = [];
     for (const k of this.hub.terminals.values()) {
-      if (k.state !== "live" || k.labels?.["herdr.task"] !== key || machineOf(k.address) !== (list.machine ?? null)) continue;
+      if (!liveTaskTerminal(k, { machine: list.machine ?? null, slug: list.slug, id: task.id }, task)) continue;
       const st = typeof k.status === "object" ? k.status?.state ?? null : null;
       // a plain shell in front: its agent is gone, whatever status hc kept (#1022: one that died mid-turn keeps
       // "working" for good); a shell that runs a command (fish -ic "claude ...", #780) still holds its agent
@@ -230,7 +231,7 @@ export class Model {
       if (isHelper(k)) continue;
       // turn: its finished turns, for a Ready task back at work (core busyAgain()); since: when its status last
       // changed (hc's status_ms), for the grace before a quiet agent needs the person (core GRACE_MS, SHEP-133)
-      out.push({ address: k.address, status: st, role: k.labels?.["herdr.role"] ?? "worker", turn: Number((k as any).turn) || 0, since: Number((k as any).status_ms) || 0 });
+      out.push({ address: k.address, status: st, role: k.labels?.["herdr.role"] ?? "worker", turn: Number((k as any).turn) || 0, created: (k as any).created_ms, since: Number((k as any).status_ms) || 0 });
     }
     return out;
   }
@@ -264,13 +265,14 @@ export class Model {
       return {
         key: taskKey(list, task), ref: refOf(list, task), title: task.title, section: p.section, needs: p.needs,
         sub: secondLine(p, w, p.section === "queued" ? queueReason(list, task, running) : null), left: leftOf(p, w), pct: w?.done ?? null,
+        usage: usageOf(list.usage?.[`${list.slug}#${task.id}`], p.section, live),
         // what its agent last said (core reportOf), as the window's task header shows it: working, and frozen while it
         // needs the person
         said: w?.text ? { text: w.text, done: w.done ?? null, left: w.left ?? null, paused: !!w.paused } : null,
         machine: list.machine, folder: list.folder, slug: list.slug, id: task.id, list: list.name,
         // the space whose Assistant started it (herdr-task keeps it): the window counts and lists it there
         feature: task.feature ?? null,
-        space: task.space ? (list.machine ? `${list.machine}/${task.space}` : task.space) : null,
+        space: task.space ? (list.machine && !task.space.includes("/") ? `${list.machine}/${task.space}` : task.space) : null,
         worker, archived: !!task.archived, pinned: pins.has(taskKey(list, task)),
         scheduled_for: task.state === "scheduled" ? task.scheduled_for ?? null : null,
         started: task.started ?? null, ready_at: task.ready_at ?? null, done_at: task.done_at ?? null,
@@ -299,8 +301,8 @@ export class Model {
     // and the machines in the order the person dragged them into (SHEP-153)
     const spaces = byMachineOrder(inOrder([...fromDocs, ...own.filter((x: any) => !fromDocs.some((y: any) => y.id === x.id))], this.value("spaces-chat")?.order), machineOrderOf(this.value("spaces-chat"))).map((s: any, at: number) => {
       const k = assistantOf(s, terminals as any[]);
-      // a task belongs to the space that started it, else to the space in its folder (as the window's counts)
-      const here = rows.filter((r) => !r.archived && (r.space ? r.space === s.id : (r.machine ?? null) === (s.machine ?? null) && r.folder === s.folder));
+      // Count tasks only in their recorded owning space.
+      const here = rows.filter((r) => !r.archived && taskOwner([s], r.machine, r.space) != null);
       return {
         ...s, at, icon: bar.icons[s.id] ?? null, pinned: bar.pinned.includes(s.id),
         // when something in its tabs last changed state (Herdr's tab changed_at: its terminals' status times), for

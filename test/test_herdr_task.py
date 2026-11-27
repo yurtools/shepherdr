@@ -1122,7 +1122,7 @@ class BackToWork(unittest.TestCase):
         self.tick.back_pass(self.store, t, report)
         self.assertEqual((t["state"], report["working_again"]), ("running", ["SHEP-7"]))
         self.assertEqual(self.news.news_line(self.store, t, {}, "working-again"),
-                         '<herdr-news task="SHEP-7" event="working-again">SHEP-7 is working again: its agent is at work again (Web client)</herdr-news>')
+                         '<herdr-news task="SHEP-7" event="working-again" folder="/f">SHEP-7 is working again: its agent is at work again (Web client)</herdr-news>')
 
     def test_a_dead_agents_shell_is_no_agent(self):
         """#1022: a Codex worker that died mid-turn left its plain shell, hc still saying "working" (as real hc does
@@ -1177,7 +1177,7 @@ class BackToWork(unittest.TestCase):
         self.tick.back_pass(self.store, t, report)
         self.assertEqual((t["state"], report["working_again"]), ("running", ["SHEP-7"]))
         self.assertEqual(self.news.news_line(self.store, t, {}, "working-again"),
-                         '<herdr-news task="SHEP-7" event="working-again">SHEP-7 is working again: its agent asked something (Web client)</herdr-news>')
+                         '<herdr-news task="SHEP-7" event="working-again" folder="/f">SHEP-7 is working again: its agent asked something (Web client)</herdr-news>')
         # and the words: GitHub's news and the brief tell a woken Ready worker to ask with its question tool
         from herdr_task import ghnews, templates
         with open(os.path.join(ROOT, "templates", "worker.md")) as f:

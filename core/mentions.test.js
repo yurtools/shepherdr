@@ -147,3 +147,14 @@ test("a picked task still gets its tag line: @SHEP-4 and its token count as ment
   expect(mentionedIn("ask @SHEP-4", tasks)).toHaveLength(1);
   expect(mentionedIn("me@SHEP-4", tasks)).toHaveLength(0);
 });
+
+test('explicit picks with colliding visible refs keep both canonical folders', () => {
+  const a = { ref: 'APP-5', route: '', folder: '/project/ui' }, b = { ...a, folder: '/other/ui' };
+  const box = pickTaskInto('ask @APP-5 and @app', b, [a]);
+  const result = expandTasks(box, [b]);
+  expect(split(result).filter(p => p.task).map(p => p.task.folder)).toEqual([a.folder, b.folder]);
+  const tasks = [{ ...a, id: 5 }, { ...b, id: 5 }];
+  expect(mentionedIn('ask @APP-5', tasks)).toEqual([]);
+  expect(mentionedIn(taskToken(a), tasks)).toEqual([tasks[0]]);
+  expect(mentionedIn(taskToken({ ...a, route: 'vm' }), tasks)).toEqual([]);
+});

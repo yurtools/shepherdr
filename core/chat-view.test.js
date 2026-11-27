@@ -291,3 +291,15 @@ test("bgGroups: one row per kind, subagents first, the newest and their shared s
   expect(bgGroups([{ kind: "child", at: 1, status: "done" }, { kind: "child", at: 2, status: "needs" }, { kind: "child", at: 3, status: "working" }])[0].status).toBe("needs");
   expect(bgGroups([{ kind: "child", at: 1, status: "done" }, { kind: "child", at: 2, status: "done" }])[0].status).toBe("done");
 });
+
+test('news for duplicate refs requires the exact source folder, including synthesized Ready rows', () => {
+  const a = { ref: 'APP-5', title: 'First', folder: '/p/ui', status: 'ready', ready_at: 12 };
+  const b = { ...a, title: 'Second', folder: '/other/ui', ready_at: 13 };
+  const items = [{ kind: 'news', id: 'old', ref: 'APP-5', event: 'ready', at: 10 },
+    { kind: 'news', id: 'new', ref: 'APP-5', folder: a.folder, event: 'ready', at: 12 }];
+  const result = newsTimeline(items, [['APP-5', a], ['APP-5', b]], { start: 0 });
+  expect(result.find(x => x.id === 'old').task).toBeNull();
+  expect(result.find(x => x.id === 'old').accept).toBe(false);
+  expect(result.find(x => x.id === 'new').task).toBe(a);
+  expect(result.find(x => x.made).task).toBe(b);
+});

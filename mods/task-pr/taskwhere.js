@@ -5,6 +5,7 @@
 // { terminal, ref, folder (its worktree, else its list's folder), machine (null: here), branch,
 //   base, start (the commit it started from), pr ({ number, url, repo } once herdr-task made one) }.
 import { shared, layout } from "herdr";
+import { activeTaskThread, threadIdentity } from "./task-thread-state.js";
 
 export const BODY = "tasks-thread-body";
 export const PR = "tasks-thread-pr";
@@ -13,7 +14,7 @@ export const BROWSER = "tasks-thread-browser";
 // Only the shown task's: while another opens, its place isn't read yet (null).
 export function where() {
   const w = shared("tasks.thread.where");
-  return w && w.terminal === shared("tasks.thread")?.terminal ? w : null;
+  return w && w.identity === threadIdentity(activeTaskThread()) ? w : null;
 }
 
 function find(node, id) {

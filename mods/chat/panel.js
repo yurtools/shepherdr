@@ -25,14 +25,16 @@ import { h_flex, v_flex } from "gpui-base";
 import { shared, setShared, run, theme, exec, appHome, home, readTextFile, writeTextFile, notify, layout, openOverlay } from "herdr";
 import { terminals, agents } from "./live.js";
 import { taskDot, ownProgress, estimated } from "./dot.js";
-import { busyAgain, onIt, readyWait } from "./core/tasks.js";
+import { busyAgain, onIt, readyWait, place, usageOf, usageLabel, USAGE_FILE } from "./core/tasks.js";
 import { button, segmented, TEXT, RADIUS, toast, plainError } from "./ui.js";
 import { on as addonOn } from "./addons.js";
 import { artifactCli } from "./artview.js";
 import { GREP, publishedIds, taskArtifacts } from "./core/task-artifacts.js";
 import { SH } from "./core/paths.js";
 import { dirs } from "./dirs.js";
-import { openWorkerView } from './task-view.js';
+import { openWorkerView, showTaskMode, reconcileTaskPanel } from './task-view.js';
+import { activeTaskThread, threadIdentity, updateTaskThread } from './task-thread-state.js';
+import { liveTaskTerminal, taskOwner } from './core/task-owner.js';
 
 // The task header's shared left edge, and task ids in the Tasks list's monospace (mods/tasks).
 const EDGE = 12, ID_FONT = "JetBrains Mono";
@@ -57,7 +59,7 @@ function find(node, id) {
 export const inner = { chat: null };
 
 // Which task a "tasks.thread" names: its agent's terminal, else its key (one never started).
-const wantId = (w) => (w ? w.terminal ?? (w.key ? `${w.key.machine ?? ""}:${w.key.slug}#${w.key.id}` : null) : null);
+const wantId = threadIdentity;
 
 // Whether the shown layout has the drill-in view (else callers go to the agent instead).
 export function hasTaskThread(node) {
@@ -67,20 +69,29 @@ export function hasTaskThread(node) {
 }
 
 export function openTaskThread(terminal, task, title, mode = null) {
-  openWorkerView({ terminal, task: task ?? null, title: title ?? null }, { mode });
+  return openWorkerView({ terminal, task: task ?? null, title: title ?? null, exactWorker: true }, { mode });
 }
 
-export const backToTasks = () => run("layout.select", { stack: STACK, child: LIST });
+export const backToTasks = () => {
+  const want = activeTaskThread();
+  if (want) updateTaskThread(want, { open: false });
+  setShared('tasks.thread.termreq', null);
+  run("layout.select", { stack: STACK, child: LIST });
+};
 
 // Chat / Terminal: which the view shows now (the body stack's child).
 export const terminalShown = () => find(layout(), BODY)?.active === TERM;
 export const showWorkerChat = () => {
-  setShared('tasks.thread.termreq', null);
-  run("layout.select", { stack: BODY, child: CHAT });
+  const want = activeTaskThread();
+  if (want) showTaskMode(want, "chat");
+  else run("layout.select", { stack: BODY, child: CHAT });
 };
 // Asks the header for the worker's terminal (the chat's own "Open terminal", a slash menu): it
 // has the timers the swap waits on. Shared "tasks.thread.termreq" = { terminal, at }.
-export const requestWorkerTerminal = (terminal) => setShared("tasks.thread.termreq", { terminal, at: Date.now() });
+export const requestWorkerTerminal = (terminal) => {
+  const want = activeTaskThread();
+  if (want?.terminal === terminal && !want.historical) showTaskMode(want, "terminal");
+};
 
 // The terminal block shows the worker: an edit of that one block in the layout's file (a mod
 // can't draw a terminal, and a layout block can show any core terminal without giving it a pane;
@@ -118,33 +129,39 @@ export class PanelHost {
     this.ticks = 0;
   }
 
-  // The worker's task: { machine, slug, id } from its herdr.task label ("<slug>#<id>"), or null.
-  taskOf(addr) {
-    const key = terminals().find((k) => k.address === addr)?.labels?.["herdr.task"];
-    const [slug, id] = String(key ?? "").split("#");
-    return key && slug && id ? { machine: addr.includes("/") ? addr.split("/")[0] : null, slug, id: Number(id) } : null;
-  }
-
   // Reads its task's record again (cheap: one small file; another machine's less often).
   async loadTask(addr, cx) {
     const cur = this.cur;
     // A terminal gone from the core has no labels left: the task's key, as the list sent it.
-    const k = (addr && this.taskOf(addr)) || cur?.key || null;
+    const k = cur?.key || null;
     let rec = null;
     if (k) {
-      const text = k.machine
-        ? (await exec("sh", ["-c", SH + 'cat "$SHEP_TASKS/$1.json"', "sh", k.slug], { on: k.machine }).catch(() => null))?.stdout
-        : await readTextFile(`${dirs().tasks}/${k.slug}.json`).catch(() => null);
+      let text, sample;
+      if (k.machine) {
+        // Same existing remote read, with the host's small aggregate cache appended.
+        const script = SH + 'cat "$SHEP_TASKS/$1.json"' + (this.head ? `; printf '\n@@usage@@\n'; cat "$SHEP_TASKS/${USAGE_FILE}" 2>/dev/null || true` : "");
+        const result = await exec("sh", ["-c", script, "sh", k.slug], { on: k.machine }).catch(() => null);
+        if (!result || result.code !== 0) { if (this.cur === cur) cx.notify(); return; }
+        [text, sample] = (result?.stdout ?? "").split("\n@@usage@@\n", 2);
+      } else {
+        [text, sample] = await Promise.all([
+          readTextFile(`${dirs().tasks}/${k.slug}.json`).catch(() => null),
+          this.head ? readTextFile(`${dirs().tasks}/${USAGE_FILE}`).catch(() => null) : null,
+        ]);
+      }
       try {
         const d = JSON.parse(text || "null");
         const t = d?.tasks?.find((x) => x.id === k.id);
-        rec = t ? { ...t, folder: d.folder, machine: k.machine, ref: d.prefix ? `${d.prefix}-${t.id}` : String(t.id) } : null;
+        rec = t && d.folder === k.folder && taskOwner([{ id: cur.space, machine: k.machine }], k.machine, t.space) && (t.feature ?? null) === (cur.feature ?? null) ? { ...t, slug: k.slug, folder: d.folder, machine: k.machine, ref: cur.task } : null;
       } catch {}
+      if (rec && this.head) {
+        try { rec.usage = JSON.parse(sample || "null")?.[`${k.slug}#${k.id}`] ?? null; } catch { rec.usage = null; }
+      }
     }
-    if (this.cur !== cur) return;
+    if (this.cur !== cur || wantId(activeTaskThread()) !== wantId(cur)) return;
     // Where the task's side views look (taskwhere.js): its worktree, else its list's folder.
     if (this.head) {
-      const w = rec ? { terminal: addr, ref: rec.ref, folder: rec.worktree || rec.folder || null, machine: rec.machine ?? null,
+      const w = rec ? { identity: wantId(cur), terminal: addr, ref: rec.ref, folder: rec.worktree || rec.folder || null, machine: rec.machine ?? null,
         branch: rec.branch ?? null, base: rec.base ?? null, start: rec.start ?? null, pr: rec.pr ?? null } : null;
       if (JSON.stringify(w) !== JSON.stringify(shared("tasks.thread.where") ?? null)) setShared("tasks.thread.where", w);
     }
@@ -169,8 +186,8 @@ export class PanelHost {
       const said = logs.length ? await exec("grep", ["-ohE", GREP, ...logs], on ? { on } : {}).catch(() => null) : null;
       const ids = taskArtifacts(arts, { ref: rec.ref, folder: rec.folder, machine: null, agents: rec.agents, proof: rec.proof?.id ?? null }, publishedIds(said?.stdout));
       const list = ids.map((id) => arts.find((a) => a.id === id)).map((a) => ({ id: a.id, title: a.title, v: a.version, at: a.at, proof: a.id === rec.proof?.id }));
-      const v = { terminal: addr ?? null, ref: rec.ref, machine: on, key: cur?.key ?? null, folder: rec.folder, space: rec.space ?? null, list };
-      if (this.cur === cur && this.rec?.ref === rec.ref && this.rec?.folder === rec.folder && (this.rec?.machine ?? null) === on && JSON.stringify(v) !== JSON.stringify(shared("tasks.thread.artifacts") ?? null)) setShared("tasks.thread.artifacts", v);
+      const v = { identity: wantId(cur), terminal: addr ?? null, ref: rec.ref, machine: on, key: cur?.key ?? null, folder: rec.folder, space: rec.space ?? null, list };
+      if (this.cur === cur && wantId(activeTaskThread()) === wantId(cur) && this.rec?.ref === rec.ref && this.rec?.folder === rec.folder && (this.rec?.machine ?? null) === on && JSON.stringify(v) !== JSON.stringify(shared("tasks.thread.artifacts") ?? null)) setShared("tasks.thread.artifacts", v);
       this.artsKey = key;
       this.artsAt = Date.now();
     } finally {
@@ -183,13 +200,13 @@ export class PanelHost {
   // back at work.
   acceptable(st, addr) {
     const r = this.rec;
-    return Boolean(r && r.state === "ready" && !r.attention && st !== "blocked" && !readyWait(r, [addr]))
+    return Boolean(r && r.state === "ready" && !r.attention && st !== "blocked" && !readyWait(r, this.cur?.historical ? [] : [addr]))
       && !this.again(st, addr);
   }
 
   // Its worker took up work again since it said ready (core/tasks.js busyAgain()): Working, no Accept.
   again(st, addr) {
-    const r = this.rec, k = addr ? terminals().find((x) => x.address === addr) : null;
+    const r = this.rec, k = addr && !this.cur?.historical ? terminals().find((x) => x.address === addr) : null;
     return Boolean(r && k) && busyAgain(r, [{ address: addr, status: st, turn: k.turn, role: k.labels?.["herdr.role"] ?? "worker" }]);
   }
 
@@ -197,6 +214,7 @@ export class PanelHost {
   // accept from its own Accept; the header reads the task again on its timer.
   accept(_cx) {
     const r = this.rec;
+    if (!r || wantId(this.cur) !== wantId(activeTaskThread())) return;
     openOverlay({ mod: "accept-card", kind: "dialog", modal: true, width: 640, height: 640,
       props: { ref: r.ref, folder: r.folder, machine: r.machine ?? null, title: r.title } });
   }
@@ -210,11 +228,12 @@ export class PanelHost {
       try { await oldChat?.close(cx); } catch {}
       old.release();
     }
+    if (wantId(activeTaskThread()) !== wantId(want)) { this.cur = null; this.swapping = false; cx.notify(); return; }
     this.cur = want;
     this.rec = null;
     this.loadTask(want?.terminal, cx);
     if (want?.terminal) this.entity = cx.new(this.Chat, { inner: true, thread: true, terminal: want.terminal, task: want.task, title: want.title,
-      log: want.log ?? null, key: want.key ?? null });
+      log: want.log ?? null, key: want.key ?? null, historical: want.historical, feature: want.feature, taskView: want });
     this.swapping = false;
     cx.notify();
   }
@@ -228,7 +247,7 @@ export class PanelHost {
   dot(st, addr) {
     const r = this.rec;
     if (!r) return div();
-    const live = terminals().find((x) => x.address === addr)?.state === "live";
+    const live = !this.cur?.historical && liveTaskTerminal(terminals().find((x) => x.address === addr), this.cur?.key ?? {}, r);
     const last = r.agents?.[r.agents.length - 1];
     const starting = !last?.ended && Date.now() - Math.max(0, ...[r.started, last?.at].filter((x) => typeof x === "number")) < 90000;
     // A problem (failing checks) its worker is on (core/tasks.js onIt()): Working; nobody on it: Needs you.
@@ -239,7 +258,7 @@ export class PanelHost {
       : fixing ? "working"
       : r.state === "ready" && !this.again(st, addr) ? (readyWait(r, live ? [addr] : []) ? "working" : "ready")
       : st === "working" || r.retry || starting ? "working" : "needs";
-    return taskDot(s, { pct: ownProgress([addr])?.pct ?? r.progress?.done, halo: true });
+    return taskDot(s, { pct: (!this.cur?.historical ? ownProgress([addr])?.pct : null) ?? r.progress?.done, halo: true });
   }
 
   status(addr) {
@@ -252,13 +271,17 @@ export class PanelHost {
   // Chat → Terminal: the body stack shows the worker's terminal block, pointed at it first, and
   // the keyboard goes to it (typing reaches the worker, as in the main chat's Terminal).
   toTerminal(addr, cx) {
-    if (this.busy) return;
+    const want = activeTaskThread();
+    if (this.busy || !want || want.historical || want.terminal !== addr) return;
+    updateTaskThread(want, { mode: "terminal" });
     this.busy = true;
     cx.notify();
     cx.spawn(async (cx) => {
       try {
         if (find(layout(), TERM)?.content?.terminal !== addr) await pointTerm(addr, cx);
-        if (shared('tasks.thread')?.terminal === addr) {
+        if (wantId(activeTaskThread()) === wantId(want) && activeTaskThread()?.mode === "terminal") {
+          setShared("tasks.thread.termreq", null);
+          updateTaskThread(want, { mode: 'terminal' });
           run("layout.select", { stack: BODY, child: TERM });
           run("pane.focus", { terminal: addr });
         }
@@ -283,7 +306,7 @@ export class PanelHost {
 
   // The body: the worker's chat (its terminal is the layout's own block beside it).
   renderBody(cx) {
-    const want = shared("tasks.thread") ?? null;
+    const want = activeTaskThread();
     if (wantId(want) !== wantId(this.cur) && !this.swapping) {
       this.swapping = true;
       cx.timer.after(0, (cx) => cx.spawn(async (cx) => this.swap(want, cx)));
@@ -297,7 +320,7 @@ export class PanelHost {
       cx.timer.after(0, (cx) => cx.notify(e));
     }
     const t = theme();
-    return this.entity
+    return this.entity && wantId(want) === wantId(this.cur)
       ? v_flex().id("task-thread").size_full().min_h(0).bg(t.background).text_color(t.foreground).text_size(13).child(this.entity)
       : v_flex().id("task-thread").size_full().items_center().justify_center().px(18).bg(t.background).text_size(TEXT.label).text_color(t.dim)
         .child(want?.note ?? (want ? "Opening…" : "Pick a task to see its chat."));
@@ -330,7 +353,8 @@ export class PanelHost {
   }
 
   renderHead(cx) {
-    const want = shared("tasks.thread") ?? null;
+    const want = activeTaskThread();
+    if (shared("tasks.thread.displayed") !== wantId(want) || (!shared("tasks.thread.bySpace") && shared("tasks.thread")?.key)) cx.timer.after(0, () => reconcileTaskPanel());
     if (wantId(want) !== wantId(this.cur)) {
       this.cur = want;
       this.rec = null;
@@ -344,27 +368,28 @@ export class PanelHost {
         const remote = addr ? addr.includes("/") : Boolean(key?.machine);
         if ((addr || key) && (!remote || ++this.ticks % 4 === 0)) cx.spawn(async (cx) => this.loadTask(addr, cx));
         // Its minutes left count down: a redraw every 30 s while it reports some.
-        if (this.rec?.progress && (this.redraws = (this.redraws ?? 0) + 1) % 10 === 0) cx.notify();
+        if ((this.rec?.progress || this.rec?.usage) && (this.redraws = (this.redraws ?? 0) + 1) % 10 === 0) cx.notify();
       });
     }
     const t = theme();
     const addr = want?.terminal ?? null;
-    const k = addr ? terminals().find((x) => x.address === addr) : null;
-    const st = addr ? this.status(addr) : null;
-    const live = k?.state === "live";
+    const k = addr && !want?.historical ? terminals().find((x) => x.address === addr) : null;
+    const st = addr && !want?.historical ? this.status(addr) : null;
+    const live = !want?.historical && Boolean(want?.key && liveTaskTerminal(k, want.key, want));
     const term = terminalShown();
     // The worker ended (or none shows) while its terminal was up: back to its chat, which stays to read.
-    if (term && !live && !this.busy) cx.timer.after(0, () => showWorkerChat());
+    if (term && (!live || find(layout(), TERM)?.content?.terminal !== addr) && !this.busy && !shared("tasks.thread.termreq")) cx.timer.after(0, () => { if (wantId(activeTaskThread()) === wantId(want)) showWorkerChat(); });
     // The chat's own way to the terminal (requestWorkerTerminal()).
     const rq = shared("tasks.thread.termreq");
-    if (!this.busy && rq && rq.at !== this.termReqAt && rq.terminal === addr && live && Date.now() - rq.at < 5000) {
+    if (rq?.identity === wantId(want) && !live) cx.timer.after(0, () => { if (wantId(activeTaskThread()) === wantId(want) && shared("tasks.thread.termreq")?.at === rq.at) showWorkerChat(); });
+    if (!this.busy && rq && rq.at !== this.termReqAt && rq.identity === wantId(want) && rq.terminal === addr && live) {
       this.termReqAt = rq.at;
       cx.timer.after(0, (cx) => this.toTerminal(addr, cx));
     }
     // The second row, one switcher: Chat, Terminal (dim when the worker has ended), then the task's own views.
     const shownNow = this.busy ? TERM : find(layout(), BODY)?.active ?? CHAT;
-    const pick = (child) => () => run("layout.select", { stack: BODY, child });
-    const hasPr = Boolean(this.rec?.pr) || (addr && shared("tasks.thread.pr")?.terminal === addr);
+    const pick = (child) => () => showTaskMode(want, child.slice("tasks-thread-".length));
+    const hasPr = Boolean(this.rec?.pr) || (addr && shared("tasks.thread.pr")?.identity === wantId(want));
     // Pull request only once the task has one; shown while it lost it, back to its chat.
     if (shownNow === PR && !hasPr && this.rec) cx.timer.after(0, () => showWorkerChat());
     const segs = [
@@ -391,7 +416,7 @@ export class PanelHost {
   // "Artifacts", with how many once the shown task has some ("Artifacts 3").
   artsLabel(want) {
     const a = shared("tasks.thread.artifacts");
-    const n = a && a.terminal === (want?.terminal ?? null) && JSON.stringify(a.key ?? null) === JSON.stringify(want?.key ?? null) && (want?.terminal || a.ref === want?.task) ? a.list.length : 0;
+    const n = a && want && a.identity === wantId(want) ? a.list.length : 0;
     return n ? `Artifacts ${n}` : "Artifacts";
   }
 
@@ -399,6 +424,7 @@ export class PanelHost {
   // reaching past it), and on the right the task's base and Accept
   // (no Pin: the task's row menu pins it, SHEP-62).
   barRow(t, st, addr) {
+    const usage = this.taskUsage();
     return h_flex().id("thread-bar").h(24).flex_none().pl(EDGE - 6).pr(EDGE).gap(4).items_center()
       .child(h_flex().id("thread-back").h(24).pl(2).pr(8).gap(2).flex_none().items_center().rounded(RADIUS.control).cursor_pointer()
         .text_size(TEXT.label).text_color(t.muted).hover((s) => s.bg(t.hover).text_color(t.foreground))
@@ -406,12 +432,28 @@ export class PanelHost {
         .child(svg("mods/workspace-chrome/chevron-left.svg").size(14).flex_none())
         .child("Tasks"))
       .child(div().flex_1())
+      .when(Boolean(usage), (el) => el.child(div().id("thread-usage").flex_shrink_1().min_w(0).truncate().text_size(TEXT.label).text_color(t.dim).child(usage)))
       // A task's own base (herdr-task add --base), where it merges into; the folder's default isn't shown.
-      .when(Boolean(this.rec?.base_set && this.rec?.base), (el) => el.child(div().id("thread-base").flex_none().max_w(160).truncate().pr(4)
+      .when(Boolean(this.rec?.base_set && this.rec?.base), (el) => el.child(div().id("thread-base").flex_shrink(1000).min_w(0).max_w(160).truncate().pr(4)
         .text_size(TEXT.label).text_color(t.muted).child(`→ ${this.rec.base}`)))
       // Review: the header's one primary button, opens the Accept card (its Accept merges first when there's something to merge).
       .when(this.acceptable(st, addr), (el) => el.child(button("thread-accept", this.accepting ? "Accepting…" : "Review",
         { kind: "primary", disabled: this.accepting, onClick: (_e, cx) => this.accept(cx) })));
+  }
+
+  taskUsage() {
+    const r = this.rec;
+    // Use the list's status rules, not the selected worker alone (another worker/helper may be busy).
+    const ts = r ? terminals().filter(k => liveTaskTerminal(k, { machine: r.machine, slug: r.slug, id: r.id }, r)) : [];
+    const shown = new Map(agents().map((a) => [a.address, a]));
+    const liveInfo = (k) => ({ address: k.address, status: shown.get(k.address)?.status ?? (typeof k.status === "string" ? k.status : null),
+      role: k.labels?.["herdr.role"] ?? "worker", turn: k.turn, since: k.status_ms, created: k.created_ms });
+    const isHelper = (k) => ["reviewer", "helper"].includes(k.labels?.["herdr.role"]) && !!k.parent;
+    const live = ts.filter((k) => !isHelper(k)).map(liveInfo);
+    const mine = new Set(live.map((a) => a.address.split("/").pop()));
+    const helpers = ts.filter((k) => isHelper(k) && mine.has(String(k.parent).split("/").pop())).map(liveInfo);
+    const section = r ? place({ machine: r.machine }, r, { live, helpers }).section : null;
+    return usageLabel(usageOf(r?.usage, section, live));
   }
 
   // The task: its status dot (as its Tasks row, Needs you with its halo) beside the title line,

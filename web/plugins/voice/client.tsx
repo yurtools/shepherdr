@@ -7,7 +7,7 @@ import { artifactKey, findArtifact } from "@core/artifact-owner.js"
 // always Send). Where neither shows (a shut sidebar, a task open on a phone) a strip sits at the top. Whatever the voice opens gets an "Opened by voice" tag for a moment.
 import clsx from 'clsx'
 import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
-import { act, definePlugin, getState, goChat, goPlace, listView, openArtifact, openItem, openTask, placeOf, placesDrawn, registry, setFilter, setUI, shownItem, taskInMiddle, useStore, useUI, visibleChats, type UI } from '@client/kernel.ts'
+import { act, definePlugin, getState, goChat, goPlace, listView, openArtifact, openItem, openTask, placeOf, placesDrawn, registry, setFilter, setTaskStatusFilter, setUI, shownItem, taskInMiddle, useStore, useUI, visibleChats, type UI } from '@client/kernel.ts'
 import { EndCallIcon, FitIcon, ic, IconButton, MicIcon, MicOffIcon, RoundButton, UnfitIcon, useElapsed, WaveIcon, Waves, XIcon } from '@client/ui.tsx'
 import { useWindowWidth } from '@client/Frame.tsx'
 import { cancelDictation } from '@plugins/chat/client.tsx'
@@ -156,6 +156,7 @@ async function doNav(nav: Nav): Promise<NavAck> {
     setUI(ui.device === 'phone' ? { task: null, tab: 'tasks', pick: null } : { side: 'tasks', sideShut: false, ...(ui.task && taskInMiddle(ui, snap) ? { task: null } : {}) })
     // words to filter by (a task's name or id): typed in the panel's filter box, as the person would
     const view = listView(getState().ui, snap)
+    setTaskStatusFilter(nav.kind === 'needs' ? 'needs' : nav.filter)
     if (nav.kind === 'tasks') setFilter(view.search, 'tasks', str(nav.search))
     const now = getState().ui
     return check((ui.device === 'phone' ? now.tab === 'tasks' : now.side === 'tasks'), 'the Tasks panel didn\'t open')
@@ -185,7 +186,7 @@ async function doNav(nav: Nav): Promise<NavAck> {
     if (!snap.tasks.some((t) => t.id === id)) return no('this app doesn\'t list that task')
     setUI(LAYERS_OFF)
     if (tab === 'review') { openAccept(id); return { ok: true, where: whereNow() } }
-    openTask(id)
+    if (!openTask(id)) return no(getState().ui.taskError ?? "the task did not open")
     const item = ITEM[tab]
     if (item) {
       if (getState().ui.device === 'desktop') setUI((u) => ({ sidebars: { ...u.sidebars, panelOpen: true, item } }))

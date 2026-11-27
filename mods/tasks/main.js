@@ -1,5 +1,6 @@
 import { BoundedWait, TIMEOUT, DISPOSED } from "./bounded-wait.js";
 import { openWorkerView } from './task-view.js';
+import { taskOwner, liveTaskTerminal } from "./core/task-owner.js";
 // Tasks: named pieces of work with a prompt, one list per folder (the repo root in git, worktrees
 // included). Each folder's list is ~/.herdr/tasks/<slug>.json on the machine the folder is on,
 // changed only through the herdr-task CLI (bin/herdr-task), which coordinators and agents use.
@@ -31,8 +32,9 @@ import { taskMenu } from "./core/menus.js";
 import { machinesInOrder, machineOrderOf, chatPane } from "./core/spaces.js";
 // The rules for a task's status, order and words: shared with the web app (core/tasks.js).
 import { RANK, STATUS, RANK_OF, ORDER, GROUP_BY, groupBy, groupNow, machineOf, machineName, refOf, taskKey, autoPrefix, place,
-  queueReason, reportOf as report, secondLine, leftOf, order, matches, day, ago, capital, short, autoWhere, fromLine, inSpace, holdingItems } from "./core/tasks.js";
-import { READ_LISTS, taskLists } from "./core/tasklists.js";
+  queueReason, reportOf as report, secondLine, leftOf, order, matches, day, ago, capital, short, autoWhere, fromLine, inSpace, holdingItems, USAGE_FILE, usageOf, usageLabel } from "./core/tasks.js";
+import { loadFilters, saveFilters, normalizeFilters, toggleFilter, filterLabel, filterChoices, splitFilterChoices } from "./core/task-filters.js";
+import { READ_LISTS, taskLists, fileIn } from "./core/tasklists.js";
 import { SH } from "./core/paths.js";
 import { settle } from "./core/pending.js";
 import { dirs } from "./dirs.js";
@@ -66,7 +68,18 @@ function spaceOf(list) {
   if (!spaceAt) { spaceAt = new Map(); const rank = machineRank(), n = spaces().length + 1; for (const [j, s] of spaces().entries()) { const i = rank(s.machine) * n + j; const k = `${s.machine ?? ""}:${s.folder}`; if (!spaceAt.has(k)) spaceAt.set(k, { id: s.id, name: s.name, at: i, active: Boolean(s.active) }); } }
   return spaceAt.get(`${list.machine ?? ""}:${list.folder}`) ?? { name: list.name, at: Infinity };
 }
-const placeName = (list) => spaceOf(list).name;
+const placeName = (list, task = null) => task ? taskOwner(spaces(), list.machine, task.space)?.name ?? list.name : spaceOf(list).name;
+
+function ownerGroups(placed) {
+  const groups = new Map();
+  for (const p of placed) {
+    const owner = taskOwner(spaces(), p.list.machine, p.task.space);
+    const key = JSON.stringify([p.list.machine, p.list.folder, owner?.id ?? null]);
+    if (!groups.has(key)) groups.set(key, { list: p.list, owner, items: [] });
+    groups.get(key).items.push(p);
+  }
+  return [...groups.values()];
+}
 
 // herdr-task, here or (through its --on) on the machine that holds the folder. Resolves with its
 // JSON output; rejects with its error.
@@ -95,8 +108,8 @@ export default class Tasks extends View {
     // Folded headings and groups showing all their Done rows, by group key: remembered.
     const saved = (k) => { try { const v = JSON.parse(localStorage.getItem(k) ?? "[]"); return new Set(Array.isArray(v) ? v : []); } catch { return new Set(); } };
     this.shutKeys = saved("shut");
-    // The filter row's choice: "all" (grouped) or one status, flat.
-    try { this.filter = localStorage.getItem("filter") ?? "all"; } catch { this.filter = "all"; }
+    // Empty selection: All statuses (grouped). Otherwise the selected categories, flat.
+    this.filters = loadFilters("filter");
     // This space: on or off, remembered (off at first: every space's, as before).
     try { this.here = localStorage.getItem("here") === "1"; } catch { this.here = false; }
     this.filterAt = shared("tasks.filterreq")?.at ?? 0;
@@ -188,7 +201,8 @@ export default class Tasks extends View {
     try { text = (await exec("sh", ["-c", READ_LISTS], { on: machine ?? undefined })).stdout; }
     catch (e) {
       // Another machine out of reach keeps its last lists, quietly.
-      if (!machine) { this.error = `Couldn't read the task lists: ${e?.message ?? e}`; this.ready = true; cx.notify(); }
+      if (!machine) { this.error = `Couldn't read the task lists: ${e?.message ?? e}`; this.ready = true; }
+      cx.notify(); // retained remote numbers can now become stale
       return;
     } finally {
       const again = this.reads.get(k);
@@ -198,8 +212,9 @@ export default class Tasks extends View {
     if (!machine) { this.ready = true; this.error = null; }
     if (this.raw.get(k) === text) { cx.notify(); return; }
     this.raw.set(k, text);
+    const usage = fileIn(text, USAGE_FILE);
     this.byMachine.set(k, taskLists(text)
-      .map((d) => ({ ...d, machine, prefix: d.prefix || autoPrefix(d.folder), tasks: Array.isArray(d.tasks) ? d.tasks : [] })));
+      .map((d) => ({ ...d, usage, machine, prefix: d.prefix || autoPrefix(d.folder), tasks: Array.isArray(d.tasks) ? d.tasks : [] })));
     this.merge();
     cx.notify();
   }
@@ -212,12 +227,10 @@ export default class Tasks extends View {
 
   // A task's agents now: live terminals labelled with its key, on the folder's machine.
   live(list, task) {
-    const key = `${list.slug}#${task.id}`;
     const m = list.machine ?? null;
     const f = this.frame ?? {};
     const shown = f.agents ??= new Map(agents().map((a) => [a.address, a]));
-    return (f.terminals ??= terminals()).filter((k) => k.state === "live" && k.labels?.["herdr.task"] === key && machineOf(k.address) === m)
-      .filter((k) => k.program?.key !== "shell" && !k.program?.shell && !helper(k))
+    return (f.terminals ??= terminals()).filter((k) => liveTaskTerminal(k, { machine: m, slug: list.slug, id: task.id }, task) && !helper(k))
       .map((k) => {
         // agents() knows when someone looked at a finished agent (done -> idle), as Herdr shows it.
         const a = shown.get(k.address);
@@ -227,7 +240,7 @@ export default class Tasks extends View {
         // Where it shows: its own pane, else the chat pane it's parked behind (mods/chat).
         const pane = (f.panes ??= panes()).find((p) => p.terminal === k.address)?.pane ?? chatPane(k);
         return { address: k.address, status: st, program: a?.program ?? k.program, tab: tab && m ? `${m}/${tab}` : tab, pane,
-          role: k.labels?.["herdr.role"] ?? "worker", turn: k.turn,
+          role: k.labels?.["herdr.role"] ?? "worker", turn: k.turn, created: k.created_ms,
           // when its status last changed: a quiet agent needs the person only after core/tasks.js GRACE_MS
           ...(typeof k.status_ms === "number" ? { since: k.status_ms } : {}) };
       });
@@ -272,13 +285,17 @@ export default class Tasks extends View {
     const t = theme();
     // A toast's "needs you" (inbox.js showInbox): Needs you opens.
     const show = shared("tasks.show");
-    if (show?.at && show.at !== this.shownAt) { this.shownAt = show.at; this.fold("needs", false); }
-    // A pick from the filter row's More (mods/tasks-menu).
+    if (show?.at && show.at !== this.shownAt) {
+      this.shownAt = show.at; this.fold("needs", false);
+      if (this.filters.length && !this.filters.includes("needs")) this.setFilters(["needs"]);
+    }
+    // More sends the whole selection (so rapid picks cannot be lost). Legacy scalar requests
+    // from navigation explicitly replace the selection, rather than toggling it.
     const fq = shared("tasks.filterreq");
-    if (fq?.at && fq.at !== this.filterAt) { this.filterAt = fq.at; this.pickFilter(fq.key); }
+    if (fq?.at && fq.at !== this.filterAt) { this.filterAt = fq.at; this.setFilters(fq.keys ?? fq.key); }
     // Ctrl+K's jump (mods/jump) to a task with no chat to open: the list, searched for it, all statuses.
     const sq = shared("tasks.searchreq");
-    if (sq?.at && sq.at !== this.searchAt) { this.searchAt = sq.at; this.pickFilter("all"); this.archivedOpen = false; this.query.set_value(String(sq.q ?? "")); this.jumpQ = String(sq.q ?? ""); }
+    if (sq?.at && sq.at !== this.searchAt) { this.searchAt = sq.at; this.setFilters(sq.filter ?? []); this.archivedOpen = false; this.query.set_value(String(sq.q ?? "")); this.jumpQ = String(sq.q ?? ""); }
     // Shepherdr settings' "Status filters" off (shared "tasks.filters" false): no row, all shown (This space too).
     const filters = shared("tasks.filters") !== false;
     // This space: the shown space's only; not for Ctrl+K's jump while its words are still in the search field.
@@ -286,12 +303,17 @@ export default class Tasks extends View {
     let placed = this.lists.flatMap((l) => l.tasks.map((task) => this.place(l, task)));
     // Each task's status as its list says it now, archived ones too: a Needs-you item the list has moved past is stale.
     const truth = new Map(placed.map((p) => [`${p.list.machine ?? ""}:${p.list.folder}:${refOf(p.list, p.task)}`, p]));
-    if (here) placed = placed.filter((p) => inSpace(here, { machine: p.list.machine ?? null, folder: p.list.folder, space: p.task.space }));
     // Archived tasks (herdr-task: Done ones archive themselves after a while) leave every list and
     // count: only the Archived view and a search show them, the latest archived first.
-    const archived = placed.filter((p) => this.shelved(p)).sort((a, b) => (b.task.archived ?? 0) - (a.task.archived ?? 0));
+    let archived = placed.filter((p) => this.shelved(p)).sort((a, b) => (b.task.archived ?? 0) - (a.task.archived ?? 0));
     placed = placed.filter((p) => !archived.includes(p));
+    // Prune against every loaded folder, not the tasks in the current filter/scope.
     this.prunePins(placed, cx);
+    if (here) {
+      const belongs = (p) => inSpace(here, { machine: p.list.machine ?? null, folder: p.list.folder, space: p.task.space });
+      placed = placed.filter(belongs);
+      archived = archived.filter(belongs);
+    }
     // Needs you: asks, stuck agents, problems, failed automations (a task ready to merge is in Ready).
     let inbox = holdingItems(needs(), truth);
     if (here) inbox = inbox.filter((x) => this.needHere(here, x));
@@ -343,13 +365,12 @@ export default class Tasks extends View {
       .map((a) => [l, a]));
     // The filter row: All, then a chip for each status that holds something now.
     const count = (k) => (k === "needs" ? needRows.length : k === "automations" ? autos.length : tasksOf[k].length);
-    // A chip picked stays picked while searching, even with nothing matching (its list says so).
-    const keep = filters && Boolean(q) && ORDER.includes(this.filter);
-    const chips = ORDER.filter((k) => count(k) || (keep && k === this.filter));
-    const filter = filters && chips.includes(this.filter) ? this.filter : "all";
+    // A selected category stays selected even with no rows (scope, search or a task's status changed).
+    const selected = filters ? this.filters : [];
+    const chips = filterChoices(selected, count);
     // What rows say of where they are: their space, never their machine (SHEP-98: a quiet detail);
     // by space, nothing (the headings say it). For you's space rows sit under their heading (bare).
-    this.names = filter === "all" && by === "space" ? { machine: false, space: false } : { machine: false, space: true };
+    this.names = !selected.length && by === "space" ? { machine: false, space: false } : { machine: false, space: true };
     // Shepherdr settings' "Where on task rows" off (shared "tasks.place" false): rows say none.
     if (shared("tasks.place") === false) this.names = { machine: false, space: false };
     // A status's rows, made only when shown (by status, or its chip).
@@ -360,10 +381,16 @@ export default class Tasks extends View {
     const note = (text) => div().px(18).py(28).text_center().text_size(TEXT.label).text_color(t.dim).child(text);
     const body = [];
     if (this.archivedOpen) { this.names = { machine: true, space: true }; body.push(this.archivedView(found, q, t)); }
-    else if (filter !== "all") {
-      const rows = rowsFor(filter);
-      const what = filter === "needs" ? "tasks that need you" : filter === "automations" ? "automations" : `${STATUS[filter]} tasks`;
-      body.push(rows.length ? v_flex().flex_none().gap(1).children(rows) : note(`No ${what} match “${q}”.`));
+    else if (selected.length) {
+      const taskRows = selected.filter((k) => k !== "automations").flatMap(rowsFor);
+      const autoRows = selected.includes("automations") ? rowsFor("automations") : [];
+      if (taskRows.length) body.push(v_flex().flex_none().gap(1).children(taskRows));
+      if (autoRows.length) body.push(selected.length === 1 ? v_flex().flex_none().gap(1).children(autoRows)
+        : this.group("automations", "Automations", autoRows, t, { open: true }));
+      if (!body.length && this.ready) {
+        const what = selected.length === 1 ? (selected[0] === "needs" ? "tasks that need you" : selected[0] === "automations" ? "automations" : `${filterLabel(selected[0])} tasks`) : "tasks in the selected statuses";
+        body.push(note(q ? `No ${what} match “${q}”.` : `No ${what} to show.`));
+      }
     }
     else {
       const rest = placed.filter((p) => !isPin(p));
@@ -377,10 +404,11 @@ export default class Tasks extends View {
         // Each space's other work, in status order, under its name: the machine only when two machines have a space
         // of that name.
         const work = rest.filter((p) => p.section !== "ready" && p.section !== "deferred" && p.section !== "done");
-        const shownLists = lists.filter((l) => work.some((p) => p.list === l));
-        for (const l of shownLists) {
-          const twin = shownLists.some((o) => o !== l && placeName(o) === placeName(l) && (o.machine ?? null) !== (l.machine ?? null));
-          body.push(this.spaceGroup(l, sorted(work.filter((p) => p.list === l)).map((p) => this.row(p, t, true)), t, twin ? machineName(l.machine) : null));
+        for (const group of ownerGroups(work)) {
+          const { list, owner, items } = group;
+          const label = owner?.name ?? list.name;
+          const twin = work.some(p => (p.list.machine ?? null) !== (list.machine ?? null) && placeName(p.list, p.task) === label);
+          body.push(this.spaceGroup({ ...list, owner }, sorted(items).map(p => this.row(p, t, true)), t, twin ? machineName(list.machine) : null));
         }
         if (tasksOf.deferred.length) body.push(this.group("deferred", "Deferred · still Ready", tasksOf.deferred.map(p => this.row(p, t)), t, { open }));
         // Done: only its count, a quiet line, until opened (then a group that folds it away again).
@@ -401,11 +429,10 @@ export default class Tasks extends View {
         } else {
           // A space's group: its tasks in status order, the machine quiet after its name when two machines have a
           // space of that name.
-          const withTasks = lists.filter((l) => rest.some((p) => p.list === l));
-          for (const l of withTasks) {
-            const ps = sorted(rest.filter((p) => p.list === l));
-            const twin = withTasks.some((o) => o !== l && placeName(o) === placeName(l) && (o.machine ?? null) !== (l.machine ?? null));
-            body.push(this.group(`folder:${l.machine ?? ""}:${l.folder}`, placeName(l), ps.map((p) => this.row(p, t)), t, { open, note: twin ? machineName(l.machine) : null, done: ps.filter((p) => p.section === "done").length }));
+          for (const { list, owner, items } of ownerGroups(rest)) {
+            const ps = sorted(items), name = owner?.name ?? list.name;
+            const twin = rest.some(p => (p.list.machine ?? null) !== (list.machine ?? null) && placeName(p.list, p.task) === name);
+            body.push(this.group(`folder:${list.machine ?? ""}:${list.folder}:${owner?.id ?? ""}`, name, ps.map(p => this.row(p, t)), t, { open, note: twin ? machineName(list.machine) : null, done: ps.filter(p => p.section === "done").length }));
           }
         }
       }
@@ -429,7 +456,7 @@ export default class Tasks extends View {
           .on_click(() => openOverlay({ mod: "tasks-menu", kind: "popup", at: "pointer", width: 200, height: 8 + 28 + 3 * 32, props: { menu: "group", current: by } }))
           .child(svg("mods/tasks/more.svg").size(14).flex_none())))
       .child(this.searchField(t))
-      .when(!this.archivedOpen && filters, (el) => el.child(this.filterRow(chips, count, filter, t, here)))
+      .when(!this.archivedOpen && filters, (el) => el.child(this.filterRow(chips, selected, t, here)))
       // A press in the list gives it the keyboard: F then goes to the search field.
       .child(v_flex().id("task-list").flex_1().min_h(0).overflow_y_scrollbar().p(6).gap(6)
         .track_focus(this.listFocus)
@@ -447,63 +474,58 @@ export default class Tasks extends View {
 
   // The filter row: All statuses (not the header's All, which is folders), a chip for each status that wants a look (Needs you, Working, Ready) as
   // far as the panel's width allows, and the rest (and any that don't fit) behind More, a menu.
-  // It never wraps and never scrolls. Widths are estimated: about 7px a character at 12px.
-  filterRow(chips, count, filter, t, here) {
-    const label = (k) => (k === "automations" ? "Automations" : STATUS[k]);
-    const est = (text, n) => 16 + text.length * 7 + (n > 0 ? 5 + String(n).length * 7 : 0) + 2;
-    const MORE = 62;
-    let room = (this.width ?? 360) - 12 - est("This space", 0) - 2 - est("All statuses", 0);
-    const shown = [];
-    const primary = ["needs", "working", "ready"].filter((k) => chips.includes(k));
-    const others = chips.length > primary.length;
-    for (const [i, k] of primary.entries()) {
-      const w = est(label(k), count(k));
-      // Room for More too, unless this is the last chip and nothing else goes in it.
-      if (w + (others || i < primary.length - 1 ? MORE : 0) > room) break;
-      shown.push(k);
-      room -= w;
-    }
-    const inMore = chips.filter((k) => !shown.includes(k));
-    const picked = inMore.includes(filter) ? filter : null;
-    const items = inMore.map((k) => ({ key: k, label: label(k), count: count(k) }));
-    return h_flex().id("task-filter").flex_none().px(6).pt(6).gap(2).overflow_hidden()
-      .child(this.hereChip(here, t))
-      .child(this.chip("all", "All statuses", 0, filter, t))
-      .children(shown.map((k) => this.chip(k, label(k), count(k), filter, t)))
-      .when(inMore.length > 0, (el) => el.child(this.moreChip(picked, picked ? label(picked) : "More", picked ? count(picked) : 0, items, filter, t)));
+  // On narrow panels the scope chip gets its own line. Widths are estimated: about 7px a character at 12px.
+  filterRow(chips, selected, t, here) {
+    // Reserve space for a check even when a chip is off, so toggling never moves it.
+    const est = (text, n, check = false) => 18 + text.length * 7 + (n > 0 ? 5 + String(n).length * 7 : 0) + (check ? 17 : 0);
+    const MORE = 88; // enough for "More · 10" and the chevron
+    const width = (this.width ?? 360) - 12;
+    const fixed = est("All statuses", 0);
+    const scope = est("This space", 0);
+    // At very narrow widths keep More reachable, rather than clipping it after the scope chip.
+    const first = ["needs", "working", "ready"].map((key) => chips.find((c) => c.key === key)).find(Boolean);
+    const scopeOwnRow = chips.length > 0 && width < scope + fixed + (first ? est(first.label, first.count, true) : 0) + (chips.length > (first ? 1 : 0) ? MORE : 0);
+    const room = width - fixed - (scopeOwnRow ? 0 : scope);
+    const { shown, hidden, hiddenSelected } = splitFilterChoices(chips, room, (item) => est(item.label, item.count, true), MORE);
+    const row = h_flex().flex_none().gap(2).overflow_hidden()
+      .when(!scopeOwnRow, (el) => el.child(this.hereChip(here, t)))
+      .child(this.chip("all", "All statuses", 0, selected.length === 0, t))
+      .children(shown.map((item) => this.chip(item.key, item.label, item.count, item.on, t)))
+      .when(hidden.length > 0, (el) => el.child(this.moreChip(hiddenSelected, hidden, selected, t)));
+    return v_flex().id("task-filter").flex_none().px(6).pt(6).gap(2)
+      .when(scopeOwnRow, (el) => el.child(h_flex().child(this.hereChip(here, t))))
+      .child(row);
   }
 
-  // The More chip: a chip like the others with a chevron. Its menu (mods/tasks-menu) opens under it, left edges
-  // lined up; while it's open (shared "tasks.menuopen", kept by the menu) the chip sits on the hover background.
-  moreChip(picked, text, n, items, filter, t) {
+  // More always says how many hidden categories are selected; every one has its own check in the menu.
+  moreChip(picked, items, selected, t) {
     const open = Boolean(shared("tasks.menuopen"));
     const lit = picked ? t.selected : open ? t.hover : t.background;
     return h_flex().id("chip-more").h(H.sm).pl(8).pr(6).gap(4).flex_none().items_center().rounded(RADIUS.control).cursor_pointer().text_size(TEXT.label)
       .bg(lit).text_color(picked || open ? t.foreground : t.muted)
       .hover((s) => s.bg(picked ? t.selected : t.hover).text_color(t.foreground))
       .on_mouse_down("left", (e) => { this.moreAt = e.bounds; })
-      .on_click((_e, cx) => {
+      .on_click(() => {
         const b = this.moreAt;
-        openOverlay({ mod: "tasks-menu", kind: "popup", width: 168, height: 8 + items.length * 32,
-          at: b ? { x: b.x, y: b.y + b.height + 4 } : "pointer", props: { menu: "filter", items, current: filter } });
+        openOverlay({ mod: "tasks-menu", kind: "popup", width: 200, height: 8 + items.length * 32,
+          at: b ? { x: b.x, y: b.y + b.height + 4 } : "pointer", props: { menu: "filter", items, current: selected } });
       })
-      .child(text)
-      .when(n > 0, (el) => el.child(div().text_color(t.dim).child(String(n))))
+      .child(picked ? `More · ${picked}` : "More")
       .child(svg("mods/workspace-chrome/chevron-down.svg").size(12).flex_none().text_color(open ? t.muted : t.dim));
   }
 
-  // A filter chip: a status and how many hold it; the chosen one sits on a soft background.
-  chip(key, label, n, filter, t) {
-    const on = key === filter;
+  // A filter chip: each selected status has both a check and the selected background.
+  chip(key, label, n, on, t) {
     return h_flex().id(`chip-${key}`).h(H.sm).px(8).gap(5).flex_none().items_center().rounded(RADIUS.control).cursor_pointer().text_size(TEXT.label)
       .bg(on ? t.selected : t.background).text_color(on ? t.foreground : t.muted)
       .hover((s) => s.bg(on ? t.selected : t.hover).text_color(t.foreground))
       .on_click((_e, cx) => { this.pickFilter(key); cx.notify(); })
+      .when(on && key !== "all", (el) => el.child(svg("mods/workspace-chrome/check.svg").size(12).flex_none()))
       .child(label)
       .when(n > 0, (el) => el.child(div().text_color(t.dim).child(String(n))));
   }
 
-  // This space: a toggle before the status chips (they pick one status; this narrows to the shown space whatever the
+  // This space: a toggle before the status chips (they toggle statuses; this narrows to the shown space whatever the
   // status). On, it sits on the soft background, as a picked chip.
   hereChip(here, t) {
     const on = this.here;
@@ -528,8 +550,12 @@ export default class Tasks extends View {
   }
 
   pickFilter(key) {
-    this.filter = key;
-    try { localStorage.setItem("filter", key); } catch {}
+    this.setFilters(toggleFilter(this.filters, key));
+  }
+
+  setFilters(value) {
+    this.filters = normalizeFilters(value);
+    saveFilters("filter", this.filters);
   }
 
   // A row's second line (row()): Needs you and Merging, why; Working, what its agent says it's
@@ -550,7 +576,7 @@ export default class Tasks extends View {
   // number), or where it is: its space, folder and machine.
   found(p, q) {
     return matches(q, refOf(p.list, p.task), p.task.title, this.statusLine(p), p.task.summary, p.task.pr?.number ? `#${p.task.pr.number}` : null,
-      placeName(p.list), p.list.name, machineName(p.list.machine));
+      placeName(p.list, p.task), p.list.name, machineName(p.list.machine));
   }
 
   // A Needs-you item the search finds: its task's id and title (or the agent's name) and why, or
@@ -676,9 +702,9 @@ export default class Tasks extends View {
   // the rows' dots are, its name, its machine quieter (note), its count. A click opens the space
   // (its chat); a list no space works in is just its name.
   spaceGroup(list, rows, t, note) {
-    const sp = spaceOf(list);
+    const sp = list.owner !== undefined ? list.owner ?? { name: list.name } : spaceOf(list);
     const icon = shared("spaces-chat")?.icons?.[sp.id] ?? null;
-    const key = `space-${list.machine ?? ""}:${list.folder}`;
+    const key = `space-${list.machine ?? ""}:${list.folder}:${sp.id ?? ""}`;
     return v_flex().flex_none().gap(1).pt(6)
       .child(h_flex().id(`head-${key}`).h(28).px(8).gap(12).items_center().rounded(RADIUS.card).text_size(TEXT.label)
         .when(Boolean(sp.id), (el) => el.cursor_pointer().hover((s) => s.bg(t.hover))
@@ -686,7 +712,7 @@ export default class Tasks extends View {
         .child(h_flex().w(14).h(14).flex_none().items_center().justify_center()
           .child(div().text_size(icon ? 12 : TEXT.label).text_color(t.dim).child(icon ?? "#")))
         .child(h_flex().flex_1().min_w(0).gap(6).items_center()
-          .child(div().min_w(0).truncate().font_medium().text_color(t.muted).child(placeName(list)))
+          .child(div().min_w(0).truncate().font_medium().text_color(t.muted).child(sp.name))
           .when(Boolean(note), (el) => el.child(div().flex_none().text_color(t.dim).child(`· ${note}`)))
           .child(div().flex_none().text_color(t.dim).child(String(rows.length)))))
       .children(rows);
@@ -752,7 +778,10 @@ export default class Tasks extends View {
       case "stopped": return v(needDot(), x.title ?? x.ref, () => this.openNeed(x));
       // An automation goes by its name, with no id.
       case "auto": return v(svg("mods/tasks/repeat.svg").size(14).flex_none().text_color(red()),
-        x.title ?? x.ref, () => this.fold("automations", false), null, x.error?.kind === "fire" ? "Didn't run" : "Didn't start its task");
+        x.title ?? x.ref, () => {
+        if (shared("tasks.filters") !== false && this.filters.length && !this.filters.includes("automations")) this.setFilters(["automations"]);
+        this.fold("automations", false);
+      }, null, x.error?.kind === "fire" ? "Didn't run" : "Didn't start its task");
     }
     return null;
   }
@@ -777,7 +806,7 @@ export default class Tasks extends View {
       const list = this.listOf(slug, m);
       const task = list?.tasks.find((y) => String(y.id) === id);
       return openThread({ terminal: address, task: x?.ref ?? this.taskRef(address), title: x?.title ?? task?.title ?? "",
-        key: list ? { machine: m, folder: list.folder, slug, id: Number(id) } : null });
+        key: list ? { machine: m, folder: list.folder, slug, id: Number(id) } : null, space: task?.space, feature: task?.feature });
     }
     toAgent(address);
   }
@@ -858,7 +887,7 @@ export default class Tasks extends View {
     const { list, task } = p;
     const m = list.machine ?? null;
     const key = { machine: m, folder: list.folder, slug: list.slug, id: task.id };
-    const open = (terminal, more = {}) => () => openThread({ terminal, task: refOf(list, task), title: task.title, key, ...more });
+    const open = (terminal, more = {}) => () => openThread({ terminal, task: refOf(list, task), title: task.title, key, space: task.space, feature: task.feature, ...more });
     const worker = p.live.find((x) => x.role !== "reviewer" && x.status === "blocked") ?? p.live.find((x) => x.role !== "reviewer") ?? p.live[0];
     if (worker) return open(worker.address);
     const last = task.agents?.[task.agents.length - 1];
@@ -878,11 +907,12 @@ export default class Tasks extends View {
     const sub = this.statusLine(p, w);
     // Scheduled (SHEP-38): its time until it starts under its calendar ("6h"), where a working row's time left goes, in grey.
     const left = leftOf(p, w);
+    const usage = usageLabel(usageOf(list.usage?.[`${list.slug}#${task.id}`], section, live));
     // Pin / Unpin in its right-click menu (not an archived task's: archived ones drop out of Pinned).
     const key = taskKey(list, task);
     return this.line(`task-${key}`, {
-      go: this.target(p), glyph: this.glyph(p, w), ref: refOf(list, task), title: task.title, sub, left, leftColor: section === "scheduled" ? t.dim : null,
-      dim: section === "done", selected: focused, where: bare ? null : this.whereOf(list.machine, placeName(list)),
+      go: this.target(p), glyph: this.glyph(p, w), ref: refOf(list, task), title: task.title, sub, usage, left, leftColor: section === "scheduled" ? t.dim : null,
+      dim: section === "done", selected: focused, where: bare ? null : this.whereOf(list.machine, placeName(list, task)),
       action: ["ready", "deferred"].includes(section) ? this.acceptButton(p, t) : null,
       pin: this.shelved(p) ? null : { key, on: this.pins().has(key), status: section, machine: list.machine ?? null, folder: list.folder,
         ref: refOf(list, task), sub: section === "scheduled" ? sub : null },
@@ -941,8 +971,10 @@ export default class Tasks extends View {
   // Accept shows what you approve first: the Accept card (mods/accept-card) runs herdr-task
   // accept from its own Accept; the list reads the change as it reads any.
   accept(p, _cx) {
-    openOverlay({ mod: "accept-card", kind: "dialog", modal: true, width: 640, height: 640,
-      props: { ref: refOf(p.list, p.task), folder: p.list.folder, machine: p.list.machine ?? null, title: p.task.title } });
+    const { list, task } = p;
+    return openWorkerView({ key: { machine: list.machine ?? null, folder: list.folder, slug: list.slug, id: task.id }, task: refOf(list, task), space: task.space, feature: task.feature },
+      { review: view => openOverlay({ mod: "accept-card", kind: "dialog", modal: true, width: 640, height: 640,
+        props: { ref: view.task, folder: view.key.folder, machine: view.key.machine, title: view.title } }) });
   }
 
   // One row (as Shepherdr's web Tasks list), three parts with one job each:
@@ -957,7 +989,7 @@ export default class Tasks extends View {
   //   run (`meta`).
   // A row with nothing under its title is one line. Nothing shows on hover: no tooltips (SHEP-25).
   // `pin`: { key, on }: Pin / Unpin in the row's right-click menu.
-  line(id, { go, glyph, ref, title, sub, left, leftColor, dim, selected, meta, metaColor, where, action, pin }, t) {
+  line(id, { go, glyph, ref, title, sub, usage, left, leftColor, dim, selected, meta, metaColor, where, action, pin }, t) {
     // Every second line is at most 40 characters (herdr-task cuts an agent's own; this catches the
     // derived ones: a long queue, a check's message).
     const said = sub ? capital(sub) : null;
@@ -982,7 +1014,8 @@ export default class Tasks extends View {
       .child(v_flex().w(14).flex_none().self_start().gap(2).child(mark)
         .when(Boolean(left), (el) => el.child(h_flex().w(14).h(16).items_center().justify_center().whitespace_nowrap()
           .font_family(ID_FONT).text_size(ID_SIZE).font_semibold().text_color(leftColor ?? amber()).child(left))))
-      .child(v_flex().flex_1().min_w(0).gap(2).child(h_flex().h(20).min_w(0).items_center().child(head.flex_1())).child(second))
+      .child(v_flex().flex_1().min_w(0).gap(2).child(h_flex().h(20).min_w(0).items_center().child(head.flex_1())).child(second)
+        .when(Boolean(usage), (el) => el.child(div().id(`${id}-usage`).h(16).min_w(0).truncate().text_size(TEXT.label).text_color(t.dim).child(usage))))
       .when(Boolean(end), (el) => el.child(end));
   }
 
@@ -1012,8 +1045,8 @@ function agentName(address) {
 // ({ path, kind }: an ended agent's own log), note (why one never started waits), at }.
 const hasNode = (n, id) => Boolean(n && typeof n === "object") && (n.id === id || (n.children ?? []).some((c) => hasNode(c, id)));
 const threads = () => hasNode(layout(), "tasks-thread");
-function openThread({ terminal = null, task = null, title = null, key = null, log = null, note = null }) {
-  openWorkerView({ terminal, task, title, key, log, note }, { panel: false });
+function openThread(want) {
+  return openWorkerView(want);
 }
 
 // The Accept card's accept under way (shared "tasks.accepting" = { "<machine>:<folder>:<ref>": at },

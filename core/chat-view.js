@@ -315,44 +315,69 @@ export function newsWords(e, x) {
   return { mark, what, text };
 }
 
-// The lines a space's tasks make in its Assistant's chat, in time order, each { id, at, ref, event, text, made }:
-// Herdr's news in the conversation (items of kind "news") as said, and a start, ready or done it never said here
-// (before this log's first page, or not sent) from the task's own started / ready_at / done_at. tasks: Map ref -> task.
-// Each comes with live (needs you still, red) and accept (the newest ready line of a task still Ready).
-// Yield the joins and sort for the native window's bounded preparation pass.
-// Logged events take precedence over task records, which may describe a
-// later transition (e.g. a task marked Ready for a second time).
+// Task news previously contained only the visible ref. It can still identify a
+// task when unique in the originating space, but cannot disambiguate collisions.
+// New events carry the canonical folder; synthesized events always carry it.
+export const newsTaskKey = (ref, folder) => folder ? JSON.stringify([ref, folder]) : ref;
+function* newsTaskIndexPlan(tasks) {
+  const byKey = new Map(), byRef = new Map();
+  for (const [ref, task] of tasks) {
+    yield;
+    const key = newsTaskKey(task.ref ?? ref, task.folder);
+    byKey.set(key, task);
+    const visible = task.ref ?? ref;
+    if (byRef.has(visible)) byRef.set(visible, null);
+    else byRef.set(visible, key);
+  }
+  return { byKey, byRef, keyOf: e => e.folder ? newsTaskKey(e.ref, e.folder) : byRef.get(e.ref) ?? null };
+}
+export function newsTaskIndex(tasks) {
+  const plan = newsTaskIndexPlan(tasks);
+  let step;
+  do { step = plan.next(); } while (!step.done);
+  return step.value;
+}
+
+// A task's lines in its Assistant's chat, ordered by time. Exact source
+// identity is attached so a click or review cannot pick a twin. Yield the
+// joins and sort for the native window's bounded preparation pass. Logged
+// events take precedence over mutable task records (e.g. a second Ready).
 export function* newsEventsPlan(items, tasks, { start = null } = {}) {
+  const index = yield* newsTaskIndexPlan(tasks);
+  const { byKey, keyOf } = index;
   const all = [], said = new Set();
   let first = 0;
   for (const it of items) {
     yield;
     if (!first && recordedNewsAt(it.at) !== undefined) first = it.at;
-    if (it.kind === "news") { said.add(`${it.ref}:${it.event}`); all.push(it); }
+    if (it.kind !== "news") continue;
+    const key = keyOf(it);
+    if (key) said.add(JSON.stringify([key, it.event]));
+    all.push({ ...it, taskKey: key });
   }
-  for (const [ref, x] of tasks) for (const [event, at] of [["started", x.started], ["ready", x.ready_at], ["done", x.done_at]]) {
+  for (const [key, x] of byKey) for (const [event, at] of [["started", x.started], ["ready", x.ready_at], ["done", x.done_at]]) {
     yield;
-    if (recordedNewsAt(at) === undefined || said.has(`${ref}:${event}`) || (at < first && start !== 0)) continue;
+    if (recordedNewsAt(at) === undefined || said.has(JSON.stringify([key, event])) || (at < first && start !== 0)) continue;
     // A ready not yet said, while the task is still at work (its checks running,
     // SHEP-175) or needs the person: not ready yet. Deferred and merging have
     // already reached Ready, so their record-only row stays at its original time.
     if (event === "ready" && !["ready", "deferred", "merging", "done"].includes(x.status)) continue;
-    all.push({ id: `tn:${ref}:${event}:${at}`, at, ref, event, text: "", made: true });
+    all.push({ id: `tn:${key}:${event}:${at}`, at, ref: x.ref ?? key, folder: x.folder, taskKey: key, event, text: "", made: true });
   }
-  return yield* sortPlan(all, (a, b) => a.at - b.at);
+  return { ...index, all: yield* sortPlan(all, (a, b) => a.at - b.at) };
 }
 
 export function newsTimeline(items, tasks, options) {
   const plan = newsEventsPlan(items, tasks, options);
   let step;
   do { step = plan.next(); } while (!step.done);
-  const all = step.value;
+  const { all, byKey } = step.value;
   const last = new Map(), lastReady = new Map();
-  for (const e of all) { last.set(e.ref, e); if (e.event === "ready") lastReady.set(e.ref, e); }
+  for (const e of all) { last.set(e.taskKey, e); if (e.event === "ready") lastReady.set(e.taskKey, e); }
   return all.map((e) => {
-    const x = tasks.get(e.ref);
-    return { ...e, ...newsWords(e, x), live: last.get(e.ref) === e && (e.event === "needs-you" || e.event === "failed") && x?.status === "needs",
-      accept: lastReady.get(e.ref) === e && x?.status === "ready" };
+    const x = byKey.get(e.taskKey);
+    return { ...e, ...newsWords(e, x), task: x ?? null, live: last.get(e.taskKey) === e && (e.event === "needs-you" || e.event === "failed") && x?.status === "needs",
+      accept: lastReady.get(e.taskKey) === e && x?.status === "ready" };
   });
 }
 

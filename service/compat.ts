@@ -1,3 +1,4 @@
+import { taskOwner } from "../core/task-owner.js";
 import { FIND_LIMITS } from "../core/chat-find.js";
 import { artifactOwner } from "../core/artifact-owner.js";
 // The web app is Shepherdr 2.1's screen (its design, phone layout and motion, kept as they were), fed with
@@ -63,7 +64,7 @@ export const taskId = (r: Row) => `${r.machine ? `${r.machine}:` : ""}${r.duplic
 /** What a space's tasks give its Assistant's news lines (newsTimeline: their status, ready and done): a chat is only
  *  read again when its conversation moves, so a task accepted or done since shows by this changing (SHEP-29: a
  *  Ready line kept its Accept after the task was done) */
-export const newsKey = (rows: Row[]) => JSON.stringify(rows.filter((r) => r.space && r.ref).map((r) => [r.space, r.feature, r.ref, r.section, r.started, r.ready_at, r.done_at]));
+export const newsKey = (rows: Row[]) => JSON.stringify(rows.filter((r) => r.space && r.ref).map((r) => [r.space, r.folder, r.feature, r.ref, r.section, r.started, r.ready_at, r.done_at]));
 
 // a news event's dot: what the task was at that moment
 const NEWS: Record<string, TaskStatus> = { added: "todo", queued: "queued", started: "work", needs: "need", asks: "need", stalled: "need", failed: "need", ready: "ready", merging: "merging", merged: "done", done: "done", closed: "done" };
@@ -225,7 +226,7 @@ export class Compat {
     const s = !t ? this.spaceList.find((x) => placeKey(x.id) === chatKey) : null;
     const machine = t ? t.machine ?? null : s?.machine ?? null, folder = t ? t.folder : s?.folder;
     return this.rows.filter((r) => (r.machine ?? null) === machine && r.folder === folder)
-      .map((r) => ({ ref: r.ref, id: r.id, title: r.title, status_text: r.sub ?? r.section, why: r.why, folder: r.folder, prompt: r.prompt, state: r.section }));
+      .map((r) => ({ ref: r.ref, id: r.id, taskId: taskId(r), title: r.title, status_text: r.sub ?? r.section, why: r.why, folder: r.folder, prompt: r.prompt, state: r.section }));
   }
 
   /** The person's shared choices (service/store.ts, its document) and their values now, set by main. */
@@ -311,10 +312,10 @@ export class Compat {
       if (!m.here) this.machineNames.set(m.name, machineLabel(m.name, look.name));
       return { id: `m:${key}`, coreId: m.coreId, machine: key, name: machineLabel(m.here ? null : m.name, look.name), ownName: m.here ? "This computer" : m.name, ...(look.icon ? { emoji: look.icon } : {}), status: m.state === "connected" ? "idle" : "off", ...(m.here ? { here: true } : {}), ...(m.state === "connecting" ? { connecting: true } : {}), ...(this.machineStats?.(m.here ? null : m.name) ?? {}) } as Machine;
     });
-    // a task's space: the one that started it (herdr-task keeps it), else the one in its folder, as the window places it
-    // what its row says it is in, as the window's Tasks: the space working in its list's folder, else the list's name
-    const placeName = (r: Row) => places.find((p) => spaces.find((s) => s.id === p.id && (s.machine ?? null) === (r.machine ?? null) && s.folder === r.folder))?.name ?? r.list ?? "";
-    const placeOf = (r: Row) => (r.space && spaces.some((s) => s.id === r.space) ? r.space : spaces.find((s) => (s.machine ?? null) === (r.machine ?? null) && s.folder === r.folder)?.id ?? "");
+    // The list's canonical folder and the owning space are independent.
+    // A deleted recorded owner is not replaced by a space working in that folder.
+    const placeOf = (r: Row) => taskOwner(spaces, r.machine, r.space)?.id ?? "";
+    const placeName = (r: Row) => places.find(p => p.id === placeOf(r))?.name ?? r.list ?? "";
 
     const places: Place[] = spaces.map((s) => {
       const key = placeKey(s.id);
@@ -379,11 +380,12 @@ export class Compat {
       if (r.worker) chats.set(`${id}/worker`, r.worker);
       else if (r.lastLog) chats.set(`${id}/worker`, `log:${r.machine ?? ""}|${r.lastLog.kind}|${r.lastLog.path}`);
       const t: Task = {
-        id, ref: r.ref, feature: r.feature ?? undefined, reviewMachine: r.machine ?? null, reviewSpace: r.space ?? undefined, name: r.title, status: SECTION[r.section] ?? "todo", place: placeOf(r), listName: placeName(r), age: r.started ? ago(r.started, false) : "",
+        id, ref: r.ref, feature: r.feature ?? undefined, reviewMachine: r.machine ?? null, reviewSpace: placeOf(r) || r.space || undefined, name: r.title, status: SECTION[r.section] ?? "todo", place: placeOf(r), listName: placeName(r), age: r.started ? ago(r.started, false) : "",
         state: r.section, on: r.machine ?? host, created: "", ...(r.folder ? { taskFolder: r.folder } : {}),
         // its latest news (ms), as Jump orders tasks newest first
         at: Math.max(0, ...[r.done_at, r.ready_at, r.started].filter((x: unknown): x is number => typeof x === "number")),
         ...(r.sub ? { sub: r.sub } : {}),
+        ...(r.usage ? { usage: r.usage } : {}),
         // its worker's own helper agents (SHEP-54), named in its detail's header; each one's row is over its chat's box
         ...(r.subagents?.length ? { subagents: r.subagents.map((x: any) => ({ chat: `t:${x.address}`, title: x.title, status: x.status, at: x.at, ...(x.ended ? { ended: x.ended } : {}) })) } : {}),
         // the window's Accept card accepting it now (shared "tasks.accepting", mods/accept-card): "Accepting…"
@@ -491,7 +493,7 @@ export class Compat {
     const key = [...this.chats].find(([k, a]) => a === addr && k.startsWith("p:"))?.[0];
     if (!key) return [];
     const space = key.slice(2).replace(":", "/");
-    return this.rows.filter((r) => r.space === space && r.worker && r.ref).map((r) => ({ addr: r.worker as string, ref: r.ref as string }));
+    return this.rows.filter((r) => taskOwner(this.spaceList, r.machine, r.space)?.id === space && r.worker && r.ref).map((r) => ({ addr: r.worker as string, ref: r.ref as string }));
   }
 
   /** What the person asked an Assistant started from its chat (the window's data/chat-first/<slot>.txt), else null. */
@@ -529,13 +531,13 @@ export class Compat {
     // an Assistant's chat: its space's tasks (as the window's newsLines(): Herdr's news in place, a start, ready or done
     // it never said from the task's own record), and their workers, by address, for who sent a message
     // Feature Assistants are terminal chats (t:…), not the space's p: chat.
-    // Their saved owner labels, not the selected tab or folder, identify their tasks.
+    // Resolve their recorded owner with the same machine/space rules as tasks.
     const labels = t?.labels ?? {};
     const feature = key.startsWith("t:") && labels["herdr.role"] === "feature" && !labels["herdr.task"] ? labels["herdr.feature"] : null;
     const owner = feature ? labels["herdr.coordinator.space"] ?? labels["herdr.space"] : null;
     const space = key.startsWith("p:") ? key.slice(2).replace(":", "/")
-      : owner ? (machine && !owner.includes("/") ? `${machine}/${owner}` : owner) : null;
-    const spaceRows = space ? this.rows.filter((r) => r.space === space && r.ref && (!feature || ((r.machine ?? null) === machine && r.feature === feature))) : [];
+      : taskOwner(this.spaceList, machine, owner)?.id ?? null;
+    const spaceRows = space ? this.rows.filter((r) => taskOwner(this.spaceList, r.machine, r.space)?.id === space && r.ref && (!feature || r.feature === feature)) : [];
     const workerOf = new Map<string, string>(this.rows.filter((r) => r.worker).map((r) => [r.worker, r.ref]));
     // here: this machine's name in herdr-core (another machine's agent writes ours as "<here>/t75")
     const here = (this as any).coreName?.() ?? null;
@@ -545,14 +547,11 @@ export class Compat {
     const taskLabel = String(t?.labels?.["herdr.task"] ?? "");
     const peers = { machineName: (m: string) => this.machineNames.get(m) ?? null, here: machine ?? here };
     const self = selfName({ assistant: key.startsWith("p:"), task: taskLabel ? workerOf.get(this.chats.get(key) ?? "") ?? (/^[a-z]+-\d+$/i.test(taskLabel) ? taskLabel.toUpperCase() : null) : null, kind: reader.kind });
-    const newsTasks = new Map<string, Row>();
-    for (const r of spaceRows) if (!newsTasks.has(r.ref)) newsTasks.set(r.ref, { ...r, status: r.section });
-    const news = space ? newsTimeline(items, newsTasks, { start: reader.start }) : [];
+    const news = space ? newsTimeline(items, spaceRows.map((r) => [r.ref, { ...r, status: r.section }]), { start: reader.start }) : [];
     const newsLine = (e: any): Message => {
-      const row = newsTasks.get(e.ref);
-      const task = row ? taskId(row) : machine ? `${machine}:${e.ref}` : e.ref;
-      // Use only this event's time. Older logged rows may have none; a task's
-      // current ready_at/done_at or the chat refresh time cannot repair that.
+      // A legacy event with colliding refs is still history, but cannot open
+      // a guessed task. Its timestamp remains the event's own recorded time.
+      const task = e.task ? taskId(e.task) : "";
       return { id: e.id, who: "agent", at: CV.recordedNewsAt(e.at), news: { task, ref: e.ref, mark: e.mark, what: e.what, text: e.text, ...(e.live ? { live: true } : {}), ...(e.accept ? { accept: true } : {}) } };
     };
     const inline = new Map(news.filter((e: any) => !e.made).map((e: any) => [e.id, e]));
@@ -599,7 +598,7 @@ export class Compat {
         // one picked with @ already draws as a chip in its words (core/mentions.js): not again under them
         const inline = new Set((MEc as any).split(x.text ?? "").filter((p: any) => p.task).map((p: any) => p.task.ref.toLowerCase()));
         const chips = x.text ? mentionedIn(x.text, mentionable).filter((r: any) => !inline.has(String(r.ref ?? "").toLowerCase())) : [];
-        const mentions = chips.length ? { mentions: chips.map((r: any) => ({ task: machine ? `${machine}:${r.ref}` : r.ref, ref: r.ref ?? `#${r.id}`, title: r.title })) } : {};
+        const mentions = chips.length ? { mentions: chips.map((r: any) => ({ task: r.taskId, ref: r.ref ?? `#${r.id}`, title: r.title })) } : {};
         // what it replies to: the message it names, which a press on its line brings into view (the window's goTo)
         const to = x.replyTo ? items.slice(0, i).reverse().find((y: any) => (y.kind === "user" || y.kind === "agent") && y.text && names(y.text, String(x.replyTo).slice(0, 60))) : null;
         if (x.text) messages.push({ id: x.id, who: "you", text: x.text, at: x.at, ...cid, ...(!first && discard && discard.id === x.id ? { discard: discard.token } : {}), ...(x.replyTo ? { reply: { text: x.replyTo, ...(to ? { id: to.id, who: to.kind === "user" ? "you" : "agent" } : {}) } } : {}), ...reactions, ...mentions } as Message);

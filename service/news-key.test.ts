@@ -15,6 +15,7 @@ test("a restored start time or Feature owner invalidates open chat news", () => 
   expect(newsKey([row({ started: 50 })])).not.toBe(newsKey([row()]));
   expect(newsKey([row({ ready_at: 150 })])).not.toBe(newsKey([row()]));
   expect(newsKey([row({ feature: "fixture-feature" })])).not.toBe(newsKey([row()]));
+  expect(newsKey([row({ folder: "/fixture" })])).not.toBe(newsKey([row()]));
 });
 
 test("what news lines don't show leaves it, so chats aren't told again for nothing", () => {

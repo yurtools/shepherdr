@@ -27,7 +27,7 @@ const log = (kind: "codex" | "claude", lines: [string, number?][]) => {
   });
   return c;
 };
-const tag = (event: string, text: string) => `<herdr-news task="DEMO-7" event="${event}">DEMO-7 ${text}</herdr-news>`;
+const tag = (event: string, text: string, folder?: string) => `<herdr-news task="DEMO-7" event="${event}"${folder ? ` folder="${folder}"` : ""}>DEMO-7 ${text}</herdr-news>`;
 const native = (feature: string | null = "feature-one") => Object.assign(new Native(), {
   assistant: () => "fixture", start: 0, feature, spaceTasks: [], wasks: [], accepting: new Set(),
 });
@@ -42,6 +42,10 @@ const featureLabels = { "herdr.role": "feature", "herdr.feature": "feature-one",
 const web = (rows: any[], conv: any, key = "t:fixture-terminal", labels: Record<string, string> = featureLabels, machine: string | null = null, start = 0) => {
   const compat: any = new Compat();
   compat.rows = rows;
+  compat.spaceList = [
+    { id: "fixture", machine: null }, { id: "another-space", machine: null },
+    { id: "remote-fixture/fixture", machine: "remote-fixture" }, { id: "remote-fixture/another-space", machine: "remote-fixture" },
+  ];
   compat.firstTask = () => null;
   return compat.chat(key, { conv, start, machine, addr: "fixture-terminal", kind: conv.kind }, { state: "live", labels }).messages.filter((m: any) => m.news);
 };
@@ -117,4 +121,27 @@ test("Feature chats use the recorded feature, machine and space; ordinary worker
     .toEqual(["remote-fixture:%2Ffixture:DEMO-7", "remote-fixture:%2Ffixture:DEMO-7"]);
   // The space Assistant retains its aggregate news, as before.
   expect(web([owned, other], conv, "p:fixture", {}).some((r: any) => r.news.ref === "DEMO-8")).toBe(true);
+});
+
+test("folder-qualified twins retain their own event dates; ambiguous old news cannot review either", () => {
+  const conv = log("codex", [
+    [tag("ready", "is ready: Old result"), ready - 1000],
+    [tag("ready", "is ready: Fix login", "/fixture"), ready],
+  ]);
+  const a = { ...base, duplicate: true, section: "ready", ready_at: ready + 60_000 };
+  const b = { ...a, title: "Other result", folder: "/twin", ready_at: readyAgain };
+  const rows = [a, b];
+  const h = native();
+  const n = nativeRows(h, rows, conv.items), w = web(rows, conv);
+  expect(simplify(n)).toEqual(simplify(w, true));
+  const readyRows = w.filter((r: any) => r.news.mark === "ready");
+  expect(readyRows.map((r: any) => [r.news.task, r.at, !!r.news.accept])).toEqual([
+    ["", ready - 1000, false], ["%2Ffixture:DEMO-7", ready, true], ["%2Ftwin:DEMO-7", readyAgain, true],
+  ]);
+  expect(n.find((r: any) => r.id === conv.items[0].id).task).toBeNull();
+  expect(n.find((r: any) => r.id === conv.items[1].id).folder).toBe("/fixture");
+  const finished = web([{ ...a, section: "done", done_at: done, ready_at: done - 1000 }, b], conv);
+  expect(finished.filter((r: any) => r.news.mark === "ready").map((r: any) => [r.id, r.at, !!r.news.accept])).toEqual(
+    readyRows.map((r: any) => [r.id, r.at, r.news.task === "%2Ftwin:DEMO-7"]),
+  );
 });

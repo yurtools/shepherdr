@@ -1,3 +1,4 @@
+import { activeTaskThread } from "./task-thread-state.js";
 // A task's Browser (HERD-57, HERD-69): its agent-browser session, watched live in the Tasks panel's
 // task view, a child of the view's body stack beside Files, Changes and Pull request (taskwhere.js).
 // Each task has one session, driven with bin/herdr-browser (session herdr-<name>, profile
@@ -75,7 +76,8 @@ export default class TaskBrowser extends View {
   // The shown task's key and worker, or why there's none here. From the shown worker itself
   // (shared "tasks.thread"), not where(), which is briefly empty each time the header reads the task.
   target() {
-    const addr = shared("tasks.thread")?.terminal;
+    const want = activeTaskThread();
+    const addr = !want?.historical && want?.terminal;
     if (!addr) return { why: null };
     if (addr.includes("/")) return { why: `This task runs on ${addr.split("/")[0]}. Its browser can be watched only from that machine's Herdr for now.` };
     const key = terminals().find((k) => k.address === addr)?.labels?.["herdr.task"];

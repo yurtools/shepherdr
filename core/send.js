@@ -7,6 +7,7 @@
 // Shared core: the source is core/send.js; bin/sync-shared copies it into the mods in lib/COPIES.
 
 import { excerpt } from "./chat-log.js";
+import { split } from "./mentions.js";
 
 // hc's refusal, in words: { kind ("blocked": its own dialog is open), message }.
 export function refusal(r) {
@@ -26,12 +27,24 @@ export function taskTag(x, ref) {
 // task without a prefix only as #4, never a bare number.
 // tasks: [{ ref, id, ... }] (the chat's folder's).
 export function mentionedIn(text, tasks) {
-  const t = String(text ?? ""), low = t.toLowerCase();
-  return (tasks ?? []).filter((x) => {
-    if (!low.includes(String(x.ref ? x.ref : `#${x.id}`).toLowerCase())) return false;
+  const parts = split(text);
+  const t = parts.map(p => p.text ?? " ").join(""), low = t.toLowerCase();
+  const rows = tasks ?? [], matched = new Set();
+  for (const p of parts) {
+    // These rows are from the sender's own machine. A remote token is not the
+    // same task just because it shares the visible ref.
+    if (!p.task || p.task.route) continue;
+    const candidates = rows.filter(x => String(x.ref ?? `#${x.id}`).toLowerCase() === p.task.ref.toLowerCase() && (!p.task.folder || x.folder === p.task.folder));
+    if (candidates.length === 1) matched.add(candidates[0]);
+  }
+  for (const x of rows) {
+    const shown = String(x.ref ?? `#${x.id}`);
+    if (!low.includes(shown.toLowerCase())) continue;
     const ref = x.ref ? `[#@]?${String(x.ref).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}` : `#${x.id}`;
-    return new RegExp(`(^|[\\s([])${ref}\\b`, "i").test(t);
-  });
+    if (new RegExp(`(^|[\\s([])${ref}\\b`, "i").test(t) &&
+        rows.filter(y => String(y.ref ?? `#${y.id}`).toLowerCase() === shown.toLowerCase()).length === 1) matched.add(x);
+  }
+  return rows.filter(x => matched.has(x));
 }
 
 // The words as the agent gets them: the reply tag, the task tags, then the person's text.

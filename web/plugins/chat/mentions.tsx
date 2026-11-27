@@ -82,8 +82,8 @@ export type Item =
 
 /** the space a chat is in: a task's chat's task's, else the place whose chat it is */
 const placeHere = (snap: Snapshot, chatKey: string) => {
-  const own = taskChatId(chatKey)
-  return own ? taskOf(snap, own)?.place : snap.places.find((p) => p.chat === chatKey)?.id
+  const own = chatKey.endsWith('/worker') ? taskChatId(chatKey) : undefined
+  return own ? taskOf(snap, own)?.place : snap.places.find((p) => p.chat === chatKey || p.tabs?.some(t => t.term === chatKey))?.id
 }
 
 /** "shop · vm-demo" with more machines, else "shop" */
@@ -120,7 +120,10 @@ export function mentionItems(snap: Snapshot | null | undefined, chatKey: string,
  *  comes), else null */
 function reachOfTask(snap: Snapshot, t: Task, here: string | undefined, got: Got | null): Reach | null {
   const sid = t.place.split('/').pop()!
-  const r = got?.spaces.find((s) => s.id === sid)
+  const p = snap.places.find(p => p.id === t.place)
+  const name = p?.machine
+  const ownName = snap.machines.find(m => m.machine === name)?.ownName
+  const r = got?.spaces.find(s => s.id === sid && (s.machine === name || s.machine === ownName))
   if (r) return r
   return !got && t.place === here ? { id: sid, name: '', route: '', machine: '', target: sid, assistant: false } : null
 }
@@ -131,7 +134,7 @@ function taskItems(snap: Snapshot, chatKey: string, q: string, got: Got | null):
   const row = (t: Task) => ({ ref: refOf(t.id), title: t.name, status: t.status, at: t.at, space: snap.places.find((p) => p.id === t.place)?.name, machine: t.on, t })
   const ok: Item[] = (M.matchTasks(live.filter((t) => reachOfTask(snap, t, here, got)).map(row), q, 8) as ReturnType<typeof row>[]).map(({ t }) => {
     const r = reachOfTask(snap, t, here, got)!
-    const pick = { ref: refOf(t.id), route: r.route, folder: t.place === here ? '' : (t.taskFolder ?? '') }
+    const pick = { ref: refOf(t.id), route: r.route, folder: t.taskFolder ?? '' }
     return { kind: 'task', key: `t:${t.id}`, task: t, pick, where: whereOf(snap, t) }
   })
   // tasks the person sees that this agent can't reach: under the rest, never picked
@@ -232,8 +235,9 @@ export function takeItem(chatKey: string, text: string, i: Item): string {
     return M.pickInto(text, i.space)
   }
   if (i.kind === 'task') {
+    const next = M.pickTaskInto(text, i.pick, taskPicks.get(chatKey) ?? [])
     rememberTask(chatKey, i.pick)
-    return M.pickTaskInto(text, i.pick)
+    return next
   }
   return text
 }
@@ -283,24 +287,34 @@ export type TaskMention = { ref: string; target: string; route: string; folder: 
 
 /** the task a mention names, as the person sees it: by its ID, then its folder, then the machine its route ends on (or
  *  this chat's machine), then this chat's space */
-export function taskFor(m: TaskMention, snap: Snapshot | null | undefined, chatKey: string): Task | undefined {
+export function taskFor(m: TaskMention, snap: Snapshot | null | undefined, chatKey: string, got: Got | null = null): Task | undefined {
   if (!snap) return undefined
-  const ref = m.ref.toLowerCase()
-  const all = (snap.tasks ?? []).filter((t) => refOf(t.id).toLowerCase() === ref)
-  if (all.length < 2) return all[0]
   const here = placeHere(snap, chatKey)
-  const hereMachine = snap.places.find((p) => p.id === here)?.machine
-  const hop = m.route ? m.route.split('>').pop()! : null
-  const score = (t: Task) => (m.folder && t.taskFolder === m.folder ? 4 : 0) +
-    ((hop ? t.on === hop || snap.places.find((p) => p.id === t.place)?.machine === hop : t.on === hereMachine) ? 2 : 0) + (t.place === here ? 1 : 0)
-  return [...all].sort((a, b) => score(b) - score(a))[0]
+  const origin = snap.places.find(p => p.id === here)
+  const worker = chatKey.endsWith('/worker') ? taskOf(snap, taskChatId(chatKey) ?? null) : null
+  const folder = m.folder || worker?.taskFolder || origin?.tabs?.find(t => t.term === chatKey)?.reviewScope?.folder || origin?.store?.folder || origin?.cwd
+  const machine = worker?.on ?? origin?.machine
+  const reaches = got?.spaces.filter(s => s.route === m.route) ?? []
+  const aliases = (name: string) => new Set([name, snap.machines.find(x => x.machine === name)?.ownName].filter(Boolean))
+  const all = snap.tasks.filter(t => {
+    if (refOf(t.id).toLowerCase() !== m.ref.toLowerCase() || !t.place) return false
+    const p = snap.places.find(x => x.id === t.place)
+    if (!p) return false
+    if (folder && t.taskFolder !== folder) return false
+    if (!m.route) return p.machine === machine && (folder ? true : p.id === here)
+    if (got) return reaches.some(r => r.id === p.id.split('/').pop() && aliases(p.machine).has(r.machine))
+    // Before reach data arrives, only a direct link from this server has an
+    // unambiguous machine alias. Never score a wrong folder or remote route.
+    return machine === snap.host && !m.route.includes('>') && p.machine === m.route && !!m.folder
+  })
+  return all.length === 1 ? all[0] : undefined
 }
 
 /** how a task mention shows here: open when the person sees the task and this chat's agent reaches its space (unknown
  *  until its list comes: it shows as it would, not locked) */
 export function taskStateOf(m: TaskMention, snap: Snapshot | null | undefined, got: Got | null, chatKey: string) {
-  const task = taskFor(m, snap, chatKey)
-  const agent = !got || !task ? true : got.spaces.some((s) => s.id === task.place.split('/').pop())
+  const task = taskFor(m, snap, chatKey, got)
+  const agent = !got || !task ? true : got.spaces.some(s => s.id === task.place.split('/').pop() && s.route === m.route)
   return { task, ok: !!task && agent, why: !task ? M.UNSEEN_TASK : !agent ? M.LOCKED_TASK : '' }
 }
 

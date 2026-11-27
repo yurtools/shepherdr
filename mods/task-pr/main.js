@@ -55,7 +55,7 @@ export default class PullRequest extends View {
       this.at = Date.now();
       // The header's Pull request switch stops looking empty once one is found (a PR the agent
       // opened itself isn't in the task's record).
-      const found = res.pr ? { terminal: w.terminal, number: res.pr.number } : null;
+      const found = res.pr ? { identity: w.identity, terminal: w.terminal, number: res.pr.number } : null;
       if (JSON.stringify(found) !== JSON.stringify(shared("tasks.thread.pr") ?? null)) setShared("tasks.thread.pr", found);
       cx.notify();
     });

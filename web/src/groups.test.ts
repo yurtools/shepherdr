@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { groupTasks, loadGroups, saveGroups, shownGroup } from './groups.ts'
+import { groupTasks, loadGroups, saveGroups, selectedTaskRows, shownGroup } from './groups.ts'
 import type { Machine, Place, Task } from '@shared/types.ts'
 
 const place = (id: string, name: string, machine: string, emoji?: string) => ({ id, name, machine, level: 2, emoji }) as unknown as Place
@@ -63,3 +63,21 @@ describe("the window's grouping (core/tasks.js groupNow)", () => {
     expect(from({ 'tasks.group': 'status', 'tasks.groupby': 'space' })).toBe('status')
   })
 })
+
+
+describe('status selection (SHEP-63)', () => {
+  test('the web snapshot statuses select the same union, even for pinned tasks; archived and automations are not task rows', () => {
+    const need = task('a:shep', 'need'), work = task('b:gtm', 'work', { pinned: 1 });
+    const done = task('a:shep', 'done', { pinned: 1 }), archive = task('a:shep', 'done', { archived: 1 });
+    const deferred = task('a:shep', 'deferred'), ready = task('a:shep', 'ready');
+    const rows = [work, done, deferred, archive, ready, need];
+    expect(selectedTaskRows(rows, ['needs', 'working']).map(t => t.id)).toEqual([need.id, work.id]);
+    expect(selectedTaskRows(rows, ['done'])).toEqual([done]);
+    expect(selectedTaskRows(rows, ['deferred', 'automations'])).toEqual([deferred]);
+    expect(selectedTaskRows(rows, ['automations'])).toEqual([]);
+    // The worker changes status without altering the selected keys.
+    expect(selectedTaskRows(rows.map(t => t === work ? { ...t, status: 'done' } : t), ['needs', 'working'])).toEqual([need]);
+    // The usual grouping is restored by an empty selection at the panel level; it was never rewritten.
+    expect(groupTasks(places, machines, rows, 'place').map(g => g.key)).toEqual(['pinned', 'a:shep']);
+  });
+});

@@ -22,6 +22,7 @@ import { watchCompanions } from "./companions.js";
 import { watchFeatures, startFeature, featureViewState } from "./features.js";
 import { featureViews } from "./core/spaces.js";
 import { watchSessionHistory, openHistory } from "./session-history.js";
+import { watchArtifactTabNames } from "./artifact-tabs.js";
 
 function find(node, id) {
   if (node?.id === id) return node;
@@ -39,6 +40,7 @@ export default class Tabs extends View {
     watchBrowserTabs(cx, e => toast({ title: "Browser did not open", body: plainError(e), level: "error" }));
     watchFeatures(cx, e => toast({ title: "Feature did not open", body: plainError(e), level: "error" }));
     watchSessionHistory(cx, e => toast({ title: "Session did not open", body: plainError(e), level: "error" }));
+    watchArtifactTabNames(cx);
     watchCompanions(cx, e => toast({ title: "View didn't switch", body: plainError(e), level: "error" }));
     // Agents parked behind a chat whose tab or space closed end, as their pane would have (the
     // Agents list did this; the layout has none now).
@@ -167,7 +169,7 @@ export default class Tabs extends View {
     const featureNames = featureViews(featureViewState()).byTab;
     const item = (c, i) => {
       const program = panes().find(p => p.tab === c.id && p.program?.agent)?.program ?? panes().find(p => p.tab === c.id)?.program;
-      const name = featureNames.get(c.id)?.name ?? tabName(c.name, program?.name);
+      const name = featureNames.get(c.id)?.name ?? (c.named ? c.name : tabName(c.name, program?.name));
       return h_flex().id(`tab-${c.id}`).h(H.sm).px(8).gap(6).rounded(RADIUS.control).items_center().flex_none().text_size(TEXT.body)
         .border(1).border_color(c.active ? t.border : t.chrome).bg(c.active ? t.raised : t.chrome).text_color(c.active ? t.foreground : t.muted)
         .cursor_pointer().hover(s => s.bg(t.hover))

@@ -77,6 +77,9 @@ import { Dictation, BUN_PATH, warmAudio } from "./dictate.js";
 const DICT_SLOW = 5000;
 const UNREAD_APPROVAL = "Approval request details unavailable";
 const approvalTitle = title => title === "Claude asks for something the chat can't read" ? UNREAD_APPROVAL : title;
+import { openWorkerView } from "./task-view.js";
+import { activeTaskThread, updateTaskThread } from "./task-thread-state.js";
+import { liveTaskTerminal } from "./core/task-owner.js";
 import { PanelHost, inner, openTaskThread, backToTasks, requestWorkerTerminal, THREAD, STACK as TASKS_STACK, BODY as THREAD_BODY, CHAT as THREAD_CHAT, TERM as THREAD_TERM, PR as THREAD_PR, BROWSER as THREAD_BROWSER } from "./panel.js";
 import { markRead, onScreen, unread } from "./unread.js";
 import { notifies } from "./notify.js";
@@ -342,7 +345,7 @@ export default class Chat extends View {
     this.origin = P?.terminal ?? null;
     this.addr = (this.companion && boundAgent(companionRecords()[this.companion])?.address) || this.origin;
     // No agent yet (a Coordinator tab): it may have started one already (this slot's label).
-    const initialLabels = terminals().find(k=>k.address===this.addr)?.labels ?? {};
+    const initialLabels = P?.historical ? {} : terminals().find(k=>k.address===this.addr)?.labels ?? {};
     const oldSlot = P?.terminal && Object.values(shared('coordinator.slots')??{}).find(s=>s.feature&&s.legacyTerminal===P.terminal);
     this.feature = P?.feature ?? P?.featureRecord?.id ?? initialLabels["herdr.feature"] ?? oldSlot?.feature ?? null;
     this.role = P?.role ?? initialLabels["herdr.role"] ?? (initialLabels['herdr.task']?'worker':this.feature&&!P?.thread?'feature':null);
@@ -356,12 +359,15 @@ export default class Chat extends View {
     // log, kept by herdr-task ({ path, kind }), and the task ({ machine, folder, slug, id }) for
     // its Resume.
     this.endedLog = this.thread ? P?.log ?? null : null;
+    this.taskView = this.thread ? P?.taskView ?? null : null;
+    this.historical = this.thread && P?.historical === true;
+    if (this.historical) this.ended = true;
     this.taskKey = this.thread ? P?.key ?? null : null;
     // Its task's id (HERD-12), for the box's "Message HERD-12".
     this.taskRef = P?.task ?? null;
     // Tells the Tasks panel threads can be asked for (shared "chat.threadreq").
     if (shared("chat.threads.v") !== 1) setShared("chat.threads.v", 1);
-    if (this.role && this.slot && (!this.addr || this.role==='feature'&&!this.companion)) this.addr = this.slotAgent() ?? this.addr;
+    if (!this.thread && this.role && this.slot && (!this.addr || this.role==='feature'&&!this.companion)) this.addr = this.slotAgent() ?? this.addr;
     this.machine = this.addr?.includes("/") ? this.addr.split("/")[0] : null;
     this.phase = "finding";
     this.conv = null;
@@ -494,7 +500,7 @@ export default class Chat extends View {
     // by id, the requests being read, those answered here (until the hook lets them go).
     this.workerCards = new AskCards({
       reply: (ask, text, cx) => this.replyWorker(ask, text, cx),
-      toTerminal: (ask) => { openTaskThread(ask.terminal, ask.ref, ask.title); requestWorkerTerminal(ask.terminal); },
+      toTerminal: (ask) => openTaskThread(ask.terminal, ask.ref, ask.title, "terminal"),
       chatAbout: (ask) => openTaskThread(ask.terminal, ask.ref, ask.title, "chat"),
     }, cx.focus_handle());
     // Codex's own questions (request_user_input, no hook): the same question card, its answer
@@ -587,7 +593,7 @@ export default class Chat extends View {
     this.callFocus = cx.focus_handle();
     // Drafts and dictation belong to the agent's first address (its origin), so they survive
     // Chat ⇄ Terminal, restarts from here, and app restarts.
-    const labels = terminals().find((x) => x.address === this.addr)?.labels ?? {};
+    const labels = this.historical ? {} : terminals().find((x) => x.address === this.addr)?.labels ?? {};
     this.originKey = (this.companion && companionRecords()[this.companion]?.origin) || labels["herdr.chat.origin"] || (this.slot ? `slot:${this.slot}` : null) || this.addr || "none";
     this.typing = labels["herdr.typing"] ? { addr: this.addr, at: Number(labels["herdr.typing"]) || 0 } : null;
     this.dict = new Dictation(this.originKey);
@@ -596,13 +602,13 @@ export default class Chat extends View {
     if (!this.addr && this.role) this.phase = "fresh";
     if (this.phase === "fresh") this.loadChoice(cx);
     this.loadFirst(cx, labels);
-    if (this.addr || this.role) cx.spawn(async (cx) => { await this.loadDraft(cx); attach.prune(); });
+    if ((this.addr || this.role) && !this.historical) cx.spawn(async (cx) => { await this.loadDraft(cx); attach.prune(); });
     if (this.addr) cx.spawn(async (cx) => this.follow(cx));
     // A Coordinator tab's chat that missed its agent (started, or Herdr restarted, before this
     // copy saw it) takes the slot's live agent as soon as one shows, instead of staying empty.
     if (this.slot && !this.thread) cx.timer.every(2000, (cx) => this.adoptSlot(cx));
     // a call still on from before this copy (the mod reloaded): carried on (SHEP-173)
-    if (this.addr) cx.timer.after(7000, (cx) => { cx.spawn(async (cx) => this.adoptCall(cx)); });
+    if (this.addr && !this.historical) cx.timer.after(7000, (cx) => { cx.spawn(async (cx) => this.adoptCall(cx)); });
     // The list drew nothing while it has rows (scrolled past its end, a height gone wrong):
     // forget the heights and go to the newest again. Checked rarely; redraws only then.
     cx.timer.every(1500, (cx) => {
@@ -612,7 +618,7 @@ export default class Chat extends View {
       this.anchor = null; this.pinned = true; this.stick = true;
       cx.notify();
     });
-    if (this.addr) cx.spawn(async (cx) => this.watchAsks(cx));
+    if (this.addr && !this.historical) cx.spawn(async (cx) => this.watchAsks(cx));
     // Keys (keys.json "mod:chat") and the header's buttons (pane-chat) for this chat.
     // The host cancels the pending receive when this copy closes or reloads.
     cx.spawn(async (cx) => {
@@ -711,7 +717,7 @@ export default class Chat extends View {
     this.dict.cancel();
     // Start the hook handoff before yielding to child cleanup: close has a
     // short host deadline, and Codex must still be able to ask in Terminal.
-    const handoff = this.addr && !this.machine && !this.companion
+    const handoff = this.addr && !this.machine && !this.companion && !this.historical
       ? exec("sh", ["-c", 'rm -f "$1/open/$2"; for f in "$1/req/$2".*.json; do [ -f "$f" ] && grep -q \'"turn_id"\' "$f" && : > "$1/ans/${f##*/}"; done; true', "x", this.askDir, this.addr]) : null;
     await Promise.all([cleanup, handoff, this.call ? this.hangup() : null]);
   }
@@ -769,7 +775,7 @@ export default class Chat extends View {
   // moment the chat knows its agent (not only once its conversation shows): an agent started
   // from here may ask in its first seconds, and without the flag the hook leaves it to the CLI.
   async flag() {
-    if (this.machine || !this.addr || this.phase === "ended" || this.companion || this.role==='feature'&&this.phase==='unsupported') return;
+    if (this.historical || this.machine || !this.addr || this.phase === "ended" || this.companion || this.role==='feature'&&this.phase==='unsupported') return;
     await exec("sh", ["-c", 'mkdir -p "$1/open" "$1/req" "$1/ans" && touch "$1/open/$2"', "x", this.askDir, this.addr]);
   }
 
@@ -1109,15 +1115,15 @@ export default class Chat extends View {
   // Accept on a Ready task's news line: the Tasks panel's command (herdr-task accept: merges
   // first when there's something to merge, else done).
   acceptTask(x, _cx) {
-    // Accept shows what you approve first: the Accept card (mods/accept-card) runs herdr-task
-    // accept from its own Accept; this row reads the change on its timer.
-    openOverlay({ mod: "accept-card", kind: "dialog", modal: true, width: 640, height: 640,
-      props: { ref: x.ref, folder: x.folder, machine: this.machine ?? null, title: x.title } });
+    return openWorkerView({ task: x.ref, folder: x.folder, machine: this.machine ?? null, space: x.task?.space, feature: x.task?.feature },
+      { review: view => openOverlay({ mod: "accept-card", kind: "dialog", modal: true, width: 640, height: 640,
+        props: { ref: view.task, folder: view.key.folder, machine: view.key.machine, title: view.title } }) });
   }
 
 
   // The agent's status. Parked behind this chat it isn't in agents(); the core's word then.
   status() {
+    if (this.historical) return null;
     const a = agents().find((x) => x.address === this.addr);
     if (a) return a.status;
     const k = terminals().find((x) => x.address === this.addr);
@@ -1126,6 +1132,7 @@ export default class Chat extends View {
 
   // This chat's agent: hc get's record (locate()) with the live status and turn.
   ownTerminal() {
+    if (this.historical) return null;
     const live = terminals().find((x) => x.address === this.addr);
     if (!this.t || this.t.address !== this.addr) return live ?? null;
     return live ? { ...this.t, status: live.status, turn: live.turn, state: live.state } : this.t;
@@ -1274,6 +1281,13 @@ export default class Chat extends View {
   // agent started in the same terminal writes another file.
   async locate(cx) {
     if (this.swapping) return;
+    // A recorded history is not a live address, even if core has reused its name.
+    if (this.historical) {
+      const log = this.endedLog;
+      if (!this.path && log?.path && KINDS[log.kind]) { this.path = log.path; this.kind = KINDS[log.kind]; this.reset(); this.pinned = true; }
+      else if (!this.path) this.set("ended", cx);
+      return;
+    }
     const address=this.addr;
     const r = await hc(["get", address, "--json"]);
     if(address!==this.addr)return;
@@ -1298,9 +1312,19 @@ export default class Chat extends View {
       }
       if(this.phase==='unsupported'){this.path=null;this.reset();this.set('finding',cx);}
     }
+    if (this.thread && this.taskView && !gone && !liveTaskTerminal({ ...t, address }, this.taskKey, this.taskView)) {
+      // Do not follow unrelated processes or retained shells.
+      this.historical = true;
+      this.ended = true;
+      this.askWait?.dispose();
+      if (!this.path && this.endedLog?.path && KINDS[this.endedLog.kind]) { this.path = this.endedLog.path; this.kind = KINDS[this.endedLog.kind]; this.reset(); this.pinned = true; }
+      else if (!this.path) this.set("ended", cx);
+      cx.notify();
+      return;
+    }
     if (gone || t?.state !== "live") {
       // Restarted from here (perhaps before Herdr restarted): the new agent carries the origin.
-      const next = terminals().find((x) => x.state === "live" && x.address !== this.addr && x.labels?.["herdr.chat.origin"] === this.originKey);
+      const next = !this.thread && terminals().find((x) => x.state === "live" && x.address !== this.addr && x.labels?.["herdr.chat.origin"] === this.originKey);
       if (next) { this.follow_to(next.address); return; }
       // It ended because the session it resumed is gone: a new one starts by itself.
       if (!gone && t && !this.thread && !this.companion && await this.checkLost(this.addr, cx, t)) return;
@@ -1311,7 +1335,7 @@ export default class Chat extends View {
         this.endedLog = null;
         if (!this.path && log?.path && KINDS[log.kind]) { this.path = log.path; this.kind = KINDS[log.kind]; this.reset(); this.pinned = true; }
         else if (!this.conv && !this.path) this.set("ended", cx);
-        if (!this.ended) { this.ended = true; cx.notify(); }
+        if (!this.ended) { this.ended = true; this.historical = true; this.askWait?.dispose(); cx.notify(); }
         return;
       }
       this.set("ended", cx);
@@ -1589,6 +1613,7 @@ export default class Chat extends View {
           return;
         }
         await this.pull(cx);
+        if (this.historical) return;
         await this.lookJobs(cx);
         await this.flag();
         // Its own start screen, while it has no session (or a card is still open).
@@ -1897,9 +1922,8 @@ export default class Chat extends View {
       this.box.set_value(next);
       this.slashOff = next.replace(/\n+$/, "");
     } else if (c.task) {
-      const own = (this.t?.foreground?.cwd ?? this.t?.cwd) === c.task.folder;
-      const t = { ref: taskRef(c.task), route: "", folder: own ? "" : c.task.folder ?? "" };
-      const next = mentions.pickTaskInto(this.box.value(), t);
+      const t = { ref: taskRef(c.task), route: "", folder: c.task.folder ?? "" };
+      const next = mentions.pickTaskInto(this.box.value(), t, this.pickedTasks);
       this.pickedTasks = [...this.pickedTasks.filter((x) => x.ref !== t.ref), t];
       this.box.set_value(next);
       this.slashOff = next.replace(/\n+$/, "");
@@ -2339,7 +2363,7 @@ export default class Chat extends View {
     if (!mentions.hasMention(text)) return text;
     const ids = this.reach ? new Set(this.reach.spaces.map((x) => x.id)) : null;
     const by = new Map((this.reach?.spaces ?? []).map((x) => [x.id, x.machine]));
-    const title = (m) => this.mentionableTasks().find((x) => taskRef(x) === m.ref && (!m.folder || x.folder === m.folder))?.title;
+    const title = (m) => { const xs = !m.route ? this.mentionableTasks().filter(x => taskRef(x) === m.ref && (!m.folder || x.folder === m.folder)) : []; return xs.length === 1 ? xs[0].title : null; };
     return mentions.plain(text, ids, (m) => by.get(m.id), title);
   }
 
@@ -2378,7 +2402,7 @@ export default class Chat extends View {
     const folder = this.t?.foreground?.cwd ?? this.t?.cwd;
     if (!folder) return;
     const address=this.addr,machine=this.machine,pid=this.t?.foreground?.pid;
-    const args = [...(machine ? ["--on", machine] : []), "list", "--json", "--folder", folder];
+    const args = [...(machine ? ["--on", machine] : []), "list", "--read-only", "--json", "--folder", folder];
     const [r, old] = await Promise.all([args, [...args, "--archived"]].map((a) => exec("herdr-task", a).catch(() => null)));
     if(this.historyClosed||address!==this.addr||machine!==this.machine||pid!==this.t?.foreground?.pid||folder!==(this.t?.foreground?.cwd??this.t?.cwd))return;
     const tasks = (out) => { try { const d = JSON.parse(out?.stdout ?? "{}"); return (d.tasks ?? []).map((x) => ({ ...x, folder: d.folder })); } catch { return null; } };
@@ -2395,13 +2419,32 @@ export default class Chat extends View {
   // The tasks a message mentions: by their id (HAT-1, from herdr-task's `ref`) or as #4.
   mentioned(text) {
     const t = String(text ?? "");
-    // Every message asks on every render: kept per text until the task list changes (HERD-94).
-    // No list yet (an ended agent's chat never loads one, GitHub #779): still a Map, not undefined === undefined.
-    if (!this.mentions || this.mentionsOf !== this.tasks) { this.mentionsOf = this.tasks; this.mentions = new Map(); }
+    const sources = [this.tasks, this.spaceTasks, this.reach];
+    if (!this.mentions || !this.mentionsOf?.every((v, i) => v === sources[i])) { this.mentionsOf = sources; this.mentions = new Map(); }
     const known = this.mentions.get(t);
     if (known) return known;
-    // core/send.js: the same matching as the web app's
     const found = mentionedIn(t, this.tasks);
+    const seen = new Set(found.map(x => JSON.stringify([x.folder, taskRef(x), this.machine ?? null])));
+    for (const part of mentions.split(t)) {
+      const m = part.task;
+      if (!m) continue;
+      const own = this.machine ?? null;
+      const route = m.route && this.reach?.spaces.filter(s => s.route === m.route);
+      const names = new Set((route || []).map(s => s.machine).filter(Boolean));
+      // Route is relative to the message's agent, not the currently selected
+      // space. A hop that cannot be identified in this window stays unresolved.
+      const machine = !m.route ? own : names.size === 1 ? [...names][0] : (!own && !m.route.includes(">") ? m.route : undefined);
+      const visible = machine === coreName() ? null : machine;
+      const folder = m.folder || (this.taskKey?.folder ?? (this.tasks ?? [])[0]?.folder);
+      const local = visible === own;
+      const candidates = local ? this.mentionableTasks().filter(x => taskRef(x).toLowerCase() === m.ref.toLowerCase() && x.folder === folder) : [];
+      const key = JSON.stringify([folder, m.ref, visible]);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      if (candidates.length === 1) found.push(candidates[0]);
+      else found.push({ ref: m.ref, title: "Open task", folder, machine: visible, mentionOnly: true,
+        unresolved: !folder || visible === undefined || (visible && !spaces().some(s => s.machine === visible)) });
+    }
     if (this.mentions.size > 1000) this.mentions.clear();
     this.mentions.set(t, found);
     return found;
@@ -2409,7 +2452,7 @@ export default class Chat extends View {
 
   // One tag line per task the message mentions, for the agent: what it is and where.
   taskTags(text) {
-    return this.mentioned(text).map((x) => taskTag(x, taskRef(x))).join("");
+    return this.mentioned(text).filter(x => !x.mentionOnly).map((x) => taskTag(x, taskRef(x))).join("");
   }
 
   // ---- task news (an Assistant's chat) --------------------------------------------------------
@@ -2447,7 +2490,7 @@ export default class Chat extends View {
   }
 
   taskSig() {
-    return (this.spaceTasks ?? []).map((x) => `${x.ref}:${x.status}:${x.why ?? ""}:${x.report?.text ?? ""}:${x.report?.left ?? ""}:${x.started ?? ""}:${x.ready_at ?? ""}:${x.done_at ?? ""}`).join("|");
+    return (this.spaceTasks ?? []).map((x) => `${x.ref}:${x.folder ?? ""}:${x.space ?? ""}:${x.feature ?? ""}:${x.status}:${x.why ?? ""}:${x.report?.text ?? ""}:${x.report?.left ?? ""}:${x.started ?? ""}:${x.ready_at ?? ""}:${x.done_at ?? ""}`).join("|");
   }
 
   // The lines: { inline: news item id → its row, extra: [{ at, row }] }. Herdr's news to the
@@ -2463,26 +2506,29 @@ export default class Chat extends View {
     const sig = [space, this.feature, this.spaceTasks, items, items.length, items[items.length - 1]?.id, this.start,
       (this.wasks ?? []).map((a) => a.ref).join(","), [...this.accepting].join(",")];
     if (this.newsMemo?.sig.every((v, i) => v === sig[i])) return this.newsMemo.out;
-    const tasks = new Map();
+    const scoped = [];
     for (const x of this.spaceTasks ?? []) {
       yield;
-      if ((x.space ?? x.queue?.space) === space && (!this.feature || x.feature === this.feature) && x.ref && !tasks.has(x.ref)) tasks.set(x.ref, x);
+      if ((x.space ?? x.queue?.space) !== space || !x.ref || (this.feature && x.feature !== this.feature)) continue;
+      scoped.push([x.ref, x]);
     }
-    const all = yield* newsEventsPlan(items, tasks, { start: this.start });
+    const { all, byKey: tasks, byRef } = yield* newsEventsPlan(items, scoped, { start: this.start });
     const last = new Map(), lastReady = new Map();
-    for (const e of all) { yield; last.set(e.ref, e); if (e.event === "ready") lastReady.set(e.ref, e); }
+    for (const e of all) { yield; last.set(e.taskKey, e); if (e.event === "ready") lastReady.set(e.taskKey, e); }
     this.needsAt = new Map();
-    for (const e of all) { yield; if ((e.event === "needs-you" || e.event === "failed") && recordedNewsAt(e.at) !== undefined) this.needsAt.set(e.ref, [...(this.needsAt.get(e.ref) ?? []), e.at]); }
+    for (const e of all) {
+      yield;
+      if (byRef.get(e.ref) && tasks.has(e.taskKey) && (e.event === "needs-you" || e.event === "failed") && recordedNewsAt(e.at) !== undefined)
+        this.needsAt.set(e.ref, [...(this.needsAt.get(e.ref) ?? []), e.at]);
+    }
     const order = [], ordered = new Set();
     for (const e of all) {
       yield;
-      const x = tasks.get(e.ref);
+      const key = e.taskKey, x = tasks.get(key);
       if (!ordered.has(e.ref)) { ordered.add(e.ref); order.push(e.ref); }
-      const asks = (this.wasks ?? []).some((a) => a.ref === e.ref);
-      // Needs you, still: its words in red, and its card open just under it.
-      const live = last.get(e.ref) === e && (e.event === "needs-you" || e.event === "failed") && (x?.status === "needs" || asks);
-      // Accept on the newest ready line while the task is still Ready.
-      const accept = lastReady.get(e.ref) === e && x?.status === "ready" && !asks;
+      const asks = Boolean(x) && (this.wasks ?? []).some(a => a.ref === e.ref && (byRef.get(e.ref) || x.live?.some(w => w.address === a.terminal)));
+      const live = Boolean(x) && last.get(key) === e && (e.event === "needs-you" || e.event === "failed") && (x.status === "needs" || asks);
+      const accept = lastReady.get(key) === e && x?.status === "ready" && !asks;
       const row = { kind: "tasknews", id: e.id, at: e.at, ref: e.ref, task: x ?? null, taskId: x?.id ?? null, folder: x?.folder ?? null, title: x?.title ?? "",
         ...newsWords(e, x), live, asks: live && asks, accept, busy: accept && this.accepting.has(e.ref) };
       if (e.made) extra.push({ at: e.at, row }); else inline.set(e.id, row);
@@ -2494,22 +2540,25 @@ export default class Chat extends View {
 
   // A news line's words: core/chat-view.js newsWords(), as the web app's chat has them.
 
-  // A task chip: its worker's chat in the Tasks panel, else the task list there.
-  // k: the task itself, when known (ids repeat across folders).
+  // A chip carries its exact source record; legacy numeric chips resolve only
+  // within the originating list and only when unambiguous.
   openTask(id, k = null) {
-    const x = k ?? this.tasks?.find((t) => String(t.id) === String(id));
-    const live = x?.live ?? [];
-    const worker = (live.find((a) => a.role === "worker") ?? (live.some((a) => a.role) ? null : live[0]))?.address;
-    if (worker) { this.openThread({ terminal: worker, task: taskRef(x), title: x.title }); return; }
-    run("layout.select", { stack: "panel-body", child: "tasks" });
-    backToTasks();
-    run("layout.show", { id: "panel" });
+    const matches = (this.tasks ?? []).filter(t => String(t.id) === String(id));
+    const x = k ?? (matches.length === 1 ? matches[0] : null);
+    if (!x?.folder || x.unresolved) {
+      toast({ title: "Task did not open", body: "The exact task could not be identified. Open it from its task list.", level: "error" });
+      return;
+    }
+    const [slug, number] = String(x.key ?? "").split("#");
+    const machine = x.machine !== undefined ? x.machine : this.machine ?? null;
+    return openWorkerView({ task: taskRef(x), title: x.title, folder: x.folder, machine,
+      key: slug && number ? { machine, folder: x.folder, slug, id: Number(number) } : null,
+      space: x.space, feature: x.feature }, { mode: "chat" });
   }
 
-  // A worker's thread ({ terminal, task, title }): its chat inside the Tasks panel (drill in,
-  // panel.js), never a pane beside this chat.
+  // A worker's thread ({ terminal, task, title }) is resolved by its exact label.
   openThread(req) {
-    openTaskThread(req.terminal, req.task, req.title);
+    return openWorkerView(req, { mode: "chat" });
   }
 
   // A pane, wherever it is: its space and tab shown, then the pane focused.
@@ -3139,11 +3188,11 @@ export default class Chat extends View {
     const s = spaces().find((x) => x.active);
     const place = s ? (s.machine && !String(s.id).includes("/") ? `${s.machine}/${s.id}` : String(s.id)) : null;
     const tree = layout();
-    const panel = find(tree, "panel"), thread = shared("tasks.thread");
+    const panel = find(tree, "panel"), thread = activeTaskThread();
     const open = panel && !panel.hidden && find(tree, "panel-body")?.active === TASKS_STACK && find(tree, TASKS_STACK)?.active === THREAD && thread?.task;
-    const m = open && String(thread.terminal ?? "").includes("/") ? String(thread.terminal).split("/")[0] : null;
+    const m = open ? thread.key?.machine ?? null : null;
     const TAB = { [THREAD_CHAT]: "chat", [THREAD_TERM]: "terminal", [THREAD_PR]: "pr", [THREAD_BROWSER]: "browser" };
-    const w = JSON.stringify({ place, task: open ? (m ? `${m}:${thread.task}` : String(thread.task)) : null, tab: open ? TAB[find(tree, THREAD_BODY)?.active] ?? "chat" : null });
+    const w = JSON.stringify({ place, task: open ? (m ? `${m}:${thread.task}` : String(thread.task)) : null, taskFolder: open ? thread.key?.folder ?? null : null, taskMachine: open ? m : null, tab: open ? TAB[find(tree, THREAD_BODY)?.active] ?? "chat" : null });
     if (w === this.callWhereWas) return;
     this.callWhereWas = w;
     fs.writeFile(`${this.callDir}/where.json`, w).catch(() => {});
@@ -3160,7 +3209,7 @@ export default class Chat extends View {
       if (!nav) continue;
       // said back by the nav's name (voice.ts waits for it before the voice agent may say it's on screen)
       let ack;
-      try { ack = this.voiceNav(nav) ?? { ok: true }; } catch (e) { console.error(`voice nav: ${e?.message ?? e}`); ack = { ok: false, why: "it failed in the window" }; }
+      try { ack = await this.voiceNav(nav) ?? { ok: true }; if (ack.view) { const { view, ...result } = ack; ack = result; } } catch (e) { console.error(`voice nav: ${e?.message ?? e}`); ack = { ok: false, why: "it failed in the window" }; }
       // what the voice opened says why the window changed by itself (SHEP-105): a short quiet toast
       if (ack.ok && nav.kind !== "screen") toast({ title: "Opened by voice", body: voiceOpened(nav), level: "info", timeout: 3500 });
       await fs.mkdir(`${this.callDir}/navved`, { recursive: true }).catch(() => {});
@@ -3188,7 +3237,7 @@ export default class Chat extends View {
   }
 
   // What the voice agent asked to show, done in this window: { ok } once done, else { ok: false, why }.
-  voiceNav(nav) {
+  async voiceNav(nav) {
     const spaceOf = (place) => spaces().find((x) => String(x.id) === place || (x.machine && `${x.machine}/${x.id}` === place));
     const no = (why) => ({ ok: false, why });
     if (nav.kind === "screen") return (this.callScreen ??= new CallScreen(this)).act(nav);
@@ -3207,36 +3256,26 @@ export default class Chat extends View {
     if (nav.kind === "chat") {
       // the call's own chat: its pane; another chat: its space, or its task's chat in the Tasks panel
       if (nav.addr === this.addr) { const mine = this.myPane() ?? this.lastPane; if (!mine) return no("its pane isn't open"); this.revealPane(mine); return { ok: true }; }
-      if (/\/worker$/.test(nav.chat ?? "") && nav.addr) { openTaskThread(nav.addr, nav.chat.slice(0, -7).split(":").pop(), null); return { ok: true }; }
+      if (/\/worker$/.test(nav.chat ?? "")) return openWorkerView({ terminal: nav.addr, task: nav.ref ?? nav.chat.slice(0, -7).split(":").pop(), folder: nav.folder, machine: nav.machine }, { mode: "chat" });
       if (String(nav.chat ?? "").startsWith("p:")) { const sp = spaceOf(nav.chat.slice(2).replace(":", "/")); if (!sp) return no("this window doesn't have that space"); run("space.select", { id: sp.id }); return { ok: true }; }
       return no("that chat isn't running");
     }
     if (nav.kind === "task") {
-      if (nav.tab === "review" && nav.ref && nav.folder) {
-        openOverlay({ mod: "accept-card", kind: "dialog", modal: true, width: 640, height: 640, props: { ref: nav.ref, folder: nav.folder, machine: nav.machine ?? null, title: nav.title } });
-        return { ok: true };
-      }
-      if (!nav.addr) {
-        // no agent running: the Tasks panel, searched for it
-        setShared("tasks.searchreq", { q: `${nav.ref ?? nav.task} ${nav.title ?? ""}`.trim(), at: Date.now() });
-        run("layout.select", { stack: "panel-body", child: TASKS_STACK }); backToTasks(); run("layout.show", { id: "panel" });
-        return { ok: true };
-      }
-      openTaskThread(nav.addr, nav.ref ?? String(nav.task).split(":").pop(), nav.title ?? null);
-      // no Files or Changes tab (SHEP-143): the service sends those as pr or chat
-      const child = { terminal: THREAD_TERM, pr: THREAD_PR, browser: THREAD_BROWSER }[nav.tab];
-      if (child) { if (nav.tab === "terminal") requestWorkerTerminal(nav.addr); run("layout.select", { stack: THREAD_BODY, child }); }
-      return { ok: true };
+      const want = { terminal: nav.addr, task: nav.ref ?? String(nav.task).split(":").pop(), folder: nav.folder, machine: nav.machine };
+      return openWorkerView(want, { mode: nav.tab === "review" ? "chat" : nav.tab ?? "chat",
+        ...(nav.tab === "review" ? { review: view => openOverlay({ mod: "accept-card", kind: "dialog", modal: true, width: 640, height: 640,
+          props: { ref: view.task, folder: view.key.folder, machine: view.key.machine, title: view.title } }) } : {}) });
     }
     if (nav.kind === "tasks" || nav.kind === "needs") {
       run("layout.select", { stack: "panel-body", child: TASKS_STACK });
       backToTasks();
       run("layout.show", { id: "panel" });
       // the filter row's chip and the search field, as the Tasks list's own keys set them (mods/tasks)
-      const FILTER = { need: "needs", work: "working", ready: "ready", merging: "merging", queued: "queued", scheduled: "scheduled", todo: "todo", done: "done", automations: "automations" };
+      const FILTER = { need: "needs", work: "working", ready: "ready", deferred: "deferred", merging: "merging", queued: "queued", scheduled: "scheduled", todo: "todo", done: "done", automations: "automations" };
       const at = Date.now();
-      setShared("tasks.filterreq", { key: nav.kind === "needs" ? "needs" : FILTER[nav.filter] ?? "all", at });
-      if (nav.kind === "tasks" && nav.search) setShared("tasks.searchreq", { q: String(nav.search), at });
+      const filter = nav.kind === "needs" ? "needs" : FILTER[nav.filter] ?? "all";
+      if (nav.kind === "tasks" && nav.search) setShared("tasks.searchreq", { q: String(nav.search), filter, at });
+      else setShared("tasks.filterreq", { key: filter, at });
       return { ok: true };
     }
     if (nav.kind === "artifact") { openViewer({ id: nav.artifact, title: nav.title, version: nav.v, machine: nav.machine ?? null }); return { ok: true }; }
@@ -3433,7 +3472,7 @@ export default class Chat extends View {
         try { out = JSON.parse(r.stdout || "null"); } catch {}
         if (r.code !== 0 || !out?.terminal) throw new Error(out?.error || r.stderr?.trim().split("\n").pop() || "Its agent didn't start.");
         const addr = on && !String(out.terminal).includes("/") ? `${on}/${out.terminal}` : out.terminal;
-        setShared("tasks.thread", { ...(shared("tasks.thread") ?? {}), terminal: addr, log: null, note: null, at: Date.now() });
+        updateTaskThread(this.taskView, { terminal: addr, historical: false, log: null, session: null, note: null, at: Date.now() });
       } catch (e) {
         this.note = null;
         toast({ title: "The agent didn't restart", body: plainError(e), level: "error" });
@@ -3459,7 +3498,7 @@ export default class Chat extends View {
         try { out = JSON.parse(r.stdout || "null"); } catch {}
         if (r.code !== 0 || !out?.terminal) throw new Error(out?.error || r.stderr?.trim().split("\n").pop() || "Its agent didn't start.");
         const addr = k.machine && !String(out.terminal).includes("/") ? `${k.machine}/${out.terminal}` : out.terminal;
-        setShared("tasks.thread", { ...(shared("tasks.thread") ?? {}), terminal: addr, log: null, note: null, at: Date.now() });
+        updateTaskThread(this.taskView, { terminal: addr, historical: false, log: null, session: null, note: null, at: Date.now() });
       } catch (e) {
         toast({ title: "Couldn't resume the task", body: plainError(e), level: "error" });
       }
@@ -3800,7 +3839,7 @@ export default class Chat extends View {
           if(fold)out.push({kind:'fold',id:`fold:${x.id}`,of:x.id,open:fold.open});
         }
         const chips = this.mentioned(x.text);
-        if (chips.length) out.push({ kind: "chips", id: `tc:${x.id}`, tasks: chips.map((t) => ({ id: t.id, ref: taskRef(t), title: t.title })) });
+        if (chips.length) out.push({ kind: "chips", id: `tc:${x.id}`, tasks: chips.map((t) => ({ ...t, ref: taskRef(t) })) });
         if (x.paths?.length) out.push({ kind: "imgs", id: `i:${x.id}`, paths: x.paths });
         // Its actions in a band row under it (the row above draws them too: band()).
         if (x.text) {
@@ -4604,8 +4643,9 @@ export default class Chat extends View {
       const off = (this.width + inner) / 2 - 6 - (this.press?.x ?? -1);
       if (row.accept && off >= -2 && off <= (this.cardW.get("accept") ?? ACCEPT) + 2) this.acceptTask(row, cx);
       // Needs you with its card open just under it: the card takes the keys.
-      else if (row.asks) { const a = (this.wasks ?? []).find((w) => w.ref === row.ref && !w.secret); if (a) this.workerCards.pressed(a); }
-      else this.openTask(row.taskId, row.task);
+      else if (row.asks) { const a = (this.wasks ?? []).find((w) => w.ref === row.ref && !w.secret && row.task?.live?.some(a => a.address === w.terminal)); if (a) this.workerCards.pressed(a); }
+      else if (row.task) this.openTask(row.taskId, row.task);
+      else toast({ title: "Task did not open", body: "This older news line cannot identify the exact task. Open it from the task list.", level: "error" });
     }
     else if (row.kind === "cardstrip") {
       // Which of the strip's controls the press was on (rows take no handlers: strips.js hit()).
@@ -4629,7 +4669,7 @@ export default class Chat extends View {
       const off = this.edges().right - (this.press?.x ?? -1);
       const j = Math.floor(off / (TASK + TASK_GAP));
       const k = row.tasks[row.tasks.length - 1 - j];
-      if (off >= 0 && off % (TASK + TASK_GAP) <= TASK && k) this.openTask(k.id);
+      if (off >= 0 && off % (TASK + TASK_GAP) <= TASK && k) this.openTask(k.id, k);
     }
     else if (row.kind === "imgs") {
       // Thumbnails, right-aligned (the person's) or left (the agent's): which one the press was on (rows take no

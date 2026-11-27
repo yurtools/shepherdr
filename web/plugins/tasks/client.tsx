@@ -32,6 +32,8 @@ import {
   registry,
   setFilter,
   setGroup,
+  pickTaskStatus,
+  setTaskStatusFilter,
   setUI,
   toggleAllDone,
   toggleShut,
@@ -53,6 +55,7 @@ import {
   DownIcon,
   Empty,
   FilterBox,
+  Floating,
   HashIcon,
   ic,
   IconButton,
@@ -80,7 +83,10 @@ import { useFlip } from '@client/motion.ts'
 import { RowMenu, useRowMenu, type RowMenuState } from '@client/rowmenu.tsx'
 import * as MN from '@core/menus.js'
 import * as TK from '@core/tasks.js'
+import { filterChoices, filterKey, splitFilterChoices } from '@core/task-filters.js'
+import { selectedTaskRows } from '@client/groups.ts'
 import * as ND from '@core/needs.js'
+import { usageText, usageHelp, useUsageExpiry } from '@client/task-usage.ts'
 
 // the window's words for a row (core/tasks.js, core/needs.js): every second line starts with a capital and is at most
 // 40 characters, cut at a word (the whole of it in the row's label); an automation's next run as "9:00", "Tue 9:00", "Nov 12 9:00"
@@ -108,7 +114,7 @@ function RepeatIcon({ className }: { className?: string }) {
  * A task, with one line under its title (taskLine). Working, its pie fills with the % done its agent reported and the time
  * left sits short under it ("2h"); Ready, Review sits at the row's end.
  */
-function TaskRow({ t, ix, where }: { t: Task; ix: number; where?: string[] }) {
+function TaskRow({ t, ix, where, now }: { t: Task; ix: number; where?: string[]; now?: number }) {
   // the open task, or the focused pane's in split view
   const sel = useUI((u) => u.task === t.id || (panesHere(u)[u.split.pane]?.kind === 'task' && panesHere(u)[u.split.pane].id === t.id))
   const kb = useUI((u) => u.kb && !u.task && u.cur === ix)
@@ -135,6 +141,8 @@ function TaskRow({ t, ix, where }: { t: Task; ix: number; where?: string[] }) {
       ref_={refOf(t.id)}
       title={t.name}
       sub={t.sub}
+      usage={usageText(t, now) ?? undefined}
+      usageTip={t.status === 'work' ? usageHelp(t) : undefined}
       // Scheduled (SHEP-38): its time until it starts ("6h") in the same place, counted live, in grey
       left={t.archived ? undefined : t.status === 'work' ? t.left : t.status === 'scheduled' && t.startsAt ? (TK.untilShort as (ms: number) => string)(t.startsAt) : undefined}
       leftQuiet={t.status === 'scheduled'}
@@ -161,15 +169,15 @@ function TaskRow({ t, ix, where }: { t: Task; ix: number; where?: string[] }) {
  *   Review or an automation's next run (`meta`).
  * A row with nothing under its title is one line. `tip`: more for its button's label only (an automation's error).
  */
-function Line({ flip, sel = false, kb = false, glyph, ref_, title, sub, left, leftQuiet, dim, meta, where, action, tip, onOpen, menu, children }: {
-  flip?: string; sel?: boolean; kb?: boolean; glyph: ReactNode; ref_?: string; title: string; sub?: string; left?: string; leftQuiet?: boolean; dim?: boolean; meta?: string
+function Line({ flip, sel = false, kb = false, glyph, ref_, title, sub, usage, usageTip, left, leftQuiet, dim, meta, where, action, tip, onOpen, menu, children }: {
+  flip?: string; sel?: boolean; kb?: boolean; glyph: ReactNode; ref_?: string; title: string; sub?: string; usage?: string; usageTip?: string; left?: string; leftQuiet?: boolean; dim?: boolean; meta?: string
   where?: string; action?: ReactNode; tip?: string; onOpen?: (e: MouseEvent) => void; menu?: RowMenuState; children?: ReactNode
 }) {
   const said = sub ? capital(sub) : undefined
   const shown = said ? fit(said) : undefined
   // the rows under the title: REF · where (always, the same on every status), then the status line on its own line
   const second = !!(ref_ || where)
-  const rows = 1 + (second ? 1 : 0) + (shown ? 1 : 0)
+  const rows = 1 + (second ? 1 : 0) + (shown ? 1 : 0) + (usage ? 1 : 0)
   const two = rows > 1
   const statusRow = second ? 'row-start-3' : 'row-start-2'
   const end = action ?? (meta ? <span className="shrink-0 text-[0.75rem] whitespace-nowrap text-fg3 tabular-nums phone:text-[0.8125rem]">{meta}</span> : null)
@@ -180,7 +188,8 @@ function Line({ flip, sel = false, kb = false, glyph, ref_, title, sub, left, le
         <button
           type="button"
           aria-current={sel || undefined}
-          aria-label={`${ref_ ? `${ref_} ` : ''}${title}${said ? `, ${said}` : ''}${left ? (leftQuiet ? `, in ${left}` : `, ${left} left`) : ''}${meta ? `, ${meta}` : ''}${tip ? `, ${tip}` : ''}`}
+          aria-label={`${ref_ ? `${ref_} ` : ''}${title}${said ? `, ${said}` : ''}${left ? (leftQuiet ? `, in ${left}` : `, ${left} left`) : ''}${meta ? `, ${meta}` : ''}${usage ? `, ${usage}` : ''}${tip ? `, ${tip}` : ''}`}
+          aria-description={usageTip}
           onClick={onOpen}
           className="absolute inset-0 cursor-pointer rounded-[inherit] outline-none keys:focus-visible:shadow-[inset_0_0_0_1.5px_var(--focus)]"
         />
@@ -208,6 +217,7 @@ function Line({ flip, sel = false, kb = false, glyph, ref_, title, sub, left, le
             <span className="min-w-0 truncate text-fg2">{shown}</span>
           </span>
         ) : null}
+        {usage ? <span aria-hidden={!!onOpen} data-task-usage className="col-start-2 col-end-4 min-w-0 truncate text-[0.75rem]/4 tabular-nums text-fg3 phone:text-[0.8125rem]/5" style={{ gridRowStart: rows }}>{usage}</span> : null}
         {end ? <span className={clsx('col-start-3 row-start-1 flex items-center', two && (rows === 3 ? 'row-span-3' : 'row-span-2'), two && '@max-[24rem]:row-span-1 @max-[24rem]:row-start-2')}>{end}</span> : null}
       </div>
       {children}
@@ -325,6 +335,8 @@ function autosIn(snap: Snapshot, chips: string[]) {
 /** a Needs you row of no task: an agent's opens its chat; a failed automation's opens the Automations group */
 function AgentNeedRow({ n, listKey, spaceOnly }: { n: AgentNeed; listKey: string; spaceOnly?: boolean }) {
   const shut = useUI((u) => u.shut.includes(`${listKey}|automations`))
+  const selected = useUI((u) => u.taskStatuses)
+  const filters = useSnap()?.look?.filters !== false
   return (
     <Line
       glyph={n.auto ? <RepeatIcon className="size-3.5 text-need" /> : <TaskDot s="need" />}
@@ -332,7 +344,7 @@ function AgentNeedRow({ n, listKey, spaceOnly }: { n: AgentNeed; listKey: string
       sub={n.why}
       where={spaceOnly ? n.space : n.where}
       tip={n.auto?.error}
-      onOpen={() => (n.chat ? goChat(n.chat) : shut && toggleShut(listKey, 'automations'))}
+      onOpen={() => { if (n.chat) goChat(n.chat); else if (filters && selected.length && !selected.includes('automations')) setTaskStatusFilter('automations'); else if (shut) toggleShut(listKey, 'automations') }}
     />
   )
 }
@@ -394,11 +406,63 @@ function ByToggle() {
   )
 }
 
+/** Independent status choices, with the remaining choices in a checked More menu. */
+function StatusFilterRow({ selected, count }: { selected: string[]; count: (key: string) => number }) {
+  const row = useRef<HTMLDivElement>(null)
+  const button = useRef<HTMLButtonElement>(null)
+  const phone = useUI((u) => u.device === 'phone')
+  const [width, setWidth] = useState(0)
+  const [open, setOpen] = useState(false)
+  useLayoutEffect(() => {
+    const el = row.current!
+    const update = () => setWidth(el.clientWidth)
+    update()
+    const ro = new ResizeObserver(update)
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
+  const choices = filterChoices(selected, count)
+  // A checked chip takes the same space in this estimate as an unchecked one.
+  const est = (label: string, n: number, check = false) => 16 + label.length * (phone ? 7.5 : 6.25) + (n ? 5 + String(n).length * 8 : 0) + (check ? 16 : 0)
+  const { shown, hidden, hiddenSelected } = splitFilterChoices(choices, width - (phone ? 28 : 20) - est('All statuses', 0), (item) => est(item.label, item.count, true), phone ? 90 : 84)
+  useEffect(() => { if (!hidden.length) setOpen(false) }, [hidden.length])
+  const chip = 'press inline-flex shrink-0 h-6 items-center gap-1 rounded-full px-2 text-[0.75rem] text-fg2 hover:bg-hover aria-pressed:bg-sel aria-pressed:text-fg focus-visible:outline focus-visible:outline-focus coarse:h-8 phone:h-8 phone:text-[0.875rem]'
+  return (
+    <div ref={row} role="group" aria-label="Status filters" className="flex items-center gap-0.5 px-2.5 pt-2 phone:px-3.5">
+      <button type="button" aria-pressed={!selected.length} className={chip} onClick={() => pickTaskStatus('all')}>All statuses</button>
+      {shown.map((item) => (
+        <button key={item.key} type="button" aria-pressed={item.on} className={chip} onClick={() => pickTaskStatus(item.key)}>
+          {item.on ? <CheckIcon aria-hidden className="size-3 shrink-0" /> : null}
+          {item.label}{item.count > 0 ? <span className="text-fg3 tabular-nums">{item.count}</span> : null}
+        </button>
+      ))}
+      {hidden.length > 0 ? (
+        <button ref={button} type="button" aria-haspopup="menu" aria-expanded={open} aria-label={`More statuses${hiddenSelected ? `, ${hiddenSelected} selected` : ''}`}
+          className={clsx(chip, hiddenSelected && 'bg-sel text-fg', !hiddenSelected && open && 'bg-hover')} onClick={() => setOpen(!open)}>
+          More{hiddenSelected ? ` · ${hiddenSelected}` : ''}<DownIcon aria-hidden className="size-3 shrink-0" />
+        </button>
+      ) : null}
+      {open && hidden.length > 0 ? (
+        <Floating anchor={button.current} place="below-end" gap={4} onClose={() => setOpen(false)}>
+          <Menu label="More statuses" onClose={() => setOpen(false)}>
+            {hidden.map((item) => <MenuItem key={item.key} role="menuitemcheckbox" aria-checked={item.on} icon={item.on ? <CheckIcon className={ic} /> : null}
+              hint={item.count ? String(item.count) : undefined} onClick={() => pickTaskStatus(item.key)}>{item.label}</MenuItem>)}
+          </Menu>
+        </Floating>
+      ) : null}
+    </div>
+  )
+}
+
 function TaskList(_: { placeId: string }) {
   const snap = useSnap()!
+  const usageNow = useUsageExpiry(snap.tasks)
   const view = useStore((s) => listView(s.ui, snap))
   const key = view.key
   const by = useUI((u) => u.groups)
+  const savedStatuses = useUI((u) => u.taskStatuses)
+  const filters = snap.look?.filters !== false
+  const selected = filters ? savedStatuses : []
   const allDone = useUI((u) => u.allDone)
   const shut = useUI((u) => u.shut)
   const archived = useUI((u) => u.archived === key)
@@ -407,7 +471,7 @@ function TaskList(_: { placeId: string }) {
   const place = placeOf(snap, getState().ui.place)
   // a task moving to another group glides there; a new one fades in; what a filter, Show more or a fold leaves just shows
   const list = useRef<HTMLDivElement>(null)
-  useFlip(list, `${key}|${by}|${q}|${allDone.join()}|${shut.join()}`)
+  useFlip(list, `${key}|${by}|${q}|${selected.join()}|${allDone.join()}|${shut.join()}`)
   // headings stay on screen while their group scrolls under the search field (it is sticky too): --stick is its height
   useLayoutEffect(() => {
     const el = list.current
@@ -423,6 +487,28 @@ function TaskList(_: { placeId: string }) {
   const asks = agentNeeds(snap, view.chips).filter((n) => !q || matches(q, n.who, n.why, n.where))
   const live = tasksIn(snap, view).filter((t) => !q || found(snap, t, q))
   const autos = autosIn(snap, view.chips).filter((a) => !q || matches(q, a.name, a.listName, a.machine ? machineName(snap.machines, a.machine) : undefined))
+  const count = (key: string) => key === 'automations' ? autos.length : live.filter((t) => filterKey(t.status) === key).length + (key === 'needs' ? asks.length : 0)
+  const statusRow = filters ? <StatusFilterRow selected={selected} count={count} /> : null
+  // As in the window, a nonempty selection is a flat union in status order, with all matching
+  // rows visible (including pinned ones, but never archived ones). All restores the normal grouping.
+  if (selected.length) {
+    const order = selectedTaskRows(live, selected)
+    const needs = selected.includes('needs') ? asks : []
+    const automations = selected.includes('automations') ? autos : []
+    const names = namesFor(view.level)
+    const row = (t: Task) => <TaskRow key={t.id} t={t} ix={order.indexOf(t)} where={whereOf(snap, t, names)} />
+    const autoRows = automations.map((a) => <AutoRow key={`${a.machine ?? ''}:${a.listName}:${a.name}`} a={a} where={autoWhere(snap, a)} from={autoFrom(snap, a)} />)
+    return <>
+      <TaskFilter listKey={view.search} order={order} />
+      {statusRow}
+      <div ref={list} className="relative pt-1">
+        <List>{order.filter((t) => t.status === 'need').map(row)}{needs.map((n) => <AgentNeedRow key={n.id} n={n} listKey={key} spaceOnly />)}{order.filter((t) => t.status !== 'need').map(row)}</List>
+        {autoRows.length ? <>{selected.length > 1 ? <GroupHeading label="Automations" count={autoRows.length} /> : null}<List>{autoRows}</List></> : null}
+        {!loaded ? <Empty className="pt-3 text-fg3">Reading tasks…</Empty> : null}
+        {loaded && !order.length && !needs.length && !autoRows.length ? <Empty className="pt-3 text-fg3">{q ? `No tasks in the selected statuses match “${q}”.` : 'Nothing in the selected statuses.'}</Empty> : null}
+      </div>
+    </>
+  }
   const footer = q ? null : registry.tasksFooter.map((F, i) => <F key={i} place={place} list={view} />)
   // searching, Done and archived tasks are in it too, each group whole and open, folded shut or not
   let groups = q
@@ -450,13 +536,14 @@ function TaskList(_: { placeId: string }) {
   return (
     <>
       <TaskFilter listKey={view.search} order={order} />
+      {statusRow}
       <ByToggle />
       <div ref={list} className="relative">
         {!loaded ? <Empty className="pt-3 text-fg3">Reading tasks…</Empty> : null}
         {groups.filter((g) => g !== archivedGroup).map((g) => {
           const fold: Fold | undefined = q ? undefined : { shut: g.shut, toggle: (all) => toggleShut(key, g.key, all ? groups.filter((x) => x !== g).map((x) => x.key) : []) }
           const extra = g.key === 'need' ? asks : []
-          const row = (t: Task) => <TaskRow key={t.id} t={t} ix={order.indexOf(t)} where={whereOf(snap, t, g.names)} />
+          const row = (t: Task) => <TaskRow key={t.id} t={t} now={usageNow} ix={order.indexOf(t)} where={whereOf(snap, t, g.names)} />
           const rows = <List>{g.tasks.map(row)}{extra.map((n) => <AgentNeedRow key={n.id} n={n} listKey={key} spaceOnly />)}</List>
           // by place: a space's work under its name, under its machine's name where more show; both fold
           if (g.on !== undefined) {

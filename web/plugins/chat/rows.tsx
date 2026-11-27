@@ -268,7 +268,7 @@ export function NewsRow({ msg }: { msg: Message }) {
         <span className="flex min-w-0 items-center gap-1.5">
           <span className="shrink-0 font-medium text-fg2">{n.ref}</span>
           <span className={clsx('shrink-0', n.live ? 'text-need' : 'text-fg2')}>{n.what}</span>
-          {n.text ? <><span className="shrink-0">·</span><span data-text title={n.text} className="min-w-0 flex-1 truncate">{n.text}</span></> : <span className="flex-1" />}
+          {n.text ? <><span className="shrink-0">·</span><span data-text className="min-w-0 flex-1 truncate">{n.text}</span></> : <span className="flex-1" />}
         </span>
         {stamp.iso ? <time dateTime={stamp.iso} className={stampClass}>{stamp.label}</time> : <span className={stampClass}>{stamp.label}</span>}
       </span>

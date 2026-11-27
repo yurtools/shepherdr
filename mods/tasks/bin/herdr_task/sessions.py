@@ -98,18 +98,31 @@ def session_of(pid):
         if os.path.isdir(fd):
             for n in os.listdir(fd):
                 try:
-                    files.append(os.readlink(os.path.join(fd, n)))
-                except OSError:
+                    target = os.readlink(os.path.join(fd, n))
+                    if "/rollout-" in target and target.endswith(".jsonl"):
+                        # A referenced history segment may be open for reading.
+                        # The writable descriptor identifies the active generation.
+                        info = f"/proc/{p}/fdinfo/{n}"
+                        if os.path.isfile(info):
+                            with open(info) as stream:
+                                flags = next((line.split()[1] for line in stream if line.startswith("flags:")), None)
+                            if flags is None or int(flags, 8) & 3 not in (1, 2):
+                                continue
+                    files.append(target)
+                except (OSError, ValueError):
                     pass
         elif shutil.which("lsof"):
             files = [l[1:] for l in run(["lsof", "-p", p, "-Fn"]).stdout.split("\n") if l.startswith("n")]
         for f in files:
-            m = re.search(r"/rollout-.*?([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$", f)
+            m = re.search(r"/rollout-.*?([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?:_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})?\.jsonl$", f)
             if m:
                 try:
                     with open(f, encoding='utf-8') as log:
-                        source=(json.loads(log.readline()).get('payload') or {}).get('source')
+                        meta=json.loads(log.readline()).get('payload') or {}
+                        source=meta.get('source')
                     if isinstance(source,dict) and 'subagent' in source:
+                        continue
+                    if meta.get('id') and meta['id'] != m.group(1):
                         continue
                 except (OSError,ValueError):
                     continue

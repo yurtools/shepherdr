@@ -138,7 +138,7 @@ export const WEB_KEYS = {
     "ctrl-shift-k": "mod.open:jump", "ctrl-k": "mod.open:jump",
     "ctrl-,": "app.settings",
   },
-  "mod:chat": { "ctrl-shift-d": "chat.dictate", "ctrl-shift-space": "chat.call", "ctrl-f": "chat.find" },
+  "mod:chat": { "ctrl-shift-d": "chat.dictate", "ctrl-shift-space": "chat.call", "ctrl-f": "chat.find", "cmd-f": "chat.find" },
   "layout:shepherdr": { "shift-f2": "tabs-tasks.rename-space" },
 };
 

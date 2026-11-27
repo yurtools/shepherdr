@@ -7,7 +7,7 @@ export default class LinkedMarkdown extends View {
  update(value){this.value=value;}
  render(){
   const value=this.value;
-  return TextView.markdown(value.id,value.text).scrollable(false).selectable(true).flex_none()
+  return TextView[value.format??"markdown"](value.id,value.text).scrollable(false).selectable(true).flex_none()
    .on_link_click((href)=>setShared('workspace.chat-link',{href,key:value.key,nonce:Math.random(),at:Date.now()}));
  }
 }

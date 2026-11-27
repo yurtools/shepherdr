@@ -6,7 +6,9 @@ import { startRole, roleStart, featureTask } from './role-launch.js';
 import {readShepherdr} from './coordinator.js';
 import LinkedMarkdown from './linked-markdown.js';
 import { fencedParts, isMermaid, mermaidParts } from './core/chat-fences.js';
-import { flowchart, sourceForDisplay, chartHeight, FLOW_LIMITS, FLOW_WORDS, FLOW_VIEW_HEIGHT } from './core/chat-flowchart.js';
+import { FIND_LIMITS, literalRanges, containsFind, findContext, findSpans, escapeHtml, diagramLabelTexts } from "./core/chat-find.js";
+import { markdownProjection, markdownRanges, markedHtml, markdownChunks } from "./core/chat-find-markdown.js";
+import { flowchart, sourceForDisplay, chartHeight, FLOW_LIMITS, FLOW_WORDS } from './core/chat-flowchart.js';
 import { nativeFlowchart } from './flowchart.js';
 import { chatLink, chatLinkScan, scanChatLink } from './core/chat-links.js';
 import { startFeature, featureRequest, workspaceCall } from "./features.js";
@@ -42,13 +44,13 @@ import { focused, props, run, theme, home, hc, exec, shared, setShared, watchFol
 import { agents, panes, terminals, spaces, inRender } from "./live.js";
 import { chatPane, chatLabel, runningFeatureAssistant } from "./core/spaces.js";
 import * as fs from "fs/promises";
-import { FIND, LOG, Conversation, records, resultText, summary, excerpt, names, pilotLine } from "./core/chat-log.js";
+import { FIND, LOG, Conversation, records, resultText, summary, excerpt, names, pilotLine, discardableTurn } from "./core/chat-log.js";
 import { BgJobs } from "./core/bg-jobs.js";
 import { ChatReader } from "./core/chat-reader.js";
 import { preview } from "./core/recipe.js";
 import { words, permissionStatus, requestHash, howAnswered, codexOnScreen, codexSteps } from "./core/asks.js";
 // The rows' words and rules the web app's chat draws by too (core/chat-view.js).
-import { WORDS, clock, bgGroups, subagentsOf, subagentWord, senderName, briefLabel, firstUser, firstKeys, literal, fromName, sentTo, selfName, initialOf, newsWords, resolveArtifacts, resolveArtifactPlan, unsigned, ownWords, fitThumbs, bandActs, bandOrder, imagesLine, questionsBelow, notSent, published, artifactLine, videoLine, mediaIn, elapsed, reportMsg, doingWords, LOST, lostMessage, shellWord, sessionStarted, sessionFailed } from "./core/chat-view.js";
+import { WORDS, clock, bgGroups, subagentsOf, subagentWord, senderName, briefLabel, firstUser, firstKeys, literal, fromName, sentTo, selfName, initialOf, newsWords, resolveArtifacts, resolveArtifactPlan, unsigned, ownWords, fitThumbs, bandActs, bandOrder, imagesLine, questionsBelow, notSent, published, artifactLine, videoLine, mediaIn, elapsed, reportMsg, doingWords, LOST, lostMessage, shellWord, sessionStarted, sessionFailed, DISCARD_TITLE, discardDetail } from "./core/chat-view.js";
 // Sending the person's words, as the web app does (core/send.js).
 import { refusal, taskTag, messageBody, replyInstead, steerNow, reactionLine, mentionedIn, sendTyped, SETTLE } from "./core/send.js";
 // hc whose send goes as the person, with no caller: never "Another agent" on another machine (SHEP-3, core/person.js).
@@ -172,7 +174,7 @@ const shownLines = (text, h, width) => {
   }
   return out.join("\n");
 };
-const ICONS = { copy: "copy", reply: "reply", rewind: "rewind", fork: "git-fork", feature: "flag", react: "smile-plus" };
+const ICONS = { copy: "copy", reply: "reply", rewind: "rewind", discard: "rewind", fork: "git-fork", feature: "flag", react: "smile-plus" };
 // Reaction pills: this wide and tall (inside the ACT row, so they sit on the icons' center line
 // without towering over them), this far apart; and the gap between them and the smiley.
 const PILL = 46, PILL_H = 20, PILL_GAP = 4, PILL_EDGE = 6;
@@ -242,7 +244,7 @@ function parts(text) {
 
 // Prepared cooperatively with the rest of the timeline, before any row is
 // painted. The same source reuses bounded, theme-independent geometry.
-function* prepareDiagrams(ps, id, opened, previous) {
+function* prepareDiagrams(ps, id, opened, previous, q = "") {
   let count=0;
   for (const [n,p] of ps.entries()) {
     yield;
@@ -255,23 +257,47 @@ function* prepareDiagrams(ps, id, opened, previous) {
     const display=sourceForDisplay(p.code);
     p.display=display.text;
     if(display.shortened)p.error=[p.error,FLOW_WORDS.shortened].filter(Boolean).join(' ');
-    p.source = opened.has(`${id}:h${n}`);
+    p.findSource = !!q && containsFind(p.code,q);
+    p.source = p.findSource || opened.has(`${id}:h${n}`);
+    if(q&&(p.source||!p.drawing)) p.display=p.code.slice(0,FIND_LIMITS.chars);
     p.preview = !!p.drawing && !p.source;
   }
   return ps;
 }
-function codeRows(p,id,n,clip,side) {
-  if (!isMermaid(p)) return [
-    {kind:'codehead',id:`${id}:h${n}`,lang:p.lang,code:p.code},
-    {kind:'code',id:`${id}:c${n}`,lang:p.lang,code:p.code,clip}
-  ];
-  const head = { kind:'codehead',id:`${id}:h${n}`,lang:p.lang,code:p.code,side,
-    diagram:!!p.drawing,source:!!p.source };
-  const body = { kind:p.preview?'diagram':'code',id:`${id}:c${n}`,lang:p.lang,code:p.code,side,
-    drawing:p.preview?p.drawing:undefined,result:p.result,closed:p.closed,eligible:p.eligible,display:p.display,error:p.error,clip:p.preview?undefined:clip };
-  return [head,body];
+function codeRows(p,id,n,clip,side,q="",width=800) {
+  const mermaid=isMermaid(p);
+  const head = { kind:'codehead',id:`${id}:h${n}`,lang:p.lang,code:p.code,
+    ...(mermaid?{side,diagram:!!p.drawing,source:!!p.source,...(p.findSource?{findSource:true}:{})}:side==='user'?{side}:{}) };
+  const body = { kind:p.preview?'diagram':'code',id:`${id}:c${n}`,lang:p.lang,code:p.code,clip:p.preview?undefined:clip,
+    ...(mermaid?{side,drawing:p.preview?p.drawing:undefined,result:p.result,closed:p.closed,eligible:p.eligible,display:p.display,error:p.error}:side==='user'?{side}:{}) };
+  if(!q || body.kind!=='code')return [head,body];
+  const text=String(p.code??'');
+  const {ranges,limited}=literalRanges(text,q);
+  if(!ranges.length)return [head,body];
+  // A virtual list only scrolls to rows, not offsets inside TextView. Keep
+  // code in bounded, line-aligned rows during Find, without changing Copy.
+  const shown=text.slice(0,FIND_LIMITS.chars),out=[head];
+  let at=0,hit=0;
+  while(at<shown.length){
+    let end=Math.min(shown.length,at+Math.max(240,Math.min(1600,Math.floor(width*2)))),nl=at-1;
+    for(let i=0;i<12;i++){const next=shown.indexOf('\n',nl+1);if(next<0||next>=end)break;nl=next;}
+    if(nl>=at)end=nl+1;
+    if(end<shown.length && /[\uD800-\uDBFF]/.test(shown[end-1]))end--;
+    if(end<=at)end=Math.min(shown.length,at+2);
+    const first=hit;
+    while(hit<ranges.length&&ranges[hit].start<end){end=Math.max(end,ranges[hit].end);hit++;}
+    const display=shown.slice(at,end);
+    const hits=ranges.slice(first,hit).map(r=>({start:r.start-at,end:r.end-at,part:0,text:display}));
+    out.push({...body,id:at?`${body.id}:find:${at}`:body.id,findRoot:body.id,display,clip:undefined,error:at?undefined:body.error,
+      findChunk:end<shown.length,find:{query:q,hits,limited:limited&&end>=shown.length,source:true}});
+    at=end;
+  }
+  return out;
 }
-const diagramAvailable = (width,column,side) => Math.max(1,Math.min(width-36,column,side==='user'?Math.max(240,Math.floor(Math.min(width,column)*0.8)):Infinity)-24);
+// col() leaves 18 px on each side; a user's right-aligned card is further
+// limited by most. The body has two 12 px pads and two 1 px borders.
+const diagramCardWidth = (width,column,side) => Math.max(1,Math.min(width-36,column,side==='user'?Math.max(240,Math.floor(Math.min(width,column)*0.8)):Infinity));
+const diagramAvailable = (width,column,side) => Math.max(1,diagramCardWidth(width,column,side)-26);
 const DIAGRAM_SOURCE_W=100, DIAGRAM_COPY_W=72;
 
 let bound = false;
@@ -339,6 +365,7 @@ export default class Chat extends View {
     this.machine = this.addr?.includes("/") ? this.addr.split("/")[0] : null;
     this.phase = "finding";
     this.conv = null;
+    this.historyMode = null;
     this.path = null;
     this.reset();
     this.pending = [];
@@ -418,6 +445,9 @@ export default class Chat extends View {
           { keystroke: "escape", action: "chat_find_close", context: `chat_find > ${ctx}` },
           { keystroke: "enter", action: "chat_find_next", context: `chat_find > ${ctx}` },
           { keystroke: "shift-enter", action: "chat_find_prev", context: `chat_find > ${ctx}` },
+          { keystroke: "f3", action: "chat_find_next", context: `chat_find > ${ctx}` },
+          { keystroke: "shift-f3", action: "chat_find_prev", context: `chat_find > ${ctx}` },
+          { keystroke: "ctrl-enter", action: "chat_find_expand", context: `chat_find > ${ctx}` },
           { keystroke: "up", action: "chat_recall_up", context: `chat_recall > ${ctx}` },
           { keystroke: "down", action: "chat_recall_down", context: `chat_recall > ${ctx}` });
       }
@@ -499,7 +529,7 @@ export default class Chat extends View {
     this.finding = false;
     this.findIdx = 0;
     this.findBox = InputState.new({ placeholder: WORDS.find });
-    this.findBox.on("change", (_e, cx) => { this.findIdx = 0; this.findJump = true; cx.notify(); });
+    this.findBox.on("change", (_e, cx) => { this.findIdx = 0; this.findSelected = null; this.findJump = true; cx.notify(); });
     // "Show thinking" is gone: so is its stored setting.
     if (shared("chat.showThinking") != null) cx.timer.after(0, () => setShared("chat.showThinking", null));
     this.uses = {};
@@ -510,6 +540,7 @@ export default class Chat extends View {
     this.viewAsked = new Set();
     this.callReqAt = shared("chat.callreq")?.at ?? null;
     this.restartReqAt = shared("chat.restartreq")?.at ?? null;
+    this.discardReqAt = shared("chat.discardreq")?.at ?? null;
     this.reactReqAt = shared("chat.reactreq")?.at ?? null;
     this.sendReqAt = shared("chat.sendreq")?.at ?? null;
     this.startReqAt = shared("chat.startreq")?.at ?? null;
@@ -629,7 +660,7 @@ export default class Chat extends View {
         }
         // pane.go landed on this copy (mod.json "focusable"): the Tasks panel's chat takes the keyboard into its box;
         // a pane copy already does on focus (draw()), so again is harmless.
-        if (c === "focus") { this.box.focus(); cx.notify(); continue; }
+        if (c === "focus") { (this.finding?this.findBox:this.box).focus(); cx.notify(); continue; }
         if (focused()?.pane !== this.myPane()) continue;
         // Voice off (Shepherdr settings > Window > Add-ons): its keys do nothing.
         if (c === "dictate" && addonOn("voice")) this.toggleDictation(cx);
@@ -644,6 +675,8 @@ export default class Chat extends View {
 
   // Forget what was read: another log file, or this one replaced.
   reset() {
+    this.finding=false; this.findSelected=null; this.findSnapshot=null; this.findCloseAnchor=null; this.findProjectionCache=null; this.findIdx=0;
+    this.findBox?.set_value?.("");this.findJump=false;
     this.clearHistory();
     this.diagramSources = new Set();
     this.clearLinkedMarkdown();
@@ -653,6 +686,7 @@ export default class Chat extends View {
     this.start = null;
     this.end = 0;
     this.conv = null;
+    this.historyMode = null;
     // What the agent left running in the background (core/bg-jobs.js), the row opened, and the
     // last lines each printed (job id -> text, while open), the ones being stopped.
     this.bgJobs = new BgJobs();
@@ -1426,12 +1460,14 @@ export default class Chat extends View {
     if (this.start === null) {
       const r = await this.log(["page", path, "999999999999999", String(PAGE)]);
       if (!current()) return;
+      if (String(r.stdout).startsWith("lineage")) { this.reset(); this.set("history-unavailable", cx); return; }
+      if (r.code) return;
       if (r.stdout.startsWith("missing")) { this.path = null; return; }
       const { head, records: recs } = records(r.stdout);
       if (head[0] !== "P") return;
       const next=await this.rebuild(recs,cx);
       if(!next||!current())return;
-      this.commitConversation(next,{start:Number(head[1]),end:Number(head[2]),records:recs});
+      this.commitConversation(next,{start:Number(head[1]),end:Number(head[2]),records:recs,historyMode:head[3]??null});
       this.stick = true;
       this.phase = "ready";
       cx.notify();
@@ -1439,6 +1475,8 @@ export default class Chat extends View {
     }
     const r = await this.log(["tail", path, String(this.end)]);
     if (!current()) return;
+    if (String(r.stdout).startsWith("lineage")) { this.reset(); this.set("history-unavailable", cx); return; }
+    if (r.code) return;
     if (r.stdout.startsWith("missing")) { this.path = null; return; }
     const { head, records: recs } = records(r.stdout);
     if (head[0] !== "T") return;
@@ -1447,7 +1485,7 @@ export default class Chat extends View {
     if(!recs.length){this.end=Number(head[3]);return;}
     let all=await this.historyRecords(previous,recs,cx),start=this.start;
     if(!all||!current())return;
-    if(all.length>KEEP&&!this.loadingEarlier){all=all.slice(-Math.floor(KEEP*0.75));start=all[0].off;}
+    if(all.length>(this.finding?FIND_LIMITS.pageRecords:KEEP)&&!this.loadingEarlier){all=all.slice(-Math.floor((this.finding?FIND_LIMITS.pageRecords:KEEP)*0.75));start=all[0].off;}
     const next=await this.rebuild(all,cx);
     if(!next||!current())return;
     this.commitConversation(next,{records:all,start,end:Number(head[3])});
@@ -1465,7 +1503,7 @@ export default class Chat extends View {
   // The page before what is shown, when the person reaches the top. The row that was first
   // stays where it was: the list is scrolled back to it once the new rows are in.
   loadEarlier(cx) {
-    if (this.loadingEarlier || !this.start || !this.path) return;
+    if (this.loadingEarlier || !this.start || !this.path || this.finding&&this.records.length>=FIND_LIMITS.pageRecords) return;
     this.loadingEarlier = true;
     const path = this.path, before = this.start, epoch=this.readEpoch, previous=this.records, end=this.end;
     const rows = this.rows();
@@ -1473,7 +1511,8 @@ export default class Chat extends View {
     cx.notify();
     cx.spawn(async (cx) => {
       try {
-        const r = await this.log(["page", path, String(before), String(PAGE)]);
+        const r = await this.log(["page", path, String(before), String(this.finding?Math.min(PAGE,FIND_LIMITS.pageRecords-this.records.length):PAGE)]);
+        if (r.code) return;
         const { head, records: recs } = records(r.stdout);
         if (path !== this.path || this.start !== before || head[0] !== "P") return;
         const all=await this.historyRecords(recs,previous,cx);
@@ -1483,6 +1522,7 @@ export default class Chat extends View {
         this.commitConversation(next,{start:Number(head[1]),records:all});
         this.anchor = first ? { id: first, until: Date.now() + 3000 } : null;
         this.reanchor = true;
+        if(this.finding&&!this.findSelected)this.findJump=true;
       } catch (e) {
         this.error = String(e?.message ?? e);
       } finally {
@@ -1503,6 +1543,7 @@ export default class Chat extends View {
     cx.spawn(async (cx) => {
       try {
         const r = await this.log(["results", path, ...offs.map(String)]);
+        if (r.code || path !== this.path) return;
         for (const part of r.stdout.split("\x1e").slice(1)) {
           const nl = part.indexOf("\n");
           const off = Number(part.slice(0, nl));
@@ -1770,10 +1811,22 @@ export default class Chat extends View {
 
   // A held message sent at once (the agent takes it mid-turn).
   sendQueued(msg, cx) {
-    this.queue = this.queue.filter((m) => m !== msg);
+    if (!this.takeQueued(msg)) return;
     if (msg.raw) personHc(["send", this.addr, msg.text]);
     else this.deliver(msg, cx);
     this.saveSoon(cx);
+  }
+
+  // A queued row can still be visible when drainQueue has already claimed
+  // it. In that case neither discard nor Edit may imply it stayed unsent.
+  takeQueued(msg) {
+    const i = this.queue.indexOf(msg);
+    if (i < 0) {
+      toast({ title: "Message is no longer held", body: "It may already have reached the agent. Check the conversation.", level: "info" });
+      return false;
+    }
+    this.queue = this.queue.filter((_, n) => n !== i);
+    return true;
   }
 
   // Stop: the CLI's own interrupt. The working line says "Stopping…" until it is idle.
@@ -1786,7 +1839,7 @@ export default class Chat extends View {
 
   // A held message back into the box, to change it before it goes.
   editQueued(msg, cx) {
-    this.queue = this.queue.filter((m) => m !== msg);
+    if (!this.takeQueued(msg)) return;
     const now = this.box.value().trim();
     this.box.set_value(now ? `${msg.text}\n\n${now}` : msg.text);
     this.addFiles(msg.files);
@@ -2057,12 +2110,15 @@ export default class Chat extends View {
     note("feature", { type: "chat-find" });
     this.finding = true;
     this.findJump = true;
-    cx.timer.after(0, () => this.findBox.focus());
+    cx.timer.after(0, () => { if(this.finding&&!this.historyClosed&&focused()?.pane===this.myPane())this.findBox.focus(); });
     cx.notify();
   }
 
   closeFind(cx) {
+    this.findCloseAnchor=this.findSelected?.logicalId??this.findSelected?.id;
     this.finding = false;
+    this.findBox.set_value("");
+    this.findSnapshot=null;this.findSelected=null;this.findIdx=0;this.findJump=false;
     this.box.focus();
     cx.notify();
   }
@@ -2071,23 +2127,73 @@ export default class Chat extends View {
     return this.finding ? this.findBox.value().trim() : "";
   }
 
-  // Every match in the loaded conversation: [{ index (row), id, n (matches in it) }].
+  projectFind(text) {
+    const cache=this.findProjectionCache??={rows:new Map(),bytes:0};
+    const old=cache.rows.get(text);
+    if(old)return old.projection;
+    const projection=markdownProjection(text), cost=(text.length+projection.html.length)*2;
+    if(cost<=2*1024*1024){
+      while(cache.rows.size>=4096||cache.bytes+cost>8*1024*1024){
+        const first=cache.rows.keys().next().value;cache.bytes-=cache.rows.get(first).cost;cache.rows.delete(first);
+      }
+      cache.rows.set(text,{projection,cost});cache.bytes+=cost;
+    }
+    return projection;
+  }
+
+  // Every hit comes from the same prepared text that will be painted.
+  findData(row,q,limit=FIND_LIMITS.matches) {
+    if(!q || row.waiting || row.failed || row.kind==='pending'&&!row.delivered)return {query:q,hits:[],limited:false};
+    if(limit<=0)return {query:q,hits:[],limited:true};
+    if(row.find?.query===q){const f=row.find;return {...f,hits:f.hits.slice(0,limit),limited:f.limited||f.hits.length>limit};}
+    const text=String(row.text??row.code??'');
+    if(['user','pending','agent','brief','ask'].includes(row.kind)){
+      const md=['user','pending'].includes(row.kind)?typed(this.mentionsIn?.(text)??text):row.kind==='brief'&&!row.who?literal(text):this.mentionsIn?.(text)??text;
+      const projection=row.findHtml??this.projectFind(md), got=markdownRanges(projection,q,limit);
+      const raw=literalRanges(text,q,limit),person=['user','pending'].includes(row.kind);
+      if(row.findHtml||got.hits.length&&(!person||got.hits.length===raw.ranges.length))return projection.compatible!==false&&!projection.limited
+        ?{query:q,...got,projection}:{query:q,...got,contextOnly:true};
+      // A person's message is literal in web Chat. If the native Markdown
+      // renderer hides a character, keep the original occurrence in a clearly
+      // labelled source readout instead of inventing a visible match.
+      return {query:q,hits:raw.ranges.map(r=>({...r,part:0,text})),limited:got.limited||raw.limited,source:true};
+    }
+    if(row.kind==='imgs'){
+      const hits=[];let limited=false;
+      for(const [part,path] of (row.paths??[]).entries()){
+        const label=String(path).split('/').pop(), got=literalRanges(label,q,Math.max(0,limit-hits.length));
+        limited||=got.limited;hits.push(...got.ranges.map(r=>({...r,part,text:label})));
+      }
+      return {query:q,hits,limited,imageNames:true,source:true};
+    }
+    if(['code','diagram','error','video','askend','pilot','tasknews','artifact'].includes(row.kind)){
+      const shown=row.kind==='code'?String(row.display??row.code??''):row.kind==='diagram'?String(row.code??''):text;
+      const raw=literalRanges(shown,q,limit);
+      if(row.kind==='diagram'&&!raw.ranges.length){
+        const hits=[];let limited=raw.limited;
+        for(const [part,label] of diagramLabelTexts(row.drawing??row.result?.drawing).entries()){
+          const got=literalRanges(label,q,Math.max(0,limit-hits.length));limited||=got.limited;
+          hits.push(...got.ranges.map(r=>({...r,part,text:label})));
+        }
+        return {query:q,hits,limited,labels:true};
+      }
+      return {query:q,hits:raw.ranges.map(r=>({...r,part:0,text:shown})),limited:raw.limited||row.kind==='code'&&row.code?.length>shown.length,source:['code','diagram'].includes(row.kind)};
+    }
+    return {query:q,hits:[],limited:false};
+  }
+
   findMatches(rows) {
-    if(this.history?.snapshot?.rows===rows)return this.history.snapshot.found;
-    const q = this.findQuery().toLowerCase();
-    if (!q) return [];
-    const out = [];
-    rows.forEach((r, index) => {
-      const text = (["user", "agent", "pending", "brief"].includes(r.kind) ? r.text : ["code","diagram"].includes(r.kind) ? r.code : null) ?? "";
-      let n = 0, at = 0;
-      const low = text.toLowerCase();
-      while ((at = low.indexOf(q, at)) >= 0) { n++; at += q.length; }
-      if (n) out.push({ index, id: r.id, n });
-    });
+    const plan=this.history?.snapshot;
+    if(plan?.rows===rows)return plan.findQuery===this.findQuery()?plan.found:[];
+    const q=this.findQuery(),out=[];
+    if(!q)return out;
+    for(const [index,row] of rows.entries()){
+      const f=this.findData(row,q);
+      if(f.hits.length)out.push({index,id:row.id,n:f.hits.length,hits:f.hits,source:f.source});
+    }
     return out;
   }
 
-  // The match `findIdx` (counted over all matches): its row.
   findRow(matches) {
     const plan=this.history?.snapshot;
     if(plan?.found===matches){
@@ -2095,27 +2201,74 @@ export default class Chat extends View {
       while(lo<hi){const mid=Math.floor((lo+hi)/2);if(this.findIdx<plan.findEnds[mid])hi=mid;else lo=mid+1;}
       return matches[Math.min(lo,matches.length-1)]??null;
     }
-    let k = this.findIdx;
-    for (const m of matches) { if (k < m.n) return m; k -= m.n; }
-    return matches[matches.length - 1] ?? null;
+    let k=this.findIdx;
+    for(const m of matches){if(k<m.n)return m;k-=m.n;}
+    return matches.at(-1)??null;
   }
 
-  findStep(d, rows, cx) {
+  findOccurrence(matches) {
+    const row=this.findRow(matches);
+    if(!row)return null;
+    const plan=this.history?.snapshot;
+    const at=plan?.found===matches?(plan.findOffsets.get(row.id)??0):matches.slice(0,matches.indexOf(row)).reduce((n,m)=>n+m.n,0);
+    const hit=row.hits[Math.max(0,Math.min(row.n-1,this.findIdx-at))];
+    return {...hit,id:row.id,source:row.source,logicalId:row.logicalId,ordinal:(row.logicalOffset??0)+Math.max(0,Math.min(row.n-1,this.findIdx-at))};
+  }
+
+  syncFind(plan) {
+    if(plan===this.findSnapshot||plan.findQuery!==this.findQuery())return;
+    this.findSnapshot=plan;
+    if(!plan.findQuery&&this.findCloseAnchor){
+      const id=this.findCloseAnchor;this.findCloseAnchor=null;
+      if(plan.positions.has(id)){this.anchor={id,until:Date.now()+3000};this.reanchor=true;this.pinned=false;}
+    }
+    const old=this.findSelected;
+    if(old){
+      let row=plan.findById.get(old.id),at=row?.hits.findIndex(h=>h.part===old.part&&h.start===old.start)??-1;
+      // Resizing can change a code/Markdown chunk boundary. Its logical
+      // occurrence within the original message part is unchanged.
+      if(old.logicalId){
+        const same=plan.findLogical.get(old.logicalId)?.find(m=>old.ordinal>=m.logicalOffset&&old.ordinal<m.logicalOffset+m.n);
+        if(same){row=same;at=old.ordinal-same.logicalOffset;}
+      }
+      if(at>=0){this.findIdx=plan.findOffsets.get(row.id)+at;if(row.id!==old.id||row.hits[at].start!==old.start)this.findJump=true;}
+      else {this.findIdx=Math.min(this.findIdx,Math.max(0,plan.findTotal-1));this.findJump=true;}
+    }else this.findIdx=0;
+    this.findSelected=this.findOccurrence(plan.found);
+    if(old?.id!==this.findSelected?.id||old?.part!==this.findSelected?.part||old?.start!==this.findSelected?.start){this.refreshFindLink(old?.id);this.refreshFindLink(this.findSelected?.id);}
+  }
+
+  // Only the current and previous retained link views need to repaint on a
+  // step. A keyboard press must not rebuild the entire prepared history.
+  refreshFindLink(id) {
+    const work=this.linkMarkdownWork,entry=work?.rows.get(id);
+    if(!entry||!entry.linked)return;
+    entry.ready=false;entry.token++;work.pending.add(entry);
+    if(work.cx)this.scheduleLinkedMarkdown(work.cx);
+  }
+
+  findStep(d,rows,cx) {
     if(this.history?.snapshot&&(!this.historyCurrent(this.history.snapshot)||this.history.snapshot.rows!==rows))return;
-    const matches = this.findMatches(rows);
-    const total = this.history?.snapshot?.found===matches?this.history.snapshot.findTotal:matches.reduce((n,m)=>n+m.n,0);
-    if (!total) return;
-    this.findIdx = (this.findIdx + d + total) % total;
-    this.findJump = true;
-    cx.notify();
+    const matches=this.findMatches(rows);
+    const total=this.history?.snapshot?.found===matches?this.history.snapshot.findTotal:matches.reduce((n,m)=>n+m.n,0);
+    if(!total)return;
+    const old=this.findSelected;
+    this.findIdx=(this.findIdx+d+total)%total;
+    this.findSelected=this.findOccurrence(matches);
+    this.refreshFindLink(old?.id);this.refreshFindLink(this.findSelected?.id);
+    this.findJump=true;cx.notify();
   }
 
-  // Matched words in bold, outside code (for the message's markdown).
-  findMark(text) {
-    const q = this.findQuery();
-    if (!q || /[*_`\[\]\\]/.test(q)) return text;
-    const re = new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gi");
-    return String(text).split(/(```[\s\S]*?```|`[^`\n]*`)/).map((part, i) => (i % 2 ? part : part.replace(re, (m) => `**${m}**`))).join("");
+  findFor(row) {
+    const f=row.find;
+    return f?.query===this.findQuery()&&f.hits.length?f:null;
+  }
+
+  findColors(t) {return {match:t.accent+"55",active:t.accent+"99"};}
+
+  findActive(row,f) {
+    const active=this.findSelected;
+    return active?.id===row.id?f.hits.find(h=>h.part===active.part&&h.start===active.start):null;
   }
 
   // The find bar: the box, how many, up and down, earlier messages, close.
@@ -2123,27 +2276,43 @@ export default class Chat extends View {
     const matches = this.findMatches(rows);
     const total = this.history?.snapshot?.found===matches?this.history.snapshot.findTotal:matches.reduce((n,m)=>n+m.n,0);
     const q = this.findQuery();
-    const count = !q ? "" : total ? `${Math.min(this.findIdx, total - 1) + 1} of ${total}` : WORDS.noMatches;
+    const plan=this.history?.snapshot;
+    const searching=!!q&&(!plan||plan.findQuery!==q);
+    const partial=Boolean(this.start)||Boolean(plan?.findLimited);
+    const count = !q ? "" : searching ? "Searching…" : total ? `${Math.min(this.findIdx, total-1)+1} of ${total}${plan?.findLimited?"+":""}${partial?" loaded":""}` : `${WORDS.noMatches}${partial?" loaded":""}`;
+    const current=!searching&&this.findSelected, context=current&&findContext(current.text,current,40);
+    const colors=this.findColors(t);
+    const matchingDiagram = this.findDiagram(rows, matches);
     const icon = (id, path, fn) => div().id(id).size(22).flex_none().flex().items_center().justify_center().rounded(6).cursor_pointer()
       .text_color(t.dim).hover((s) => s.bg(t.hover).text_color(t.foreground))
       .on_click((_e, cx) => { cx.stop_propagation(); fn(cx); cx.notify(); })
       .child(svg(path).size(14));
     const take = (fn) => (_e, cx) => { fn(cx); cx.stop_propagation(); cx.notify(); };
-    return h_flex().id("chat-find").flex_none().w_full().h(40).px(12).gap(8).items_center().border_b(1).border_color(t.border).bg(t.background)
+    return v_flex().id("chat-find").flex_none().w_full().border_b(1).border_color(t.border).bg(t.background)
       .key_context("chat_find")
       .on_action("chat_find_close", take((cx) => this.closeFind(cx)))
       .on_action("chat_find_next", take((cx) => this.findStep(1, rows, cx)))
       .on_action("chat_find_prev", take((cx) => this.findStep(-1, rows, cx)))
+      .on_action("chat_find_expand", take(() => this.expandFindDiagram(rows)))
+      .child(h_flex().w_full().h(40).px(8).gap(4).items_center()
       .child(svg("mods/chat/search.svg").size(14).flex_none().text_color(t.dim))
       .child(Input.new(this.findBox).flex_1().text_size(13).text_color(t.foreground))
       .child(div().flex_none().font_family(settings().font_family ?? "JetBrains Mono").text_size(11.5).text_color(t.dim).child(count))
-      .when(Boolean(this.start), (el) => el.child(h_flex().id("find-earlier").h(22).px(8).flex_none().items_center().rounded(6).cursor_pointer()
-        .text_size(12).text_color(t.muted).hover((s) => s.bg(t.hover).text_color(t.foreground))
-        .on_click((_e, cx) => { cx.stop_propagation(); this.loadEarlier(cx); })
-        .child(this.loadingEarlier ? "Loading…" : WORDS.searchEarlier)))
+
       .child(icon("find-prev", "mods/chat/chevron-up.svg", (cx) => this.findStep(-1, rows, cx)))
       .child(icon("find-next", "mods/chat/chevron-down.svg", (cx) => this.findStep(1, rows, cx)))
-      .child(icon("find-x", "mods/chat/x.svg", (cx) => this.closeFind(cx)));
+      .when(!!matchingDiagram,el=>el.child(div().id("find-expand-diagram").h(24).px(6).flex_none().rounded(6)
+        .cursor_pointer().text_size(12).text_color(t.accent).accessibility_label("Expand diagram (Ctrl+Enter)")
+        .hover(st=>st.bg(t.hover)).on_click(take(()=>this.expandFindDiagram(rows))).child("Expand ↗")))
+      .child(icon("find-x", "mods/chat/x.svg", (cx) => this.closeFind(cx))))
+      .when(!!context,el=>el.child(h_flex().w_full().px(10).pb(4).gap(4).items_center()
+        .child(div().flex_none().text_size(11).text_color(t.dim).child(current.source?"Source match":"Match"))
+        .child(div().flex_1().min_w(0).max_h(48).overflow_hidden().text_size(12).text_color(t.foreground).child(TextView.html("chat-find-context",`<span>${escapeHtml(context.before)}<mark color="${colors.active}">${escapeHtml(context.match.slice(0,160))}</mark>${escapeHtml(context.after)}</span>`).scrollable(false).selectable(true)))))
+      .when(Boolean(this.start)||Boolean(plan?.findLimited), el=>el.child(h_flex().w_full().px(10).pb(5).gap(6).items_center()
+        .child(div().flex_1().min_w(0).text_size(11).text_color(t.dim).child(plan?.findLimited?"Search limit reached; results are partial.":"Only loaded history is searched."))
+        .when(!!this.start,el=>el.child(div().id("find-earlier").px(6).py(3).rounded(5).flex_none().text_size(12).text_color(t.accent)
+          .when(!this.loadingEarlier&&(this.records?.length??0)<FIND_LIMITS.pageRecords, b=>b.cursor_pointer().hover(st=>st.bg(t.hover)).on_click((_e,cx)=>{cx.stop_propagation();this.loadEarlier(cx);}))
+          .child(this.loadingEarlier?"Loading…":(this.records?.length??0)>=FIND_LIMITS.pageRecords?"History limit":WORDS.searchEarlier)))));
   }
 
   // ---- spaces (#shop) -------------------------------------------------------------------------
@@ -2492,6 +2661,7 @@ export default class Chat extends View {
       this.saveSoon(cx);
     }
     if (what === "rewind") this.rewind(row, cx);
+    if (what === "discard") this.discardTurn(row, cx);
     if (what === "fork") this.fork(cx);
     if (what === "feature") this.featureFrom(row, cx);
     if (what === "react") { this.keepIcons = row.of; this.openReactions(row, this.hitLeft); }
@@ -2582,6 +2752,52 @@ export default class Chat extends View {
     cx.write_to_clipboard(text);
     this.copied = id;
     cx.timer.after(1500, (cx) => { if (this.copied === id) { this.copied = null; cx.notify(); } });
+  }
+
+  // The provider owns the destructive confirmation. We identify only the
+  // exact latest prompt of a single-prompt Codex turn, show the scope, then
+  // open the existing terminal (no keypress, restart or transcript edit).
+  discardTurn(row, cx) {
+    const candidate = this.kind === "codex" && this.historyMode === "paginated" && discardableTurn(this.records, agent.sessionOf("codex", this.path));
+    if (!candidate || candidate.id !== row.of || candidate.token !== row.discard) {
+      toast({ title: "That turn changed", body: "Select the latest prompt again.", level: "info" }); return;
+    }
+    if (!candidate.closed || !["idle", "done"].includes(this.status())) {
+      toast({ title: "Stop the agent first", body: "Wait until the turn has stopped, then select Discard mistaken turn again.", level: "info" }); return;
+    }
+    const pane = this.pickKey();
+    if (!pane || !this.t?.foreground?.pid || this.queue.length || this.pending.length || this.asks.length || openCard(this.addr)) {
+      toast({ title: "Cannot prepare discard yet", body: "Wait for sends and questions to settle, and withdraw any queued messages.", level: "info" }); return;
+    }
+    openOverlay({ mod: "confirm-chat", kind: "dialog", width: 500, height: 355, props: {
+      title: DISCARD_TITLE, detail: discardDetail(row.text), verb: "Open Terminal", cancel: "Cancel",
+      discard: { pane, address: this.addr, pid: this.t.foreground.pid, path: this.path, id: row.of, token: candidate.token }
+    } });
+  }
+
+  openDiscard(req, cx) {
+    cx.spawn(async (cx) => {
+      try {
+        const same = () => this.addr === req.address && this.path === req.path && this.kind === "codex" &&
+          !this.queue.length && !this.pending.length && !this.asks.length && !openCard(this.addr);
+        const check = async () => {
+          if (!same()) throw new Error("The conversation changed. Select its latest prompt again.");
+          const r = await hc(["get", req.address, "--json"]);
+          const t = JSON.parse(r.stdout || "null");
+          if (r.code !== 0 || t?.state !== "live" || t.foreground?.pid !== req.pid ||
+              !["idle", "done"].includes(t.status?.state)) throw new Error("The original agent is not idle.");
+        };
+        await check();
+        const f = await exec("sh", ["-c", FIND, "chat", "codex", String(req.pid)], { on: this.machine });
+        if (f.code || f.stdout.trim() !== req.path) throw new Error("The active session changed. Select the latest prompt again.");
+        const result = await this.log(["page", req.path, "999999999999999", String(PAGE)]);
+        const parsed = records(result.stdout);
+        const latest = !result.code && parsed.head[3] === "paginated" && discardableTurn(parsed.records, agent.sessionOf("codex", req.path));
+        if (!latest?.closed || latest.id !== req.id || latest.token !== req.token) throw new Error("That is no longer the latest completed or interrupted turn.");
+        await check();
+        this.toTerminal();
+      } catch (e) { toast({ title: "Discard not started", body: plainError(e), level: "error" }); }
+    });
   }
 
   // The CLI's own rewind, on that message as nearly as it can: Claude Code's /rewind lists
@@ -3350,7 +3566,7 @@ export default class Chat extends View {
   clearHistory(closed=false) {
     this.historyTask?.cancel();this.historyTask=null;
     this.history?.close();this.history=null;this.preparingHistory=null;
-    if(closed)this.historyClosed=true;
+    if(closed){this.historyClosed=true;this.findProjectionCache=null;this.findSnapshot=null;}
   }
 
   prepareHistory(t,cx) {
@@ -3387,8 +3603,10 @@ export default class Chat extends View {
   *historyPlan() {
     // A published Conversation is immutable. pull constructs its successor before
     // advancing offsets; streaming queues another pass and never restarts this one.
+    const q=this.findQuery();
+    if(q)this.findProjectionCache??={rows:new Map(),bytes:0};
     const host=Object.assign(Object.create(Object.getPrototypeOf(this)),this);
-    const st=this.status(),q=this.findQuery(),column=this.column();
+    const st=this.status(),column=this.column();
     host.status=()=>st;host.findQuery=()=>q;host.column=()=>column;
     host.pressScreen=this.pressScreen?.bind(this);host.toTerminal=this.toTerminal?.bind(this);
     host.pending=[];host.replied=[];host.rowRevisions=new Map();host.newsMemo=null;
@@ -3396,12 +3614,47 @@ export default class Chat extends View {
     for(const p of this.replied??[]){yield;host.replied.push({...p});}
     for(const [id,state] of this.rowRevisions??[]){yield;host.rowRevisions.set(id,{...state});}
     const plan=new PreparedHistory();plan.owner=this.history;plan.context=this.history.context;plan.scope=this.history.scope;
-    plan.generation=this.measureGen??0;this.preparingHistory=plan;
-    const rows=yield* host.rowPlan();
+    plan.generation=this.measureGen??0;plan.findQuery=q;this.preparingHistory=plan;
+    const base=yield* host.rowPlan();
+    let rows=base;
+    if(q){rows=[];
+    for(const row of base){
+      yield;
+      if(q&&row.kind==='agent'&&!row.clip&&row.text?.length>1100){
+        const f=host.findData(row,q);
+        if(f.projection&&f.hits.length&&!f.limited){
+          const chunks=markdownChunks(host.mentionsIn?.(row.text)??row.text,Math.max(320,Math.min(1100,Math.floor(host.width*1.4))),q);
+          if(chunks.length){
+            for(const [i,c] of chunks.entries()){
+              yield;
+              rows.push({...row,id:i?`${row.id}:find-md:${i}`:row.id,findRoot:row.id,text:c.source,findHtml:c.projection,
+                top0:i?false:row.top0,bot0:i<chunks.length-1?false:row.bot0,bar:i===chunks.length-1?row.bar:undefined});
+            }
+            continue;
+          }
+        }
+        row.find=f;
+      }
+      rows.push(row);
+    }}
     plan.rows=rows;plan.recent=new RecentIndex(rows.length);
     for(let i=0;i<rows.length;i++){
       yield;
-      const row=rows[i],key=host.key(row);
+      const row=rows[i];
+      if(q){
+        const f=host.findData(row,q,Math.max(0,FIND_LIMITS.matches-plan.findTotal));
+        row.find=f;plan.findLimited||=f.limited;
+        if(f.hits.length){
+          const match={id:row.id,index:i,n:f.hits.length,hits:f.hits,source:f.source};
+          if(row.findRoot){
+            let logical=plan.findLogical.get(row.findRoot);if(!logical){logical=[];plan.findLogical.set(row.findRoot,logical);}
+            const last=logical.at(-1);match.logicalId=row.findRoot;match.logicalOffset=last?last.logicalOffset+last.n:0;logical.push(match);
+          }
+          plan.findOffsets.set(row.id,plan.findTotal);plan.findById.set(row.id,match);
+          plan.found.push(match);plan.findTotal+=match.n;plan.findEnds.push(plan.findTotal);plan.lit.add(row.id);
+        }
+      }
+      const key=host.key(row);
       plan.keys.push(key);plan.index.set(row.id,row);plan.positions.set(row.id,i);
       const h=this.heights.get(key)??host.guess(row);
       plan.geometry.push(Number.isFinite(h)&&h>0?Math.min(h,40000):60);
@@ -3413,7 +3666,6 @@ export default class Chat extends View {
         if(row.peek)for(const path of row.peek.paths){yield;plan.paths.push(path);}
       }
       if(row.kind==="cardstrip"){plan.strips.push(row.s);if(row.first)plan.cards.push(i);}
-      if(q){const matches=host.findMatches([row]);if(matches.length){plan.found.push({...matches[0],index:i});plan.findTotal+=matches[0].n;plan.findEnds.push(plan.findTotal);plan.lit.add(row.id);}}
     }
     plan.hasArtifacts=false;
     for(const item of host.conv?.items??[]){yield;if(item.kind==="artifact")plan.hasArtifacts=true;}
@@ -3487,6 +3739,7 @@ export default class Chat extends View {
     // The session's first message: the first user item (news read out of it comes before it, #589).
     let first = -1;
     for (let i = 0; i < items.length; i++) { yield; if (items[i].kind === "user") { first = i; break; } }
+    const discard = this.kind === "codex" && this.historyMode === "paginated" && !this.ended && discardableTurn(this.records, agent.sessionOf("codex", this.path));
     for (let i = 0; i < items.length; i++) {
       yield;
       let x = items[i];
@@ -3531,9 +3784,10 @@ export default class Chat extends View {
         const from = out.length;
         if (x.replyTo) out.push({ kind: "replyref", id: `rr:${x.id}`, to: x.replyTo, of: x.id, side: "user" });
         // Rewind goes to a prompt; a /command isn't one.
-        const ps = [...mermaidParts(x.text)];
-        if (ps.some(isMermaid)) {
-          yield* prepareDiagrams(ps,x.id,this.diagramSources??new Set(),this.history?.snapshot?.index);
+        const query=this.findQuery(),fences=query?[...fencedParts(x.text)]:[];
+        const ps = fences.some(p=>p.type==='code'&&!isMermaid(p)&&containsFind(p.code,query))?fences:[...mermaidParts(x.text)];
+        if (ps.some(p=>p.type==='code')) {
+          yield* prepareDiagrams(ps,x.id,this.diagramSources??new Set(),this.history?.snapshot?.index,this.findQuery());
           const fold=this.foldOf(x,ps);
           for (const [n,p] of ps.entries()) {
             yield;
@@ -3541,16 +3795,16 @@ export default class Chat extends View {
             const clip=fold&&!fold.open?fold.clips.get(n):undefined;
             if (p.type==='md') {
               if (!p.text.trim()) continue;
-              const chunks=clip?[p.text]:messageChunks(p.text);
+              const chunks=clip?[p.text]:messageChunks(p.text,4000,query?literalRanges(p.text,query).ranges:[]);
               for (const [j,text] of chunks.entries()) { yield; out.push({...x,id:n||j?`${x.id}:u${n}-${j}`:x.id,text,from:n||j?undefined:x.from,images:0,clip}); }
-            } else out.push(...codeRows(p,x.id,n,clip,'user'));
+            } else out.push(...codeRows(p,x.id,n,clip,'user',this.findQuery(),this.width));
           }
           if(fold)out.push({kind:'fold',id:`fold:${x.id}`,of:x.id,open:fold.open});
           if(x.images>(x.paths?.length??0))out.push({...x,id:`${x.id}:images`,text:'',from:undefined});
         } else {
           const fold=this.foldOf(x,[{type:'md',text:x.text??''}]);
           if(fold&&!fold.open)out.push({...x,clip:fold.clips.get(0)});
-          else for(const [n,text] of messageChunks(x.text).entries()){yield;out.push({...x,id:n?`${x.id}:u${n}`:x.id,text});}
+          else for(const [n,text] of messageChunks(x.text,4000,query?literalRanges(x.text,query).ranges:[]).entries()){yield;out.push({...x,id:n?`${x.id}:u${n}`:x.id,text});}
           if(fold)out.push({kind:'fold',id:`fold:${x.id}`,of:x.id,open:fold.open});
         }
         const chips = this.mentioned(x.text);
@@ -3559,7 +3813,8 @@ export default class Chat extends View {
         // Its actions in a band row under it (the row above draws them too: band()).
         if (x.text) {
           const bar = { id: `b:${x.id}`, of: x.id, target: x.text, text: x.text, side: "user", at: x.at, pills: this.pills(x.id),
-            acts: bandActs("user", x.text, { from: x.from }) };
+            acts: bandActs("user", x.text, { from: x.from, discard: discard?.id === x.id && !(i === first && ft) }),
+            ...(discard?.id === x.id && !(i === first && ft) ? { discard: discard.token } : {}) };
           out[out.length - 1] = { ...out[out.length - 1], bar };
           out.push({ kind: "band", id: `ab:${x.id}`, bar });
         }
@@ -3571,7 +3826,7 @@ export default class Chat extends View {
         // pictures under its words as the person's are, each video a line that opens it (the window can't play one).
         const md = mediaIn(x.text, { cwd: this.t?.foreground?.cwd ?? this.t?.cwd ?? null, home: this.machine ? null : home() });
         const ps = md.text || !md.media.length ? parts(md.text || x.text) : [];
-        yield* prepareDiagrams(ps,x.id,this.diagramSources??new Set(),this.history?.snapshot?.index);
+        yield* prepareDiagrams(ps,x.id,this.diagramSources??new Set(),this.history?.snapshot?.index,this.findQuery());
         const first = out.length;
         // A long reply: its first lines (the part where they end cut off there), then Show more.
         const fold = ps.length ? this.foldOf(x, ps) : null;
@@ -3581,7 +3836,7 @@ export default class Chat extends View {
           yield;
           if (fold && !fold.open && n > fold.last) continue;
           if (p.type === "md") out.push({ kind: "agent", id: `${x.id}:${n}`, text: p.text, clip: clip(n) });
-          else out.push(...codeRows(p,x.id,n,clip(n),'agent'));
+          else out.push(...codeRows(p,x.id,n,clip(n),'agent',this.findQuery(),this.width));
         }
         if (fold) out.push({ kind: "fold", id: `fold:${x.id}`, of: x.id, open: fold.open });
         const pics = md.media.filter((m) => m.kind === "image").map((m) => m.path);
@@ -3638,11 +3893,11 @@ export default class Chat extends View {
   // clips: part → px its words show, last: the last part shown }. Its parts' heights are
   // estimated from their words.
   foldOf(x, ps) {
-    const q = this.findQuery().toLowerCase();
-    if (q && String(x.text).toLowerCase().includes(q)) return null;
+    const q = this.findQuery();
     const w = Math.max(240, Math.floor(Math.min(this.width, this.column()) * 0.8)) - 24;
-    const est = ps.map((p) => (p.type === "md" ? wrapLines(p.text, w) * LINE_H : p.preview ? 50 + Math.min(FLOW_VIEW_HEIGHT, p.drawing.height) : 34 + 16 + (p.error?44:0) + (p.display??p.code).split("\n").length * 19));
+    const est = ps.map((p) => (p.type === "md" ? wrapLines(p.text, w) * LINE_H : p.preview ? 52 + chartHeight(p.drawing,diagramAvailable(this.width,this.column(),x.kind)) : 34 + 16 + (p.error?44:0) + (p.display??p.code).split("\n").length * 19));
     if (est.reduce((a, b) => a + b, 0) <= FOLD_TALL * LINE_H) return null;
+    if(q&&(containsFind(x.text,q)||ps.some(p=>p.type==='md'&&markdownRanges(this.projectFind(p.text),q,1).hits.length||p.drawing&&diagramLabelTexts(p.drawing).some(label=>containsFind(label,q)))))return null;
     if (this.unfolded.has(x.id)) return { open: true, clips: new Map(), last: ps.length - 1 };
     const clips = new Map();
     let left = FOLD * LINE_H, last = ps.length - 1;
@@ -3747,12 +4002,12 @@ export default class Chat extends View {
   // What a row's height depends on: measured once per key and width.
   key(x) {
     this.rowRevisions ??= new Map();
-    const content=x.text??x.code??'', previous=this.rowRevisions.get(x.id);
+    const content=x.findHtml?.html??x.text??x.code??'', previous=this.rowRevisions.get(x.id);
     if(!previous||previous.content!==content)this.rowRevisions.set(x.id,{content,revision:(previous?.revision??-1)+1,contentRevision:(previous?.contentRevision??-1)+1});
     const revision=this.rowRevisions.get(x.id).revision;
     const q = this.findQuery();
-    const found = q && String(x.text ?? x.code ?? "").toLowerCase().includes(q.toLowerCase()) ? `|f:${q}` : "";
-    const open = (x.kind === "tools" || x.kind === "brief") && this.opened.has(x.id);
+    const found = q && x.find?.hits.length ? `|f:${q}` : "";
+    const open = (x.kind === "tools" || x.kind === "brief") && (this.opened.has(x.id)||x.kind==="brief"&&!!x.find?.hits.length);
     const shown = open && x.steps ? x.steps.filter((s) => this.results.get(s.id) != null).length : 0;
     const key = `${x.id}|r${revision}|${x.kind}${x.closed ? `.${x.closed}` : ""}|${open ? `o${x.steps?.length ?? 1}.${shown}` : ""}|${x.text?.length ?? x.code?.length ?? 0}|${x.from ? 1 : 0}${x.failed ? 1 : 0}${x.late ? 1 : 0}${x.waiting ? 1 : 0}${x.images ? 1 : 0}${x.files?.length ?? 0}|${x.paths?.length ?? 0}${x.paths?.every((p) => this.views[p]) ? "v" : ""}|${(x.pills ?? []).map((p) => p.emoji + (p.you ? 1 : 0) + (p.agent ? 1 : 0)).join("")}|${x.bar ? "b" : ""}${x.kind === "artifact" ? `|a${x.version ?? ""}${x.line ? "l" : ""}${x.pending ? "p" : ""}${x.peek ? `k${x.peek.paths.filter((p) => this.views[p]).length}.${x.peek.text.length}` : ""}` : ""}${x.kind === "tasknews" ? `|${x.accept ? "a" : ""}` : ""}${x.kind === "cardstrip" ? `|cs${x.sig}${x.first ? "F" : ""}${x.last ? "L" : ""}` : ""}|${x.clip ? `c${x.clip}` : ""}${x.open ? "o" : ""}${x.kind === "day" ? x.text : ""}|${x.top0 ? "T" : ""}${x.bot0 ? "B" : ""}${x.h ?? ""}${found}${x.error?`|err:${x.error}`:""}`;
     const state = this.rowRevisions.get(x.id);
@@ -3775,14 +4030,14 @@ export default class Chat extends View {
     switch (x.kind) {
       case "end": return 10;
       case "top": case "loading": case "note": return 36;
-      case "brief": return this.opened.has(x.id) ? (x.who ? 46 + lines(x.text, w - 50) * 20 : 32 + lines(x.text, w) * 19) : 20;
+      case "brief": return (this.opened.has(x.id)||!!x.find?.hits.length) ? (x.who ? 46 + lines(x.text, w - 50) * 20 : 32 + lines(x.text, w) * 19) : 20;
       case "replyref": return 22;
       case "chips": return 30;
       case "imgs": return this.fitThumbs(x.paths).h + 8;
       case "video": return 24;
       case "codehead": return 34;
-      case "code": return 16 + (x.error?44:0) + (x.clip ?? String(x.display??x.code).split("\n").length * 19);
-      case "diagram": return 16 + chartHeight(x.drawing,diagramAvailable(this.width,this.column(),x.side));
+      case "code": return 16 + (x.error?44:0) + (x.clip ?? lines(x.display??x.code,w-24) * 19);
+      case "diagram": return 18 + (x.bot0?0:6) + chartHeight(x.drawing,diagramAvailable(this.width,this.column(),x.side));
       case "fold": case "queued": return 26;
       case "day": return 18;
       case "user": case "pending": return 30 + (x.clip??lines(x.text, w * 0.8 - 24) * 20) + (x.from ? 17 : 0) + ((x.images || x.files?.length) ? 20 : 0);
@@ -3826,7 +4081,7 @@ export default class Chat extends View {
   bar(bar, t, bottom, hover) {
     const done = this.copied === bar.id;
     const icon = (a) => div().size(ACT).flex().items_center().justify_center().rounded(5).cursor_pointer()
-      .accessibility_label(a === "feature" ? "Create feature from this reply" : a)
+      .accessibility_label(a === "feature" ? "Create feature from this reply" : a === "discard" ? "Discard mistaken turn…" : a)
       .text_color(a === "feature" ? t.accent : done && a === "copy" ? t.foreground : t.dim).hover((s) => s.bg(t.hover).text_color(t.foreground))
       .child(svg(`mods/chat/${done && a === "copy" ? "check" : ICONS[a]}.svg`).size(14));
     const pill = (p) => h_flex().w(PILL).h(PILL_H).gap(4).items_center().justify_center().rounded(PILL_H / 2).border_1().cursor_pointer()
@@ -3955,7 +4210,7 @@ export default class Chat extends View {
         if(!dirty)continue;
         Object.assign(entry,{revision,contentRevision,kind:row.kind,clip:row.clip,open,unfold,who,presentation:work.presentation,ready:false,token:entry.token+1});
         if(textChanged){entry.scan=null;entry.linked=null;}
-        if(['user','pending','agent','brief','ask'].includes(row.kind)&&(row.kind!=='brief'||open))work.pending.add(entry);
+        if(['user','pending','agent','brief','ask'].includes(row.kind)&&(row.kind!=='brief'||open||!!row.find?.hits.length))work.pending.add(entry);
         else {work.pending.delete(entry);this.retireLinkedMarkdown(work,entry);}
       }else{
         const next=cursor.sweep.next();
@@ -3999,8 +4254,9 @@ export default class Chat extends View {
         continue;
       }
       if(entry.linked===null){
+        if((entry.row.findHtml?.html??entry.row.find?.projection?.html)?.includes("<a href="))entry.linked=true;
         entry.scan??=chatLinkScan(entry.row.text);
-        chars+=scanChatLink(entry.scan,4096-chars);entry.linked=entry.scan.result;
+        if(entry.linked===null){chars+=scanChatLink(entry.scan,4096-chars);entry.linked=entry.scan.result;}
       }
       if(entry.linked===null){work.pending.add(entry);continue;}
       if(!entry.linked){
@@ -4022,7 +4278,7 @@ export default class Chat extends View {
       const views=new Map(),previous=entry.views,created=new Map();
       for(const [id,p] of collected){
         const old=previous?.get(id);
-        const view=old&&old.epoch===work.epoch&&old.text===p.text&&old.key===p.key?old.view:cx.new(LinkedMarkdown,p);
+        const view=old&&old.epoch===work.epoch&&old.text===p.text&&old.format===p.format&&old.key===p.key?old.view:cx.new(LinkedMarkdown,p);
         if(view!==old?.view)created.set(id,{view});
         views.set(id,{...p,view,epoch:work.epoch,token});
       }
@@ -4043,17 +4299,31 @@ export default class Chat extends View {
     if(!paused||work.retired.size||work.discarded.size)this.scheduleLinkedMarkdown(cx);
   }
 
-  linkedMarkdownView(row,id,text) {
+  linkedMarkdownView(row,id,text,format="markdown") {
     const work=this.linkMarkdownWork,entry=work?.rows.get(row.id),kept=entry?.views?.get(id);
     return entry?.ready&&kept?.epoch===work.epoch&&kept.token===entry.token&&kept.id===id&&
-      kept.text===text&&kept.key===(this.pickKey()??this.areaKey())&&this.linkedMarkdownCurrent(work,entry)?kept.view:null;
+      kept.text===text&&kept.format===format&&kept.key===(this.pickKey()??this.areaKey())&&this.linkedMarkdownCurrent(work,entry)?kept.view:null;
   }
 
   rowBare(x, t, pre = "") {
+    const f=this.findFor(x);
+    const colors=this.findColors(t),active=f&&this.findActive(x,f);
+    const plainHtml=(text,hits)=>findSpans(text,hits).map(sp=>sp.match?`<mark color="${sp.match===active?colors.active:colors.match}">${escapeHtml(sp.text)}</mark>`:escapeHtml(sp.text)).join('');
+    const plainChild=(text,id)=>f&&!f.projection&&!f.source&&f.hits[0]?.text&&String(text).startsWith(f.hits[0].text)
+      ?TextView.html(`${pre}find-plain-${id}`,`<span>${plainHtml(String(text),f.hits)}</span>`).scrollable(false).selectable(true):text;
+    const sourceContext=()=>{
+      const hit=active??f.hits[0], context=findContext(hit.text,hit,32);
+      return div().mt(4).p(4).h(52).overflow_hidden().rounded(5).border_1().border_color(t.border).text_size(11.5).text_color(t.foreground)
+        .child(div().text_color(t.dim).child(f.source?"Source match":"Match in formatted text"))
+        .child(TextView.html(`${pre}source-match-${x.id}`,`<span>${escapeHtml(context.before)}<mark color="${hit===active?colors.active:colors.match}">${escapeHtml(context.match.slice(0,160))}</mark>${escapeHtml(context.after)}</span>`).scrollable(false).selectable(true));
+    };
     const markdown=(id,text)=>{
-      if(this.collectMarkdown){this.collectMarkdown.set(id,{id,text,key:this.pickKey()??this.areaKey()});return div();}
-      const kept=this.linkedMarkdownView(x,id,text);
-      return kept?div().flex_none().child(kept):TextView.markdown(id,text).scrollable(false).selectable(true).flex_none();
+      const html=f?.projection&&!f.projection.limited?markedHtml(f.projection,f.hits,this.findColors(t),this.findActive(x,f)):x.findHtml?.html??null;
+      const format=html?'html':'markdown', content=html??text;
+      if(this.collectMarkdown){this.collectMarkdown.set(id,{id,text:content,format,key:this.pickKey()??this.areaKey()});return div();}
+      const kept=this.linkedMarkdownView(x,id,content,format);
+      const view=kept?div().flex_none().child(kept):TextView[format](id,content).scrollable(false).selectable(true).flex_none();
+      return (f?.source||f?.contextOnly)&&!this.collectMarkdown?v_flex().child(view).child(sourceContext()):view;
     };
     // A readable column, centered when the pane is wide.
     // At a block's edge a row drops its outer room there: spaced() puts the gap between blocks.
@@ -4067,13 +4337,13 @@ export default class Chat extends View {
       // accent's own text color on the full accent was too faint on light accents).
       div().max_w(most).flex_none().px(12).py(8).rounded(12).bg(t.accent + "33").border_1().border_color(t.accent + "4d")
         .text_color(t.foreground).when(faded, (el) => el.opacity(0.55))
-        .child(x.clip?this.clipped(t.accent+"33",x.clip,markdown(`${pre}chat-md-${x.id}`,this.findMark(typed(this.mentionsIn(shownLines(text,x.clip,most-24))))||" ").flex_none())
-          :markdown(`${pre}chat-md-${x.id}`, this.findMark(typed(this.mentionsIn(text))) || " ").flex_none()));
+        .child(x.clip?this.clipped(t.accent+"33",x.clip,markdown(`${pre}chat-md-${x.id}`,typed(this.mentionsIn(shownLines(text,x.clip,most-24)))||" ").flex_none())
+          :markdown(`${pre}chat-md-${x.id}`, typed(this.mentionsIn(text)) || " ").flex_none()));
     const theirs = (text) => h_flex().w_full().justify_start().child(
       div().max_w(most).flex_none().px(12).py(8).rounded(12).bg(t.raised).text_color(t.foreground)
         // Folded: only the lines that show (shownLines()), as their own view
-        .child(x.clip ? this.clipped(t.raised, x.clip, markdown(`${pre}chat-md-fold-${x.id}`, this.findMark(this.mentionsIn(shownLines(text, x.clip, most - 24))) || " ").flex_none())
-          : markdown(`${pre}chat-md-${x.id}`, this.findMark(this.mentionsIn(text)) || " ").flex_none()));
+        .child(x.clip ? this.clipped(t.raised, x.clip, markdown(`${pre}chat-md-fold-${x.id}`, this.mentionsIn(shownLines(text, x.clip, most - 24)) || " ").flex_none())
+          : markdown(`${pre}chat-md-${x.id}`, this.mentionsIn(text) || " ").flex_none()));
     const fileLine = (label) => h_flex().gap(5).items_center().text_size(12).text_color(t.dim)
       .child(svg("mods/chat/paperclip.svg").size(12).flex_none()).child(div().truncate().child(label));
     switch (x.kind) {
@@ -4112,7 +4382,7 @@ export default class Chat extends View {
           .child(div().flex_none().font_medium().text_color(t.foreground).child(k.ref ?? `#${k.id}`))
           .child(div().min_w(0).truncate().text_color(t.muted).child(k.title)))), 18, 3);
       case "brief": {
-        const open = this.opened.has(x.id);
+        const open = this.opened.has(x.id)||!!f;
         // Agent to agent, as a group chat (SHEP-12, SHEP-27): a message another agent sent ("Assistant on Mac mini ·
         // Home") or this one sent another ("Assistant → SHEP-4"). One quiet row like a news line: a speech bubble in the
         // accent, who (→ whom) a step stronger, its first words, its time; open, the sender's initial in place of the
@@ -4144,10 +4414,14 @@ export default class Chat extends View {
         return col(h_flex().w_full().py(QUIET_PY).gap(6).items_center().text_size(12.5).text_color(t.muted).rounded(8).cursor_pointer()
           .hover((s) => s.bg(t.hover).text_color(t.foreground))
           .child(svg(x.pics ? "mods/chat/paperclip.svg" : "mods/chat/play.svg").size(12).flex_none())
-          .child(div().min_w(0).truncate().child(x.pics ? x.text : videoLine(x.text))), 18, 2);
+          .child(div().min_w(0).truncate().child(plainChild(x.pics ? x.text : videoLine(x.text),x.id))), 18, 2);
       case "imgs":
-        return col(h_flex().w_full().gap(THUMB_GAP).items_start().when(!x.left, (el) => el.justify_end()).when(Boolean(x.left), (el) => el.justify_start()).when(Boolean(x.faded), (el) => el.opacity(0.55))
-          .children(this.fitThumbs(x.paths).boxes.map((b) => this.shot(t, b).cursor_pointer())), 18, 4);
+        return col(v_flex().w_full().gap(3)
+          .child(h_flex().w_full().gap(THUMB_GAP).items_start().when(!x.left, (el) => el.justify_end()).when(Boolean(x.left), (el) => el.justify_start()).when(Boolean(x.faded), (el) => el.opacity(0.55))
+            .children(this.fitThumbs(x.paths).boxes.map((b) => this.shot(t, b).cursor_pointer())))
+          .when(!!f?.imageNames,el=>el.children(x.paths.flatMap((path,part)=>{
+            const hits=f.hits.filter(h=>h.part===part);return hits.length?[TextView.html(`${pre}find-file-${x.id}-${part}`,`<span>${plainHtml(String(path).split('/').pop(),hits)}</span>`).scrollable(false).selectable(true)]:[];
+          }))),18,4);
       case "agent":
         return pad(theirs(x.text));
       case "codehead": {
@@ -4157,7 +4431,7 @@ export default class Chat extends View {
           .child(div().flex_1().min_w(0).truncate().text_size(12).text_color(t.dim).child(x.lang || "code"));
         if(x.diagram) bar.child(div().w(DIAGRAM_SOURCE_W).h(22).flex_none().flex().items_center().justify_center()
           .rounded(6).cursor_pointer().text_size(12).text_color(t.muted).hover(st=>st.bg(t.hover).text_color(t.foreground))
-          .child(x.source?FLOW_WORDS.preview:FLOW_WORDS.source));
+          .child(x.findSource?"Search source":x.source?FLOW_WORDS.preview:FLOW_WORDS.source));
         bar.child(h_flex().when(x.diagram,el=>el.w(DIAGRAM_COPY_W).justify_center()).h(22).px(6).gap(5).items_center().rounded(6).cursor_pointer().text_size(12).text_color(done ? t.foreground : t.dim)
             .hover((st) => st.bg(t.hover).text_color(t.foreground))
             .child(svg(`mods/chat/${done ? "check" : "copy"}.svg`).size(12).flex_none()).child(done ? "Copied" : "Copy"));
@@ -4165,13 +4439,24 @@ export default class Chat extends View {
       }
       case "diagram": {
         const view=div().w_full().px(12).py(8).rounded_b(8).bg(t.surface).border_1().border_color(x.side==='user'?t.accent+'4d':t.border)
-          .child(nativeFlowchart(x.drawing,diagramAvailable(this.width,this.column(),x.side),t,`${pre}flow-${x.id}`,pre.startsWith('m')||!!this.collectMarkdown));
+           .child(nativeFlowchart(x.drawing,diagramAvailable(this.width,this.column(),x.side),t,`${pre}flow-${x.id}`,pre.startsWith('m')||!!this.collectMarkdown))
+          .when(!!f?.labels,el=>el.child(v_flex().pt(4).gap(3).text_size(12).text_color(t.foreground)
+            .child(div().text_size(11).text_color(t.dim).child("Matching diagram labels"))
+            .children(diagramLabelTexts(x.drawing).flatMap((label,part)=>{const hits=f.hits.filter(h=>h.part===part);return hits.length?[TextView.html(`${pre}label-${x.id}-${part}`,`<span>${plainHtml(label,hits)}</span>`).scrollable(false).selectable(true)]:[];}))));
         return col(x.side==='user'?h_flex().w_full().justify_end().child(div().w_full().max_w(most).child(view)):view,18,0).pb(x.bot0?0:6);
       }
       case "code": {
         // folded, only the lines that show and one under the fade (as shownLines())
         const all = (x.display??x.code).split("\n");
-        const lines = v_flex().w_full().flex_none().children((x.clip ? all.slice(0, Math.ceil(x.clip / 19) + 1) : all).map((l) => div().min_h(19).child(l || " ")));
+        if(x.findChunk&&all.at(-1)==="")all.pop();
+        let offset=0;
+        const colors=this.findColors(t),active=f&&this.findActive(x,f);
+        const lines = v_flex().w_full().flex_none().children((x.clip ? all.slice(0, Math.ceil(x.clip / 19) + 1) : all).map(l=>{
+          const start=offset;offset+=l.length+1;
+          if(!f||!l)return div().min_h(19).child(l||" ");
+          const spans=findSpans(l,f.hits,start);
+          return h_flex().flex_wrap().min_h(19).children(spans.map(sp=>div().when(!!sp.match,el=>el.text_bg(sp.match===active?colors.active:colors.match)).child(sp.text)));
+        }));
         const view=div().w_full().px(12).py(8).rounded_b(8).bg(t.surface).border_1().border_color(x.side==='user'?t.accent+'4d':t.border).overflow_hidden()
           .when(Boolean(x.error),el=>el.child(div().pb(8).text_size(12).text_color(t.muted).child(x.error)))
           .child(div().w_full().font_family(settings().font_family ?? "JetBrains Mono").text_size(12.5).text_color(t.foreground)
@@ -4202,12 +4487,12 @@ export default class Chat extends View {
         // An Autopilot wake: why it woke and, once it shows, how it went; quiet, as a closed ask.
         return col(h_flex().w_full().py(QUIET_PY).gap(6).items_center().text_size(12).text_color(t.dim)
           .child(svg("mods/chat/rocket.svg").size(12).flex_none())
-          .child(div().min_w(0).truncate().child(x.text)), 18, 0);
+          .child(div().min_w(0).truncate().child(plainChild(x.text,x.id))), 18, 0);
       case "askend":
         // A closed ask: what it asked and how it went, quiet (the card itself is gone).
         return col(h_flex().w_full().py(QUIET_PY).gap(6).items_center().text_size(12).text_color(t.dim)
           .child(svg("mods/chat/check.svg").size(12).flex_none())
-          .child(div().min_w(0).truncate().child(x.text)), 18, 0);
+          .child(div().min_w(0).truncate().child(plainChild(x.text,x.id))), 18, 0);
       case "artifact": {
         const icon = (n) => svg("mods/artifacts/artifacts.svg").size(n).flex_none();
         // A "Published" line opens its artifact (clickRow): the pointer and a hover say so.
@@ -4220,7 +4505,7 @@ export default class Chat extends View {
         const head = h_flex().w_full().gap(10).items_center()
           .child(div().size(32).flex_none().flex().items_center().justify_center().rounded(8).bg(t.raised).text_color(t.muted).child(icon(16)))
           .child(v_flex().flex_1().min_w(0).gap(1)
-            .child(div().font_medium().text_color(t.foreground).truncate().child(x.title))
+            .child(div().font_medium().text_color(t.foreground).truncate().child(plainChild(x.title,x.id)))
             .child(div().text_size(12).text_color(t.dim).child(artifactLine(x.version))))
           .child(h_flex().h(28).px(10).flex_none().items_center().rounded(7).border_1().border_color(t.input).bg(t.background)
             .text_size(12.5).font_medium().text_color(t.foreground).child("Open"));
@@ -4246,7 +4531,7 @@ export default class Chat extends View {
           .child(h_flex().w(14).h(14).flex_none().items_center().justify_center().child(mark))
           .child(div().flex_none().font_medium().text_color(t.muted).child(x.ref))
           .child(div().flex_none().text_color(x.live ? red() : t.muted).child(x.what))
-          .when(Boolean(x.text), (el) => el.child(div().flex_none().child("·")).child(div().flex_1().min_w(0).truncate().child(x.text)))
+          .when(Boolean(x.text), (el) => el.child(div().flex_none().child("·")).child(div().flex_1().min_w(0).truncate().child(plainChild(x.text,x.id))))
           .when(!x.text, (el) => el.child(div().flex_1()))
           // The Tasks panel's own Accept (ui.js: primary, 20 in a row's line); its press comes
           // through clickRow().
@@ -4260,7 +4545,7 @@ export default class Chat extends View {
             .child(x.closed === "answered" ? WORDS.askedAnswered : x.closed ? WORDS.askedClosed : WORDS.asked))
           .child(div().text_color(x.closed ? t.muted : t.foreground).child(markdown(`${pre}chat-md-${x.id}`, x.text))));
       case "error":
-        return pad(div().w_full().text_size(12.5).text_color(t.blocked).child(x.text));
+        return pad(div().w_full().text_size(12.5).text_color(t.blocked).child(f?TextView.html(`${pre}error-${x.id}`,`<span>${plainHtml(x.text,f.hits)}</span>`).scrollable(false).selectable(true):x.text));
       case "tools": {
         const open = this.opened.has(x.id);
         return col(v_flex().w_full().px(6).py(QUIET_PY).rounded(7).cursor_pointer()
@@ -4300,12 +4585,19 @@ export default class Chat extends View {
     } else if (row.kind === "codehead") {
       const off=this.edges().right-4-(this.press?.x??-1);
       if(row.diagram&&off>=DIAGRAM_COPY_W&&off<=DIAGRAM_COPY_W+DIAGRAM_SOURCE_W){
+        if(row.findSource)return;
         this.historyRevision=(this.historyRevision??0)+1;
         const sources=this.diagramSources??=new Set();
         if(sources.has(key))sources.delete(key);
         else { sources.add(key); if(sources.size>96)sources.delete(sources.values().next().value); }
         this.pinned=false;
       }else this.copy(row.code,row.id,cx);
+    }
+    else if (row.kind === "diagram") {
+      // The preview and its Expand action are one list-routed target, not a
+      // nested scrolling/focus surface. Ignore the blank beside a user card.
+      const right=this.edges().right, left=right-diagramCardWidth(this.width,this.column(),row.side);
+      if(!this.pressMoved&&this.press?.x>=left&&this.press.x<=right)this.openDiagram(row);
     }
     else if (row.kind === "queued" && this.kind === "claude" && !this.steering) this.sendQueuedNow(cx);
     else if (row.kind === "pending" && row.failed) { const p = this.pending.find((x) => x.id === row.id); if (p?.msg) this.retry(p, cx); }
@@ -4327,7 +4619,7 @@ export default class Chat extends View {
       if (c?.kind === "input") (c.state ?? null)?.focus();
       else c?.fn?.(cx);
     }
-    else if (row.kind === "brief") { this.historyRevision=(this.historyRevision??0)+1; if (this.opened.has(key)) this.opened.delete(key); else this.opened.add(key); }
+    else if (row.kind === "brief") { if(this.findFor(row))return; this.historyRevision=(this.historyRevision??0)+1; if (this.opened.has(key)) this.opened.delete(key); else this.opened.add(key); }
     else if (row.kind === "fold") {
       // Only on its words (as rowBare() draws them: the column's edge, the bubble's padding in).
       const off = (this.press?.x ?? -1) - this.edges().left - 12;
@@ -4646,8 +4938,9 @@ export default class Chat extends View {
         .child(ghost(`queued-now-${m.id}`, WORDS.sendNow,(cx) => this.sendQueued(m, cx)))
         .child(ghost(`queued-edit-${m.id}`, "Edit", (cx) => this.editQueued(m, cx)))
         .child(div().id(`queued-x-${m.id}`).size(22).flex_none().flex().items_center().justify_center().rounded(6).cursor_pointer().text_color(t.dim)
+          .accessibility_label("Withdraw unsent message")
           .hover((s) => s.bg(t.hover).text_color(t.foreground))
-          .on_click((_e, cx) => { cx.stop_propagation(); this.queue = this.queue.filter((x) => x !== m); this.saveSoon(cx); cx.notify(); })
+          .on_click((_e, cx) => { cx.stop_propagation(); if (this.takeQueued(m)) this.saveSoon(cx); cx.notify(); })
           .child(svg("mods/chat/x.svg").size(12)))));
   }
 
@@ -4824,6 +5117,26 @@ export default class Chat extends View {
       }
       cx.notify();
     }));
+  }
+
+  findDiagram(rows,matches=this.findMatches(rows)) {
+    const match=this.findRow(matches),row=match&&rows[match.index];
+    return row?.result?.drawing?row:null;
+  }
+
+  expandFindDiagram(rows) {
+    if(this.history?.snapshot&&(!this.historyCurrent(this.history.snapshot)||this.history.snapshot.rows!==rows))return;
+    const row=this.findDiagram(rows);
+    if(row)this.openDiagram(row);
+  }
+
+  openDiagram(row) {
+    const drawing=row.drawing??row.result?.drawing;
+    if(!drawing)return;
+    // The modal owns its input and camera; the conversation/list remains where
+    // it is. Pass prepared plain geometry, not a second parsing/layout job.
+    openOverlay({mod:"chat-flowchart",kind:"dialog",modal:true,frame:"none",width:0.92,height:0.9,
+      props:{drawing,code:row.code}});
   }
 
   // The viewer (mods/chat-image) on these images, from the i-th.
@@ -5186,9 +5499,15 @@ export default class Chat extends View {
     // Never over a text selection (GitHub #916, SHEP-192): a drag over the messages selects them, and the box taking the
     // keyboard then made Ctrl+C copy nothing. The timers check again when they fire: a drag can start after they're set.
     const dialog = dialogHolds(shared(KEY_HOLDER));
+    if(this.finding){
+      if(paneFocused&&!dialog&&!this.pressMoved&&!this.wasFocused)cx.timer.after(0,()=>{
+        if(this.finding&&!this.historyClosed&&!this.pressMoved&&!dialogHolds(shared(KEY_HOLDER)))this.findBox.focus();
+      });
+      return;
+    }
     if (paneFocused && showsBox && !dialog && !this.pressMoved && (!this.wasFocused || !this.hadBox)) {
-      cx.timer.after(0, () => { if (!this.pressMoved && !dialogHolds(shared(KEY_HOLDER))) this.box.focus(); });
-      cx.timer.after(600, () => { if (!this.pressMoved && !dialogHolds(shared(KEY_HOLDER))) this.box.focus(); });
+      cx.timer.after(0, () => { if (!this.finding && !this.pressMoved && !dialogHolds(shared(KEY_HOLDER))) this.box.focus(); });
+      cx.timer.after(600, () => { if (!this.finding && !this.pressMoved && !dialogHolds(shared(KEY_HOLDER))) this.box.focus(); });
     }
     // The pane focused again (a command, a click on its header) can leave the box without the
     // keyboard: give it back, unless the person just pressed something inside the chat.
@@ -5267,6 +5586,11 @@ export default class Chat extends View {
     if (rr && pk && rr.pane === pk && rr.at !== this.restartReqAt && Date.now() - rr.at < 5000) {
       this.restartReqAt = rr.at;
       cx.timer.after(0, (cx) => { this.applyPick(rr.pick, cx); cx.notify(); });
+    }
+    const dr = shared("chat.discardreq");
+    if (dr && pk && dr.pane === pk && dr.at !== this.discardReqAt && Date.now() - dr.at < 10000) {
+      this.discardReqAt = dr.at;
+      cx.timer.after(0, (cx) => this.openDiscard(dr, cx));
     }
     // The header's Terminal on a chat with no agent yet (pane-chat): start it, then show its
     // terminal. Shared "chat.startreq" = { pane, at }.
@@ -5391,6 +5715,8 @@ export default class Chat extends View {
     if (this.phase === "unsupported") return root.child(this.notice(t, this.resumeMissing ? "Couldn’t resume this conversation" : WORDS.unsupported,
       this.resumeMissing ? "Codex couldn’t find the saved session in its original account. Open Terminal to inspect the error." : WORDS.unsupportedBody, [open]));
     if (this.phase === "none") return root.child(this.notice(t, WORDS.notFound, WORDS.notFoundBody, [open]));
+    if (this.phase === "history-unavailable") return root.child(this.notice(t, "Retained conversation unavailable",
+      "Codex’s saved history segments could not be verified. Open Terminal to see the conversation from Codex itself.", [open]));
     if ((this.phase === "finding" && !starting) || this.phase === "ended") return root.child(this.notice(t, this.swapping ? WORDS.restarting : WORDS.opening, null));
 
     this.sizeBox();
@@ -5432,10 +5758,11 @@ export default class Chat extends View {
       if (!this.artsTick) { this.artsTick = true; cx.timer.after(3500, (cx) => { this.artsTick = false; this.historySourceRevision=(this.historySourceRevision??0)+1; cx.notify(); }); }
     }
     // Find: the current match's row comes into view once per step.
-    const found = this.finding ? prepared.found : [];
+    this.syncFind(prepared);
+    const found = this.finding&&prepared.findQuery===this.findQuery() ? prepared.found : [];
     const current = found.length ? this.findRow(found) : null;
-    if (this.findJump && current) { this.findJump = false; this.pinned = false; this.scroll.scroll_to_item(current.index, "center"); }
-    const lit = prepared.lit;
+    if (this.findJump && current) { this.findJump = false; this.pinned = false; this.reanchor=false; this.scroll.scroll_to_item(current.index, "center"); }
+    const lit = found.length?prepared.lit:new Set();
     this.needViews(this.files.filter(f=>f.image).map(f=>f.path),cx);
     if(this.mediaSnapshot!==prepared){
       this.mediaSnapshot=prepared;

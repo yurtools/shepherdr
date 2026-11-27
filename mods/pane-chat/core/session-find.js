@@ -31,7 +31,19 @@ for p in "$pid" $(kids "$pid"); do
     echo "pending"; exit 0
   else
     if [ -d "/proc/$p/fd" ]; then
-      f=$(for d in /proc/$p/fd/*; do readlink "$d"; done 2>/dev/null | grep '/rollout-.*\\.jsonl$' | python3 -c '${CODEX_LOG_PICKER}')
+      # Only the writer identifies what this process is continuing. During a
+      # paginated rewind it may also open older base rollouts for reading.
+      f=$(for d in /proc/$p/fd/*; do
+        target=$(readlink "$d")
+        case "$target" in */rollout-*.jsonl)
+          flags=""
+          while read -r key val rest; do
+            [ "$key" = "flags:" ] && { flags="$val"; break; }
+          done < "/proc/$p/fdinfo/$(basename "$d")"
+          case "$flags" in *[1256]) printf '%s\n' "$target";; esac
+          ;;
+        esac
+      done 2>/dev/null | grep '/rollout-.*\\.jsonl$' | python3 -c '${CODEX_LOG_PICKER}')
     else
       f=$(lsof -p "$p" -Fn 2>/dev/null | sed -n 's/^n//p' | grep '/rollout-.*\\.jsonl$' | python3 -c '${CODEX_LOG_PICKER}')
     fi

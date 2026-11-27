@@ -310,7 +310,7 @@ export interface UI {
   dictError: { chat: string; text: string } | null
   files: Record<string, { name: string; path?: string }[]>
   /** search in a chat: its words, and the match shown (by message id; none: the newest) */
-  find: { chat: string; q: string; id: string | null } | null
+  find: { chat: string; q: string; id: string | null; part?: number; start?: number; historyKey?: string } | null
   /** the message each chat's box replies to, with its quote */
   reply: Record<string, ReplyQuote & { id: string }>
   offline: number | null

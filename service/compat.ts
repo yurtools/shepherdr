@@ -1,3 +1,4 @@
+import { FIND_LIMITS } from "../core/chat-find.js";
 import { artifactOwner } from "../core/artifact-owner.js";
 // The web app is Shepherdr 2.1's screen (its design, phone layout and motion, kept as they were), fed with
 // Shepherdr 3's data: this turns what the service builds with the shared core (spaces, tasks, chats) into the
@@ -521,6 +522,8 @@ export class Compat {
     const messages: Message[] = [];
     let at = 0;
     const items: any[] = reader.conv?.items ?? [];
+    const discard = reader.kind === "codex" && reader.historyMode === "paginated" && !reader.pinned && t?.state === "live"
+      ? CL.discardableTurn(reader.records, AGc.sessionOf("codex", reader.path)) : null;
     const machine = reader.machine ?? null;
     const term = (a: string) => (this as any).terminalsOf?.(a) ?? null;
     // an Assistant's chat: its space's tasks (as the window's newsLines(): Herdr's news in place, a start, ready or done
@@ -588,7 +591,7 @@ export class Compat {
         const mentions = chips.length ? { mentions: chips.map((r: any) => ({ task: machine ? `${machine}:${r.ref}` : r.ref, ref: r.ref ?? `#${r.id}`, title: r.title })) } : {};
         // what it replies to: the message it names, which a press on its line brings into view (the window's goTo)
         const to = x.replyTo ? items.slice(0, i).reverse().find((y: any) => (y.kind === "user" || y.kind === "agent") && y.text && names(y.text, String(x.replyTo).slice(0, 60))) : null;
-        if (x.text) messages.push({ id: x.id, who: "you", text: x.text, at: x.at, ...cid, ...(x.replyTo ? { reply: { text: x.replyTo, ...(to ? { id: to.id, who: to.kind === "user" ? "you" : "agent" } : {}) } } : {}), ...reactions, ...mentions } as Message);
+        if (x.text) messages.push({ id: x.id, who: "you", text: x.text, at: x.at, ...cid, ...(!first && discard && discard.id === x.id ? { discard: discard.token } : {}), ...(x.replyTo ? { reply: { text: x.replyTo, ...(to ? { id: to.id, who: to.kind === "user" ? "you" : "agent" } : {}) } } : {}), ...reactions, ...mentions } as Message);
         // the images sent with it, under its words as the window shows them; only files a chat names are ever served
         // (fileOf)
         for (const [n, path] of (x.paths ?? []).entries()) {
@@ -704,7 +707,7 @@ export class Compat {
       agent = { kind, words, ...(c.model ? { model: c.model, modelLabel: label } : {}), ...(c.effort ? { effort: c.effort } : {}), ...(c.model ? { runtime: { model: c.model, modelLabel: label, ...(c.effort ? { effort: c.effort } : {}), speed: c.fast ? "fast" : "normal", source: "session", at: Date.now() } } : {}) };
     } catch {}
     // the first row: the log's very start, or earlier pages to load as it scrolls up
-    const head = reader.start === 0 ? { top: true } : reader.start ? { earlier: true } : {};
+    const head = reader.start === 0 ? { top: true } : reader.start ? { earlier: true, ...((reader.records?.length ?? 0) >= FIND_LIMITS.pageRecords ? { historyLimited: true } : {}) } : {};
     // the window's lines over the box: what it does while it works (its log's call, else its CLI's status report:
     // core/chat-view.js, as the window's), only waiting (no spinner); asking in its terminal with no card here (Needs you)
     const report = CV.reportMsg(t);
@@ -715,11 +718,12 @@ export class Compat {
     const note = addr ? watch?.notes?.get(addr)?.text : undefined;
     // instead of the conversation, the window's notice: still opening, not a chat agent, its log not found, ended
     const kind = kindOfTerm(t);
-    const notice = !reader.conv && (reader.state === "finding" || reader.state === "pending") ? "opening"
+    const notice = reader.state === "lineage" ? "history-unavailable"
+      : !reader.conv && (reader.state === "finding" || reader.state === "pending") ? "opening"
       : reader.state === "missing" && reader.pinned ? "gone"
       : reader.state === "none" || reader.state === "missing" ? ((t && t.state !== "live") || !t ? "ended" : kind ? "none" : "unsupported")
       : !reader.pinned && (!t || t.state !== "live") && !items.length ? "ended" : null;
     const failed = failedOf(addr);
-    return { key, messages, ...(failed.length ? { failed } : {}), ...head, ...under, ...(note ? { note } : {}), ...(notice ? { notice } : {}), ...(agent ? { agent } : {}), ...(jobs.length ? { jobs } : {}), working: st === "working", cli: reader.kind === "codex" ? "codex" : "claude", ...(reader.pinned || (t && t.state !== "live") ? { finished: true } : {}) };
+    return { key, messages, ...(reader.historyKey ? { historyKey: reader.historyKey } : {}), ...(failed.length ? { failed } : {}), ...head, ...under, ...(note ? { note } : {}), ...(notice ? { notice } : {}), ...(agent ? { agent } : {}), ...(jobs.length ? { jobs } : {}), working: st === "working", cli: reader.kind === "codex" ? "codex" : "claude", ...(reader.pinned || (t && t.state !== "live") ? { finished: true } : {}) };
   }
 }

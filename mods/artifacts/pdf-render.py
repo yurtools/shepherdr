@@ -33,7 +33,7 @@ def limits():
             pass
 
 
-def command(argv):
+def command(argv, output_limit=65536):
     try:
         # Output goes to a bounded file, not an unbounded PIPE held in the UI's memory.
         import tempfile
@@ -42,11 +42,16 @@ def command(argv):
                                     timeout=TIMEOUT, env={**os.environ, 'LC_ALL': 'C'},
                                     preexec_fn=limits if os.name == 'posix' else None)
             out.seek(0)
-            text = out.read(65536).decode('utf8', 'replace')
+            raw = out.read(output_limit + 1)
+            if len(raw) > output_limit:
+                raise ValueError('PDF text exceeds the preview output limit.')
+            text = raw.decode('utf8', 'replace')
         if result.returncode:
             raise ValueError('PDF could not be read. It may be password-protected, corrupt or unsupported. Open the original in a PDF app.')
         return text
     except FileNotFoundError:
+        if argv[0] == 'pdftotext':
+            raise ValueError('PDF Find needs Poppler pdftotext on this computer.')
         raise ValueError('PDF preview needs Poppler (pdfinfo and pdftoppm) on this computer. Open the original in a PDF app.')
     except subprocess.TimeoutExpired:
         raise ValueError('This PDF page took too long to preview. Try another page or open the original in a PDF app.')
@@ -59,6 +64,90 @@ def fingerprint(path):
     if s.st_size > MAX_FILE:
         raise ValueError('PDF preview is limited to 128 MiB. Open the original in a PDF app.')
     return f'{s.st_dev}:{s.st_ino}:{s.st_size}:{s.st_mtime_ns}:{s.st_ctime_ns}'
+
+
+def search(path, version, req):
+    """Poppler's word boxes are in the same rotated MediaBox coordinate
+    system used by pdftoppm. Normalize them before crossing into the UI."""
+    import xml.etree.ElementTree as ET
+    query = req['query']
+    if not isinstance(query, str) or not 0 < len(query) <= 256:
+        raise ValueError('Find needs 1–256 characters.')
+    if req.get('version') != version:
+        raise ValueError('PDF changed on disk. Reload preview.')
+    limit = min(5000, max(1, int(req['limit'])))
+    start = max(1, int(req['page']))
+    stop = min(start + 7, int(req['pages']), 100000)
+    if stop < start:
+        raise ValueError('Invalid PDF Find page.')
+    try:
+        info = command(['pdfinfo', '-f', str(start), '-l', str(stop), '-box', str(path)])
+        raw = command(['pdftotext', '-f', str(start), '-l', str(stop), '-bbox-layout',
+                       '-enc', 'UTF-8', str(path), '-'], 8 * 1024 * 1024)
+    except ValueError as e:
+        raise ValueError(f'PDF text extraction unavailable on pages {start}–{stop}: {e}') from e
+    # pdftotext emits XHTML with a fixed public DTD. ElementTree does not
+    # resolve external entities; reject internal entity definitions outright.
+    if '<!ENTITY' in raw:
+        raise ValueError('Unsupported PDF text output.')
+    root = ET.fromstring(raw)
+    ns = '{http://www.w3.org/1999/xhtml}'
+    pages = list(root.iter(ns + 'page'))
+    if len(pages) != stop - start + 1:
+        raise ValueError('PDF text extraction did not return every requested page.')
+    # Poppler emits rotated word coordinates but unrotated page width/height
+    # in bbox XML on some versions. Use MediaBox dimensions and rotation
+    # explicitly, matching pdftoppm's default (not CropBox).
+    rotation = {int(n): int(r) % 360 for n, r in re.findall(r'^Page\s+(\d+)\s+rot:\s+(-?\d+)', info, re.M)}
+    media = {}
+    for line in info.splitlines():
+        m = re.match(r'^Page\s+(\d+)\s+MediaBox:\s+(.*)$', line)
+        if m:
+            x1, y1, x2, y2 = map(float, m[2].split())
+            media[int(m[1])] = (x2 - x1, y2 - y1)
+    hits, has_text, box_count = [], False, 0
+    parts = {'i': '(?-i:[iI])', 'I': '(?-i:[iI])', 'İ': '(?-i:İ)', 'ı': '(?-i:ı)'}
+    pattern = re.compile(''.join(parts.get(ch, re.escape(ch)) for ch in query), re.I)
+    for page, el in enumerate(pages, start):
+        if page not in rotation or page not in media:
+            raise ValueError('PDF page geometry is unavailable.')
+        width, height = media[page]
+        if rotation[page] in (90, 270):
+            width, height = height, width
+        if not (width > 0 and height > 0):
+            raise ValueError('Invalid PDF text dimensions.')
+        words, parts, at = [], [], 0
+        for w in el.iter(ns + 'word'):
+            text = ''.join(w.itertext())
+            if not text:
+                continue
+            if parts:
+                parts.append(' '); at += 1
+            x1, y1, x2, y2 = (float(w.get(k)) for k in ('xMin', 'yMin', 'xMax', 'yMax'))
+            # A word may extend outside the page. Clip to the visible image.
+            rect = [max(0, min(1, v)) for v in (x1 / width, y1 / height, x2 / width, y2 / height)]
+            words.append((at, at + len(text), rect))
+            parts.append(text); at += len(text)
+        has_text |= bool(words)
+        first = 0
+        for m in pattern.finditer(''.join(parts)):
+            while first < len(words) and words[first][1] <= m.start():
+                first += 1
+            boxes = []
+            for j in range(first, len(words)):
+                a, b, box = words[j]
+                if a >= m.end():
+                    break
+                if b > m.start():
+                    boxes.append(box)
+            if len(hits) == limit or box_count + len(boxes) > 12000:
+                if fingerprint(path) != version:
+                    raise ValueError('PDF changed on disk. Reload preview.')
+                return {'hits': hits, 'limited': True, 'done': True, 'hasText': has_text, 'version': version}
+            hits.append({'page': page, 'boxes': boxes}); box_count += len(boxes)
+    if fingerprint(path) != version:
+        raise ValueError('PDF changed on disk. Reload preview.')
+    return {'hits': hits, 'next': stop + 1, 'done': stop >= int(req['pages']), 'hasText': has_text, 'version': version}
 
 
 def preview(req):
@@ -75,6 +164,8 @@ def preview(req):
     version = fingerprint(path)
     if req['op'] == 'stat':
         return {'version': version}
+    if req['op'] == 'find':
+        return search(path, version, req)
     root.mkdir(parents=True, exist_ok=True, mode=0o700)
     for old in root.iterdir():
         if old.is_dir() and not old.is_symlink() and re.fullmatch(r'[a-zA-Z0-9-]{8,100}', old.name) and time.time() - old.stat().st_mtime > 86400:

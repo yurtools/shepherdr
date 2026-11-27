@@ -127,6 +127,24 @@ export function clock(at, now = new Date()) {
   return d.toDateString() === now.toDateString() ? hm : `${d.getDate()} ${MONTHS[d.getMonth()]} ${hm}`;
 }
 
+// Task news is history, not a relative clock. A missing or invalid log timestamp
+// (including the log reader's 0 sentinel) must never look like a real date.
+export function recordedNewsAt(at) {
+  return Number.isFinite(at) && at > 0 && Number.isFinite(new Date(at).getTime()) ? at : undefined;
+}
+
+// The viewer's local calendar and 24-hour clock, like clock(), but always with
+// the year and the offset at that instant (including daylight-saving changes).
+// Keep UTC in the machine-readable form for the web's <time>.
+export function newsDateTime(at) {
+  const recorded = recordedNewsAt(at);
+  if (recorded === undefined) return { label: "Date/time not recorded", iso: null };
+  const d = new Date(recorded), pad = (n) => String(n).padStart(2, "0");
+  const offset = -d.getTimezoneOffset(), abs = Math.abs(offset);
+  const zone = offset ? `UTC${offset < 0 ? "-" : "+"}${pad(Math.floor(abs / 60))}:${pad(abs % 60)}` : "UTC";
+  return { label: `${d.getDate()} ${MONTHS[d.getMonth()]} ${d.getFullYear()} · ${pad(d.getHours())}:${pad(d.getMinutes())} ${zone}`, iso: d.toISOString() };
+}
+
 // The actions under a message, in order: reply and copy; then the CLI's rewind on your own (not a /command, not one
 // another agent sent), or its fork on the agent's (when the CLI is known).
 export function bandActs(side, text, { from = null, fork = true, discard = false } = {}) {
@@ -301,17 +319,34 @@ export function newsWords(e, x) {
 // Herdr's news in the conversation (items of kind "news") as said, and a start, ready or done it never said here
 // (before this log's first page, or not sent) from the task's own started / ready_at / done_at. tasks: Map ref -> task.
 // Each comes with live (needs you still, red) and accept (the newest ready line of a task still Ready).
-export function newsTimeline(items, tasks, { start = null } = {}) {
+// Yield the joins and sort for the native window's bounded preparation pass.
+// Logged events take precedence over task records, which may describe a
+// later transition (e.g. a task marked Ready for a second time).
+export function* newsEventsPlan(items, tasks, { start = null } = {}) {
   const all = [], said = new Set();
-  for (const it of items) if (it.kind === "news") { said.add(`${it.ref}:${it.event}`); all.push(it); }
-  const first = items.find((x) => x.at)?.at ?? 0;
+  let first = 0;
+  for (const it of items) {
+    yield;
+    if (!first && recordedNewsAt(it.at) !== undefined) first = it.at;
+    if (it.kind === "news") { said.add(`${it.ref}:${it.event}`); all.push(it); }
+  }
   for (const [ref, x] of tasks) for (const [event, at] of [["started", x.started], ["ready", x.ready_at], ["done", x.done_at]]) {
-    if (!Number.isFinite(at) || said.has(`${ref}:${event}`) || (at < first && start !== 0)) continue;
-    // A ready not yet said, while the task is still at work (its checks running, SHEP-175) or needs the person: not ready yet.
-    if (event === "ready" && !["ready", "done"].includes(x.status)) continue;
+    yield;
+    if (recordedNewsAt(at) === undefined || said.has(`${ref}:${event}`) || (at < first && start !== 0)) continue;
+    // A ready not yet said, while the task is still at work (its checks running,
+    // SHEP-175) or needs the person: not ready yet. Deferred and merging have
+    // already reached Ready, so their record-only row stays at its original time.
+    if (event === "ready" && !["ready", "deferred", "merging", "done"].includes(x.status)) continue;
     all.push({ id: `tn:${ref}:${event}:${at}`, at, ref, event, text: "", made: true });
   }
-  all.sort((a, b) => a.at - b.at);
+  return yield* sortPlan(all, (a, b) => a.at - b.at);
+}
+
+export function newsTimeline(items, tasks, options) {
+  const plan = newsEventsPlan(items, tasks, options);
+  let step;
+  do { step = plan.next(); } while (!step.done);
+  const all = step.value;
   const last = new Map(), lastReady = new Map();
   for (const e of all) { last.set(e.ref, e); if (e.event === "ready") lastReady.set(e.ref, e); }
   return all.map((e) => {

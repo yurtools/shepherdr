@@ -21,11 +21,12 @@ import { markdownProjection, markdownRanges } from '@core/chat-find-markdown.js'
 import { forkChat } from './fork.ts'
 import { jumpTo, startReply } from './reply.ts'
 
-const { WORDS, clock, initialOf, bandActs, bandOrder, imagesLine, fitThumbs, THUMB_GAP, questionsBelow, literal, DISCARD_TITLE, discardDetail } = CV as unknown as {
+const { WORDS, clock, newsDateTime, initialOf, bandActs, bandOrder, imagesLine, fitThumbs, THUMB_GAP, questionsBelow, literal, DISCARD_TITLE, discardDetail } = CV as unknown as {
   literal: (text: string) => string
   WORDS: Record<string, string>
   questionsBelow: (n: number) => string
   clock: (at?: number) => string
+  newsDateTime: (at?: number) => { label: string; iso: string | null }
   initialOf: (name: string) => string
   bandActs: (side: 'user' | 'agent', text?: string, o?: { from?: string | null; fork?: boolean; discard?: boolean }) => string[]
   bandOrder: (side: 'user' | 'agent', acts: string[], o?: { time?: boolean; react?: boolean }) => string[]
@@ -251,6 +252,8 @@ function AgentRow({ from, to, text, at }: { from: string; to?: string; text?: st
 export function NewsRow({ msg }: { msg: Message }) {
   const n = msg.news!
   const busy = useAccepting(n.task)
+  const stamp = newsDateTime(msg.at)
+  const stampClass = 'block min-w-0 text-[0.6875rem]/4 text-fg3 tabular-nums phone:text-xs/4 wrap-break-word'
   const tick = (c: string) => (
     <span className={clsx('grid size-3 place-items-center rounded-full text-white', c)}>
       <TickIcon className="size-2.5" />
@@ -258,12 +261,17 @@ export function NewsRow({ msg }: { msg: Message }) {
   )
   const mark = n.mark === 'ready' ? tick('bg-ready') : n.mark === 'done' ? tick('bg-fg3') : <span className={clsx('size-2 rounded-full', n.mark === 'started' ? 'bg-work' : n.mark === 'needs' && n.live ? 'bg-need' : 'bg-fg3')} />
   return (
-    <div role="button" tabIndex={0} data-news={n.ref} onClick={() => openTask(n.task)} onKeyDown={(e) => e.key === 'Enter' && openTask(n.task)}
+    <div role="button" tabIndex={0} data-news={n.ref} onClick={() => openTask(n.task)} onKeyDown={(e) => e.target === e.currentTarget && e.key === 'Enter' && openTask(n.task)}
       className={clsx('flex w-full min-w-0 cursor-pointer items-center gap-1.5 rounded-[7px] px-1.5 py-px hover:bg-hover phone:py-1.5', quiet)}>
       <span className="grid size-3.5 shrink-0 place-items-center">{mark}</span>
-      <span className="shrink-0 font-medium text-fg2">{n.ref}</span>
-      <span className={clsx('shrink-0', n.live ? 'text-need' : 'text-fg2')}>{n.what}</span>
-      {n.text ? <><span className="shrink-0">·</span><span data-text className="min-w-0 flex-1 truncate">{n.text}</span></> : <span className="flex-1" />}
+      <span className="min-w-0 flex-1">
+        <span className="flex min-w-0 items-center gap-1.5">
+          <span className="shrink-0 font-medium text-fg2">{n.ref}</span>
+          <span className={clsx('shrink-0', n.live ? 'text-need' : 'text-fg2')}>{n.what}</span>
+          {n.text ? <><span className="shrink-0">·</span><span data-text title={n.text} className="min-w-0 flex-1 truncate">{n.text}</span></> : <span className="flex-1" />}
+        </span>
+        {stamp.iso ? <time dateTime={stamp.iso} className={stampClass}>{stamp.label}</time> : <span className={stampClass}>{stamp.label}</span>}
+      </span>
       {n.accept ? (
         <button type="button" disabled={busy} onClick={(e) => { e.stopPropagation(); openAccept(n.task) }}
           className="press-dim ml-1 h-5 shrink-0 rounded-[6px] bg-fg px-2 text-[0.6875rem]/5 font-medium text-bg disabled:opacity-60 phone:h-7 phone:px-2.5 phone:text-xs/7">

@@ -50,7 +50,7 @@ import { ChatReader } from "./core/chat-reader.js";
 import { preview } from "./core/recipe.js";
 import { words, permissionStatus, requestHash, howAnswered, codexOnScreen, codexSteps } from "./core/asks.js";
 // The rows' words and rules the web app's chat draws by too (core/chat-view.js).
-import { WORDS, clock, bgGroups, subagentsOf, subagentWord, senderName, briefLabel, firstUser, firstKeys, literal, fromName, sentTo, selfName, initialOf, newsWords, resolveArtifacts, resolveArtifactPlan, unsigned, ownWords, fitThumbs, bandActs, bandOrder, imagesLine, questionsBelow, notSent, published, artifactLine, videoLine, mediaIn, elapsed, reportMsg, doingWords, LOST, lostMessage, shellWord, sessionStarted, sessionFailed, DISCARD_TITLE, discardDetail } from "./core/chat-view.js";
+import { WORDS, clock, bgGroups, subagentsOf, subagentWord, senderName, briefLabel, firstUser, firstKeys, literal, fromName, sentTo, selfName, initialOf, newsWords, newsEventsPlan, newsDateTime, recordedNewsAt, resolveArtifacts, resolveArtifactPlan, unsigned, ownWords, fitThumbs, bandActs, bandOrder, imagesLine, questionsBelow, notSent, published, artifactLine, videoLine, mediaIn, elapsed, reportMsg, doingWords, LOST, lostMessage, shellWord, sessionStarted, sessionFailed, DISCARD_TITLE, discardDetail } from "./core/chat-view.js";
 // Sending the person's words, as the web app does (core/send.js).
 import { refusal, taskTag, messageBody, replyInstead, steerNow, reactionLine, mentionedIn, sendTyped, SETTLE } from "./core/send.js";
 // hc whose send goes as the person, with no caller: never "Another agent" on another machine (SHEP-3, core/person.js).
@@ -2447,7 +2447,7 @@ export default class Chat extends View {
   }
 
   taskSig() {
-    return (this.spaceTasks ?? []).map((x) => `${x.ref}:${x.status}:${x.why ?? ""}:${x.report?.text ?? ""}:${x.report?.left ?? ""}`).join("|");
+    return (this.spaceTasks ?? []).map((x) => `${x.ref}:${x.status}:${x.why ?? ""}:${x.report?.text ?? ""}:${x.report?.left ?? ""}:${x.started ?? ""}:${x.ready_at ?? ""}:${x.done_at ?? ""}`).join("|");
   }
 
   // The lines: { inline: news item id → its row, extra: [{ at, row }] }. Herdr's news to the
@@ -2460,26 +2460,19 @@ export default class Chat extends View {
     if (!space) return { inline, extra };
     // A space's tasks make hundreds of lines: the last render's, unless what they're made of
     // changed (HERD-94: a render past Herdr's 50 ms is stopped).
-    const sig = [space, this.spaceTasks, items, items.length, items[items.length - 1]?.id, this.start,
+    const sig = [space, this.feature, this.spaceTasks, items, items.length, items[items.length - 1]?.id, this.start,
       (this.wasks ?? []).map((a) => a.ref).join(","), [...this.accepting].join(",")];
     if (this.newsMemo?.sig.every((v, i) => v === sig[i])) return this.newsMemo.out;
     const tasks = new Map();
-    for (const x of this.spaceTasks ?? []) { yield; if ((x.space ?? x.queue?.space) === space && x.ref && !tasks.has(x.ref)) tasks.set(x.ref, x); }
-    let all = []; const said = new Set();
-    for (const it of items) { yield; if (it.kind === "news") { said.add(`${it.ref}:${it.event}`); all.push(it); } }
-    // Placed before what this chat has loaded: shown once it's scrolled back to (the top).
-    let first=0;
-    for(const x of items){yield;if(x.at){first=x.at;break;}}
-    for (const [ref, x] of tasks) for (const [event, at] of [["started", x.started], ["ready", x.ready_at], ["done", x.done_at]]) {
+    for (const x of this.spaceTasks ?? []) {
       yield;
-      if (!Number.isFinite(at) || said.has(`${ref}:${event}`) || (at < first && this.start !== 0)) continue;
-      all.push({ id: `tn:${ref}:${event}:${at}`, at, ref, event, text: "", made: true });
+      if ((x.space ?? x.queue?.space) === space && (!this.feature || x.feature === this.feature) && x.ref && !tasks.has(x.ref)) tasks.set(x.ref, x);
     }
-    all=yield* sortPlan(all,(a,b)=>a.at-b.at);
+    const all = yield* newsEventsPlan(items, tasks, { start: this.start });
     const last = new Map(), lastReady = new Map();
     for (const e of all) { yield; last.set(e.ref, e); if (e.event === "ready") lastReady.set(e.ref, e); }
     this.needsAt = new Map();
-    for (const e of all) { yield; if ((e.event === "needs-you" || e.event === "failed") && Number.isFinite(e.at)) this.needsAt.set(e.ref, [...(this.needsAt.get(e.ref) ?? []), e.at]); }
+    for (const e of all) { yield; if ((e.event === "needs-you" || e.event === "failed") && recordedNewsAt(e.at) !== undefined) this.needsAt.set(e.ref, [...(this.needsAt.get(e.ref) ?? []), e.at]); }
     const order = [], ordered = new Set();
     for (const e of all) {
       yield;
@@ -2490,7 +2483,7 @@ export default class Chat extends View {
       const live = last.get(e.ref) === e && (e.event === "needs-you" || e.event === "failed") && (x?.status === "needs" || asks);
       // Accept on the newest ready line while the task is still Ready.
       const accept = lastReady.get(e.ref) === e && x?.status === "ready" && !asks;
-      const row = { kind: "tasknews", id: e.id, ref: e.ref, task: x ?? null, taskId: x?.id ?? null, folder: x?.folder ?? null, title: x?.title ?? "",
+      const row = { kind: "tasknews", id: e.id, at: e.at, ref: e.ref, task: x ?? null, taskId: x?.id ?? null, folder: x?.folder ?? null, title: x?.title ?? "",
         ...newsWords(e, x), live, asks: live && asks, accept, busy: accept && this.accepting.has(e.ref) };
       if (e.made) extra.push({ at: e.at, row }); else inline.set(e.id, row);
     }
@@ -4008,7 +4001,7 @@ export default class Chat extends View {
     const found = q && x.find?.hits.length ? `|f:${q}` : "";
     const open = (x.kind === "tools" || x.kind === "brief") && (this.opened.has(x.id)||x.kind==="brief"&&!!x.find?.hits.length);
     const shown = open && x.steps ? x.steps.filter((s) => this.results.get(s.id) != null).length : 0;
-    const key = `${x.id}|r${revision}|${x.kind}${x.closed ? `.${x.closed}` : ""}|${open ? `o${x.steps?.length ?? 1}.${shown}` : ""}|${x.text?.length ?? x.code?.length ?? 0}|${x.from ? 1 : 0}${x.failed ? 1 : 0}${x.late ? 1 : 0}${x.waiting ? 1 : 0}${x.images ? 1 : 0}${x.files?.length ?? 0}|${x.paths?.length ?? 0}${x.paths?.every((p) => this.views[p]) ? "v" : ""}|${(x.pills ?? []).map((p) => p.emoji + (p.you ? 1 : 0) + (p.agent ? 1 : 0)).join("")}|${x.bar ? "b" : ""}${x.kind === "artifact" ? `|a${x.version ?? ""}${x.line ? "l" : ""}${x.pending ? "p" : ""}${x.peek ? `k${x.peek.paths.filter((p) => this.views[p]).length}.${x.peek.text.length}` : ""}` : ""}${x.kind === "tasknews" ? `|${x.accept ? "a" : ""}` : ""}${x.kind === "cardstrip" ? `|cs${x.sig}${x.first ? "F" : ""}${x.last ? "L" : ""}` : ""}|${x.clip ? `c${x.clip}` : ""}${x.open ? "o" : ""}${x.kind === "day" ? x.text : ""}|${x.top0 ? "T" : ""}${x.bot0 ? "B" : ""}${x.h ?? ""}${found}${x.error?`|err:${x.error}`:""}`;
+    const key = `${x.id}|r${revision}|${x.kind}${x.closed ? `.${x.closed}` : ""}|${open ? `o${x.steps?.length ?? 1}.${shown}` : ""}|${x.text?.length ?? x.code?.length ?? 0}|${x.from ? 1 : 0}${x.failed ? 1 : 0}${x.late ? 1 : 0}${x.waiting ? 1 : 0}${x.images ? 1 : 0}${x.files?.length ?? 0}|${x.paths?.length ?? 0}${x.paths?.every((p) => this.views[p]) ? "v" : ""}|${(x.pills ?? []).map((p) => p.emoji + (p.you ? 1 : 0) + (p.agent ? 1 : 0)).join("")}|${x.bar ? "b" : ""}${x.kind === "artifact" ? `|a${x.version ?? ""}${x.line ? "l" : ""}${x.pending ? "p" : ""}${x.peek ? `k${x.peek.paths.filter((p) => this.views[p]).length}.${x.peek.text.length}` : ""}` : ""}${x.kind === "tasknews" ? `|${x.accept ? "a" : ""}:${x.at ?? 0}` : ""}${x.kind === "cardstrip" ? `|cs${x.sig}${x.first ? "F" : ""}${x.last ? "L" : ""}` : ""}|${x.clip ? `c${x.clip}` : ""}${x.open ? "o" : ""}${x.kind === "day" ? x.text : ""}|${x.top0 ? "T" : ""}${x.bot0 ? "B" : ""}${x.h ?? ""}${found}${x.error?`|err:${x.error}`:""}`;
     const state = this.rowRevisions.get(x.id);
     // The existing keys pass supplies a cheap change counter. Fresh rows/spaced
     // arrays and Conversation rebuilds alone must not restart deferred progress.
@@ -4043,7 +4036,7 @@ export default class Chat extends View {
       case "agent": return 30 + (x.clip ?? lines(x.text, w * 0.8 - 24) * 21);
       case "tools": return this.opened.has(x.id) ? 26 + x.steps.length * 19 : 20;
       case "artifact": return x.pending || x.line ? 20 : 62 + (x.peek?.paths?.some((p) => this.views[p]) ? fitThumbs(x.peek.paths.filter((p) => this.views[p]).map((p) => this.views[p]), PEEK_W - 22).h + 8 : 0) + (x.peek?.text ? 8 + Math.ceil((x.peek.text.length * 7) / (PEEK_W - 22)) * 18 : 0);
-      case "tasknews": return x.accept ? 26 : 20;
+      case "tasknews": return 34;
       case "cardstrip": {
         const s = x.s, edge = (x.first ? 10 : s.gap ?? 8) + (x.last ? 10 : 0);
         const h = s.kind === "title" || s.kind === "text" ? 18 * lines(s.text, w)
@@ -4525,15 +4518,18 @@ export default class Chat extends View {
         const dot = (c) => div().size(8).flex_none().rounded(4).bg(c);
         const mark = x.mark === "ready" ? tick(green()) : x.mark === "done" ? tick(t.dim)
           : dot(x.mark === "started" ? amber() : x.mark === "needs" ? (x.live ? red() : t.dim) : t.dim);
+        // The timestamp has its own line; the task's words keep their width.
+        // Review stays at the right edge, outside the details, with the same list hit target.
         return col(h_flex().w_full().px(6).py(QUIET_PY).gap(6).items_center().rounded(RADIUS.card).cursor_pointer()
           .text_size(TEXT.label).text_color(t.dim).hover((s) => s.bg(t.hover))
           .child(h_flex().w(14).h(14).flex_none().items_center().justify_center().child(mark))
-          .child(div().flex_none().font_medium().text_color(t.muted).child(x.ref))
-          .child(div().flex_none().text_color(x.live ? red() : t.muted).child(x.what))
-          .when(Boolean(x.text), (el) => el.child(div().flex_none().child("·")).child(div().flex_1().min_w(0).truncate().child(plainChild(x.text,x.id))))
-          .when(!x.text, (el) => el.child(div().flex_1()))
-          // The Tasks panel's own Accept (ui.js: primary, 20 in a row's line); its press comes
-          // through clickRow().
+          .child(v_flex().flex_1().min_w(0).gap(0)
+            .child(h_flex().w_full().gap(6).items_center()
+              .child(div().flex_none().font_medium().text_color(t.muted).child(x.ref))
+              .child(div().flex_none().text_color(x.live ? red() : t.muted).child(x.what))
+              .when(Boolean(x.text), (el) => el.child(div().flex_none().child("·")).child(div().flex_1().min_w(0).truncate().child(plainChild(x.text,x.id))))
+              .when(!x.text, (el) => el.child(div().flex_1())))
+            .child(div().w_full().text_size(11).text_color(t.dim).child(newsDateTime(x.at).label)))
           .when(Boolean(x.accept), (el) => el.child(this.acceptButton(x.busy)
             .when(!x.busy, (el) => el.cursor_pointer().hover((s) => s.opacity(0.88))))), 12, 0);
       }

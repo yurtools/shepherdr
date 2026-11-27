@@ -63,7 +63,7 @@ export const taskId = (r: Row) => `${r.machine ? `${r.machine}:` : ""}${r.duplic
 /** What a space's tasks give its Assistant's news lines (newsTimeline: their status, ready and done): a chat is only
  *  read again when its conversation moves, so a task accepted or done since shows by this changing (SHEP-29: a
  *  Ready line kept its Accept after the task was done) */
-export const newsKey = (rows: Row[]) => JSON.stringify(rows.filter((r) => r.space && r.ref).map((r) => [r.space, r.ref, r.section, r.ready_at, r.done_at]));
+export const newsKey = (rows: Row[]) => JSON.stringify(rows.filter((r) => r.space && r.ref).map((r) => [r.space, r.feature, r.ref, r.section, r.started, r.ready_at, r.done_at]));
 
 // a news event's dot: what the task was at that moment
 const NEWS: Record<string, TaskStatus> = { added: "todo", queued: "queued", started: "work", needs: "need", asks: "need", stalled: "need", failed: "need", ready: "ready", merging: "merging", merged: "done", done: "done", closed: "done" };
@@ -528,8 +528,14 @@ export class Compat {
     const term = (a: string) => (this as any).terminalsOf?.(a) ?? null;
     // an Assistant's chat: its space's tasks (as the window's newsLines(): Herdr's news in place, a start, ready or done
     // it never said from the task's own record), and their workers, by address, for who sent a message
-    const space = key.startsWith("p:") ? key.slice(2).replace(":", "/") : null;
-    const spaceRows = space ? this.rows.filter((r) => r.space === space && r.ref) : [];
+    // Feature Assistants are terminal chats (t:…), not the space's p: chat.
+    // Their saved owner labels, not the selected tab or folder, identify their tasks.
+    const labels = t?.labels ?? {};
+    const feature = key.startsWith("t:") && labels["herdr.role"] === "feature" && !labels["herdr.task"] ? labels["herdr.feature"] : null;
+    const owner = feature ? labels["herdr.coordinator.space"] ?? labels["herdr.space"] : null;
+    const space = key.startsWith("p:") ? key.slice(2).replace(":", "/")
+      : owner ? (machine && !owner.includes("/") ? `${machine}/${owner}` : owner) : null;
+    const spaceRows = space ? this.rows.filter((r) => r.space === space && r.ref && (!feature || ((r.machine ?? null) === machine && r.feature === feature))) : [];
     const workerOf = new Map<string, string>(this.rows.filter((r) => r.worker).map((r) => [r.worker, r.ref]));
     // here: this machine's name in herdr-core (another machine's agent writes ours as "<here>/t75")
     const here = (this as any).coreName?.() ?? null;
@@ -539,10 +545,15 @@ export class Compat {
     const taskLabel = String(t?.labels?.["herdr.task"] ?? "");
     const peers = { machineName: (m: string) => this.machineNames.get(m) ?? null, here: machine ?? here };
     const self = selfName({ assistant: key.startsWith("p:"), task: taskLabel ? workerOf.get(this.chats.get(key) ?? "") ?? (/^[a-z]+-\d+$/i.test(taskLabel) ? taskLabel.toUpperCase() : null) : null, kind: reader.kind });
-    const news = space ? newsTimeline(items, new Map(spaceRows.map((r) => [r.ref, { ...r, status: r.section }])), { start: reader.start }) : [];
+    const newsTasks = new Map<string, Row>();
+    for (const r of spaceRows) if (!newsTasks.has(r.ref)) newsTasks.set(r.ref, { ...r, status: r.section });
+    const news = space ? newsTimeline(items, newsTasks, { start: reader.start }) : [];
     const newsLine = (e: any): Message => {
-      const task = machine ? `${machine}:${e.ref}` : e.ref;
-      return { id: e.id, who: "agent", at: e.at, news: { task, ref: e.ref, mark: e.mark, what: e.what, text: e.text, ...(e.live ? { live: true } : {}), ...(e.accept ? { accept: true } : {}) } };
+      const row = newsTasks.get(e.ref);
+      const task = row ? taskId(row) : machine ? `${machine}:${e.ref}` : e.ref;
+      // Use only this event's time. Older logged rows may have none; a task's
+      // current ready_at/done_at or the chat refresh time cannot repair that.
+      return { id: e.id, who: "agent", at: CV.recordedNewsAt(e.at), news: { task, ref: e.ref, mark: e.mark, what: e.what, text: e.text, ...(e.live ? { live: true } : {}), ...(e.accept ? { accept: true } : {}) } };
     };
     const inline = new Map(news.filter((e: any) => !e.made).map((e: any) => [e.id, e]));
     const made = news.filter((e: any) => e.made);

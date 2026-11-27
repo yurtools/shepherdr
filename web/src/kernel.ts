@@ -1,3 +1,4 @@
+import { taskRoute } from "./task-route.ts";
 import { loadFilters, normalizeFilters, saveFilters, toggleFilter } from "@core/task-filters.js"
 import { findArtifact } from "@core/artifact-owner.js"
 import { artifactRoute } from "./artifact-route.ts"
@@ -212,6 +213,7 @@ export interface UI {
   place: string
   /** the open task: its agent's chat */
   task: string | null
+  taskError?: string | null
   /** phone: Chat, Needs you, Tasks or Artifacts */
   tab: 'chat' | 'needs' | 'tasks' | 'artifacts'
   /** a wide screen's right-hand column: Needs you, the place's Tasks or its Artifacts, remembered on this device */
@@ -424,7 +426,7 @@ let state: State = {
     settings: null,
     drawer: false,
     sidebars: loadSidebars(),
-    split: loadPanes(),
+    split: params.get('task') ? { ...loadPanes(), pane: -1 } : loadPanes(),
     viewer: params.get('artifact') ? { artifact: params.get('artifact')!, origin: params.get('origin') ?? undefined, ...(Number(params.get('v')) > 0 ? { v: Number(params.get('v')) } : {}) } : null,
     photo: null,
     search: false,
@@ -672,13 +674,16 @@ startUsage(() => state.ui)
 /** go where an alert's link points (its place, task and card), as a tap on the alert does with the app open */
 export function openLink(href: string) {
   const q = new URL(href, location.href).searchParams
-  const place = q.get('place')
-  if (!place) return
+  const requested = q.get('place')
   const task = q.get('task')
+  if (!requested && !task) return
   const closed = { settings: null, drawer: false, search: false, adding: false, menu: false, pick: null, pickAll: false, viewer: null, photo: null, cur: 0 }
-  // a task elsewhere comes with its place as a step before it, so Back from it goes to its place
-  if (task && (state.ui.place !== place || state.ui.task)) setUI({ ...closed, place, task: null, tab: 'chat' })
-  setUI({ ...closed, place, task, tab: 'chat', jump: q.get('focus') })
+  if (task && state.snap) {
+    if (!openTask(task)) return
+    setUI({ ...closed, tab: 'chat', jump: q.get('focus') })
+  } else if (requested) {
+    setUI({ ...closed, place: requested, task, tab: 'chat', jump: q.get('focus') })
+  }
   forgetJump()
 }
 
@@ -1004,6 +1009,27 @@ export function placeIdOf(snap: Snapshot, s: string) {
 /** The screen stays on a space it lists, else goes to the main home space: a space gone. A space on a machine still
  * connecting (just after Shepherdr restarted for an update) isn't gone: the screen stays on it. */
 function stayOnShown() {
+  const { snap, ui } = state
+  if (snap && ui.task) {
+    const r = taskRoute(snap, ui.task)
+    if (r.place && (!ui.split.panes.length || ui.split.pane < 0)) {
+      if (ui.place !== r.place) {
+        state = { ...state, ui: { ...ui, place: r.place, ...(ui.split.panes.length ? { split: { ...ui.split, pane: -1 } } : {}) } }
+        syncUrl(true)
+      }
+      // Saved split views must not be repointed by a task URL.
+      linked = true
+      return
+    }
+    if (r.place) { stayOnPlace(); return; }
+    // A connecting machine may not have its task yet. Wait until the data is
+    // complete before refusing the saved URL, never render it under another owner.
+    if (snap.machines.some(m => m.connecting)) return
+    const split = ui.split.panes.length && ui.split.pane < 0 ? splitTo({ ...ui.split, pane: 0 }) : {}
+    state = { ...state, ui: { ...ui, ...split, task: null, taskError: r.error } }
+    linked = true
+    syncUrl(true)
+  }
   stayOnPlace()
   linkToPane()
 }
@@ -1248,7 +1274,7 @@ export function placeKind(snap: Snapshot, p: Place) {
 
 /** the open task's agent, whose chat is on screen */
 export function agentChat(ui: UI, snap: Snapshot) {
-  return taskOf(snap, ui.task)?.agent ?? null
+  return ui.task && taskRoute(snap, ui.task).place ? taskOf(snap, ui.task)?.agent ?? null : null
 }
 
 /** whether a chat is still there: a space's coordinator's, or a task's agent's (an archived task's too) */
@@ -1389,7 +1415,7 @@ export function setChips(chips: string[]) {
  *  beside it; in focus the task has the window as always */
 export function taskInMiddle(ui: UI, snap: Snapshot | null) {
   // split, an open task shows on the right
-  return ui.device !== 'phone' && !panesHere(ui).length && !!snap && listsPinned(ui, snap) && !!taskOf(snap, ui.task) && !focusHere(ui, snap)
+  return ui.device !== 'phone' && !panesHere(ui).length && !!snap && listsPinned(ui, snap) && !!ui.task && !!taskRoute(snap, ui.task).place && !focusHere(ui, snap)
 }
 
 /* ---------- an open task's side panel ---------- */
@@ -1483,23 +1509,24 @@ export function goPlace(id: string) {
 }
 
 /** a task opens straight into its agent's chat */
-export function openTask(id: string) {
+export function openTask(id: string): boolean {
   const snap = state.snap
-  const t = snap && taskOf(snap, id)
-  // split, one open in a pane already gets the focus there
+  if (!snap) return false
+  const route = taskRoute(snap, id)
+  if (!route.place) { setUI({ taskError: route.error }); return false }
+  // A duplicate opens the existing pane rather than creating a new view.
   const at = panesHere(state.ui).findIndex(samePane({ kind: 'task', id }))
-  if (at >= 0) return focusPane(at)
-  // the tab it was opened from stays: Back goes to it, as on iOS
-  // one from the lists beside it stays over this place's chat; another goes to its own place. Split, the panes stay
-  // as they are (the place is the focused pane's) and the task takes the keys
+  if (at >= 0) {
+    focusPane(at)
+    setUI({ place: route.place, taskError: null, split: state.ui.split })
+    return true
+  }
   setUI((ui) => ({
     ...(panesHere(ui).length ? { split: { ...ui.split, pane: -1 } } : {}),
-    task: id,
-    pick: null,
-    cur: 0,
-    drawer: false,
-    place: t && !panesHere(ui).length && t.place !== ui.place && !inList(snap!, listChips(ui, snap!), t.place) ? t.place : ui.place,
+    task: id, taskError: null, pick: null, cur: 0, drawer: false,
+    place: route.place, sideShut: false, side: 'tasks',
   }))
+  return true
 }
 
 /** the space a chat is in: its Assistant's own, or its task's (a voice call's mark goes on it, SHEP-51) */
@@ -1511,7 +1538,7 @@ export function chatPlace(snap: Snapshot, key: string): string | null {
 }
 
 export function goChat(key: string) {
-  if (key.includes('/')) openTask(taskChatId(key)!)
+  if (key.endsWith('/worker')) openTask(taskChatId(key)!)
   // a space's chat key (p:<id>) goes to its space (SHEP-51: it went to the home space)
   else setUI({ place: state.snap?.places.find((p) => p.chat === key)?.id ?? key, task: null, tab: 'chat', drawer: false })
 }
@@ -1555,14 +1582,14 @@ export const splitClick = (e: { metaKey: boolean; ctrlKey: boolean }) => state.u
 /** the place a pane belongs to: the sidebar marks it and the lists on the right show it while it has the focus */
 export function placeOfPane(snap: Snapshot, p: Pane): string | null {
   if (p.kind === 'place' || p.kind === 'tasks') return p.id
-  if (p.kind === 'task') return taskOf(snap, p.id)?.place ?? null
+  if (p.kind === 'task') return taskRoute(snap, p.id).place ?? null
   return findArtifact(snap.artifacts, p.id)?.place ?? null
 }
 
 /** the chat a pane shows, if any */
 export function paneChat(snap: Snapshot, p: Pane): string | null {
   if (p.kind === 'place') return placeOf(snap, p.id).chat
-  if (p.kind === 'task') return taskOf(snap, p.id)?.agent?.chat ?? null
+  if (p.kind === 'task') return taskRoute(snap, p.id).place ? taskOf(snap, p.id)?.agent?.chat ?? null : null
   return null
 }
 
@@ -1575,7 +1602,7 @@ export function keysChat(ui: UI, snap: Snapshot): string {
 /** the patch that puts the panes at `v`, the place following the focused one */
 function splitTo(v: Panes): Partial<UI> {
   const p = v.panes[v.pane]
-  const place = p && state.snap ? placeOfPane(state.snap, p) : null
+  const place = state.snap ? (p ? placeOfPane(state.snap, p) : v.pane < 0 && state.ui.task ? taskRoute(state.snap, state.ui.task).place : null) : null
   return { split: v, ...(place && state.snap ? { place: placeOf(state.snap, place).id } : {}) }
 }
 
@@ -1596,6 +1623,13 @@ export function roomFor(ui: UI, snap: Snapshot, width = innerWidth) {
 
 /** open in split view (desktop): beside the focused pane, or beside the middle as it shows now */
 export function openSplit(p: Pane) {
+  if (p.kind === 'task' && state.snap) {
+    const route = taskRoute(state.snap, p.id)
+    if (!route.place) return setUI({ taskError: route.error })
+    const at = panesHere(state.ui).findIndex(samePane(p))
+    if (at >= 0) return focusPane(at)
+    if (roomFor(state.ui, state.snap) < 2) { openTask(p.id); return }
+  }
   if (p.kind === 'artifact') {
     const r = state.snap && artifactRoute(state.snap, p.id)
     if (!r?.place) return openArtifact(p.id)

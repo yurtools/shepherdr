@@ -1,3 +1,4 @@
+import { taskRoute } from "../task-route.ts";
 import { findArtifact } from "@core/artifact-owner.js"
 // The Accept card (Shepherdr 3's mods/accept-card), in 2.1's dialog: what the person approves before a Ready task
 // merges. Its summary, then Changes (commits and files), Checks, Proof and folded Details, all from
@@ -8,7 +9,7 @@ import { findArtifact } from "@core/artifact-owner.js"
 // scroll. Accept stays in view under it either way.
 import clsx from 'clsx'
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
-import { act, closeArtifact, getState, openArtifact, setUI, taskOf, useStore } from '../kernel.ts'
+import { act, closeArtifact, getState, openArtifact, openTask, setUI, taskOf, useStore } from '../kernel.ts'
 import { Dialog } from '../rowmenu.tsx'
 import type { Artifact } from '@shared/types.ts'
 import { DownIcon, NextIcon, OpenIcon, Primary } from '../ui.tsx'
@@ -43,8 +44,10 @@ let open: string | null = null
 const listeners = new Set<() => void>()
 export const openAccept = (task: string) => {
   const { snap } = getState()
-  const owner = snap && taskOf(snap, task)?.reviewSpace
-  if (owner && snap!.places.some((p) => p.id === owner)) setUI({ place: owner })
+  if (!snap) return
+  const route = taskRoute(snap, task)
+  if (!route.place) return setUI({ taskError: route.error })
+  if (!openTask(task)) return
   open = task; for (const f of listeners) f()
 }
 const close = () => { open = null; for (const f of listeners) f() }

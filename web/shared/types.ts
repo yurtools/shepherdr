@@ -371,7 +371,7 @@ export interface Task {
   pinned?: number
   /** the shared browser (the browser plugin), for a task not merged: whether it works on its machine, and if not why */
   browser?: { ready: boolean; hint?: string }
-  /** what its row says it is in (3.0's Tasks): the space working in its list's folder, else the list's name */
+  /** its recorded owning space's name, else the source list's name */
   listName?: string
 }
 

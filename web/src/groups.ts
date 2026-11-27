@@ -134,25 +134,23 @@ export function keepTasks<G extends TaskGroup>(g: G, keep: (t: Task) => boolean)
   return { ...g, tasks: g.tasks.filter(keep) }
 }
 
-/** one group per task list, as the window's by space (mods/tasks spaceGroup): each list goes by the space working in its
- *  folder, a list no space works in after them, by its own name (Task.listName says which; a task's place is the space
- *  that started it, which may be another's). Machine by machine, in the order the sidebar meets them, a space in the
- *  sidebar's order. */
+/** Group by the recorded owner, not a list name that happens to equal a space.
+ * Unowned tasks remain visible as a list with no navigable space heading. */
 function projectGroups(places: Place[], machines: Machine[], ts: Task[]): TaskGroup[] {
-  const nameOf = (t: Task) => t.listName ?? places.find((p) => p.id === t.place)?.name ?? ''
-  const listOf = (t: Task) => `${t.on}|${nameOf(t)}`
-  const lists = [...new Set(ts.map(listOf))]
-  const at = (k: string) => { const i = places.findIndex((p) => `${p.machine}|${p.name}` === k); return i < 0 ? places.length : i }
-  const nameAt = (k: string) => k.slice(k.indexOf('|') + 1)
-  const onOf = (k: string) => k.slice(0, k.indexOf('|'))
-  const order = [...new Set([...places.map((p) => p.machine), ...lists.map(onOf)])]
-  const out: TaskGroup[] = []
-  for (const k of lists.sort((a, b) => order.indexOf(onOf(a)) - order.indexOf(onOf(b)) || at(a) - at(b))) {
-    const on = onOf(k)
-    const p = places.find((x) => `${x.machine}|${x.name}` === k)
-    out.push({ key: p?.id ?? `list:${k}`, label: nameAt(k), tasks: ts.filter((t) => listOf(t) === k), names: { machine: false, project: false }, on, machine: machines.find((m) => m.machine === on)?.name ?? on, ...(p ? { place: p.id } : {}), ...(p?.emoji ? { emoji: p.emoji } : {}) })
+  const owner = (t: Task) => places.find(p => p.id === t.place)
+  const keyOf = (t: Task) => owner(t)?.id ?? JSON.stringify([t.on, t.taskFolder ?? t.listName])
+  const groups = new Map<string, Task[]>()
+  for (const t of ts) {
+    const key = keyOf(t)
+    groups.set(key, [...(groups.get(key) ?? []), t])
   }
-  return out
+  const at = (key: string) => { const i = places.findIndex(p => p.id === key); return i < 0 ? places.length : i }
+  return [...groups].sort(([a], [b]) => at(a) - at(b)).map(([key, tasks]) => {
+    const p = owner(tasks[0]), on = p?.machine ?? tasks[0].on
+    return { key: p?.id ?? `list:${key}`, label: p?.name ?? tasks[0].listName ?? 'No recorded space', tasks,
+      names: { machine: false, project: false }, on, machine: machines.find(m => m.machine === on)?.name ?? on,
+      ...(p ? { place: p.id } : {}), ...(p?.emoji ? { emoji: p.emoji } : {}) }
+  })
 }
 
 /** a group's Done tasks shown before Show all */

@@ -297,27 +297,45 @@ export function newsWords(e, x) {
   return { mark, what, text };
 }
 
-// The lines a space's tasks make in its Assistant's chat, in time order, each { id, at, ref, event, text, made }:
-// Herdr's news in the conversation (items of kind "news") as said, and a start, ready or done it never said here
-// (before this log's first page, or not sent) from the task's own started / ready_at / done_at. tasks: Map ref -> task.
-// Each comes with live (needs you still, red) and accept (the newest ready line of a task still Ready).
+// Task news previously contained only the visible ref. It can still identify a
+// task when unique in the originating space, but cannot disambiguate collisions.
+// New events carry the canonical folder; synthesized events always carry it.
+export const newsTaskKey = (ref, folder) => folder ? JSON.stringify([ref, folder]) : ref;
+export function newsTaskIndex(tasks) {
+  const byKey = new Map(), byRef = new Map();
+  for (const [ref, task] of tasks) {
+    const key = newsTaskKey(task.ref ?? ref, task.folder);
+    byKey.set(key, task);
+    const visible = task.ref ?? ref;
+    if (byRef.has(visible)) byRef.set(visible, null);
+    else byRef.set(visible, key);
+  }
+  return { byKey, byRef, keyOf: e => e.folder ? newsTaskKey(e.ref, e.folder) : byRef.get(e.ref) ?? null };
+}
+
+// A task's lines in its Assistant's chat, ordered by time. Exact source
+// identity is attached to the row so a click or review cannot pick a twin.
 export function newsTimeline(items, tasks, { start = null } = {}) {
+  const { byKey, keyOf } = newsTaskIndex(tasks);
   const all = [], said = new Set();
-  for (const it of items) if (it.kind === "news") { said.add(`${it.ref}:${it.event}`); all.push(it); }
+  for (const it of items) if (it.kind === "news") {
+    const key = keyOf(it);
+    if (key) said.add(JSON.stringify([key, it.event]));
+    all.push({ ...it, taskKey: key });
+  }
   const first = items.find((x) => x.at)?.at ?? 0;
-  for (const [ref, x] of tasks) for (const [event, at] of [["started", x.started], ["ready", x.ready_at], ["done", x.done_at]]) {
-    if (!Number.isFinite(at) || said.has(`${ref}:${event}`) || (at < first && start !== 0)) continue;
-    // A ready not yet said, while the task is still at work (its checks running, SHEP-175) or needs the person: not ready yet.
+  for (const [key, x] of byKey) for (const [event, at] of [["started", x.started], ["ready", x.ready_at], ["done", x.done_at]]) {
+    if (!Number.isFinite(at) || said.has(JSON.stringify([key, event])) || (at < first && start !== 0)) continue;
     if (event === "ready" && !["ready", "done"].includes(x.status)) continue;
-    all.push({ id: `tn:${ref}:${event}:${at}`, at, ref, event, text: "", made: true });
+    all.push({ id: `tn:${key}:${event}:${at}`, at, ref: x.ref ?? key, folder: x.folder, taskKey: key, event, text: "", made: true });
   }
   all.sort((a, b) => a.at - b.at);
   const last = new Map(), lastReady = new Map();
-  for (const e of all) { last.set(e.ref, e); if (e.event === "ready") lastReady.set(e.ref, e); }
+  for (const e of all) { last.set(e.taskKey, e); if (e.event === "ready") lastReady.set(e.taskKey, e); }
   return all.map((e) => {
-    const x = tasks.get(e.ref);
-    return { ...e, ...newsWords(e, x), live: last.get(e.ref) === e && (e.event === "needs-you" || e.event === "failed") && x?.status === "needs",
-      accept: lastReady.get(e.ref) === e && x?.status === "ready" };
+    const x = byKey.get(e.taskKey);
+    return { ...e, ...newsWords(e, x), task: x ?? null, live: last.get(e.taskKey) === e && (e.event === "needs-you" || e.event === "failed") && x?.status === "needs",
+      accept: lastReady.get(e.taskKey) === e && x?.status === "ready" };
   });
 }
 

@@ -81,7 +81,7 @@ def news_line(s, t, v, event, words=None):
             "backup": f"{ref} backup: {words} ({title})",
             "done": f"{ref} is done" + (": merged" if t.get("merged") else ": nothing to merge" if t.get("nothing_to_merge")
                                         else ": accepted" if t.get("accepted_at") else "") + f" ({title})"}[event]
-    return f'<herdr-news task="{attr(ref)}" event="{event}">{text.replace("<", "‹").replace(">", "›")}</herdr-news>'
+    return f'<herdr-news task="{attr(ref)}" event="{event}" folder="{attr(s.loc["folder"])}">{text.replace("<", "‹").replace(">", "›")}</herdr-news>'
 
 
 def news_state(s, t, live, helper_records=None):

@@ -21,7 +21,7 @@ unread.js: chat spaces-chat
 agent.js: chat newspace shepherdr-settings coordinator menu-tasks new-menu-tasks spaces-chat tabs-tasks tasks workspace-sessions workspace-launchers pane-chat workspace-agents
 settings.js: chat newspace shepherdr-settings
 dot.js: chat jump tasks
-core/tasklists.js: jump tasks
+core/tasklists.js: chat jump tasks spaces-chat tabs-tasks workspace-status-chat
 core/chat-log.js: chat
 core/chat-view.js: chat
 core/screens.js: chat
@@ -104,6 +104,8 @@ core/chat-preparation.js: chat
 
 role-launch.js: chat coordinator menu-tasks new-menu-tasks newspace shepherdr-settings spaces-chat tabs-tasks tasks workspace-sessions workspace-launchers pane-chat workspace-agents
 task-view.js: chat tasks jump spaces-chat tabs-tasks workspace-status-chat
+task-thread-state.js: chat tasks jump spaces-chat tabs-tasks workspace-status-chat task-pr task-browser task-artifacts
+core/task-owner.js: chat tasks jump spaces-chat tabs-tasks workspace-status-chat task-pr task-browser task-artifacts
 
 core/session-find.js: chat tabs-tasks workspace-sessions workspace-launchers new-menu-tasks coordinator menu-tasks newspace shepherdr-settings spaces-chat tasks pane-chat workspace-agents
 

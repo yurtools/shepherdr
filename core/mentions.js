@@ -177,7 +177,14 @@ export function parseTask(target) {
 }
 
 // The box with the "@word" being typed swapped for a picked task's short form ("@SHEP-4 "); its token goes in at send.
-export const pickTaskInto = (text, t) => String(text ?? "").replace(/\n+$/, "").replace(/@[\w.-]*$/, `@${t.ref} `);
+export function pickTaskInto(text, t, picked = []) {
+  const box = String(text ?? "").replace(/\n+$/, "");
+  // Freeze earlier explicit picks before remembering another task with the
+  // same visible ref. The composer otherwise cannot distinguish the two.
+  const conflicting = picked.some(p => p.ref.toLowerCase() === t.ref.toLowerCase() && taskTarget(p) !== taskTarget(t));
+  const prefix = box.replace(/@[\w.-]*$/, "");
+  return (conflicting ? expandTasks(prefix, picked) : prefix) + `@${t.ref} `;
+}
 
 // At send: each "@REF" the person picked becomes its token (picked: [{ ref, route, folder }]).
 export function expandTasks(text, picked) {

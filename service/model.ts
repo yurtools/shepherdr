@@ -9,6 +9,7 @@ import type { Live } from "./live.ts";
 import { HOME, settingsFile, where } from "./paths.ts";
 import { READ_LISTS, taskLists, fileIn } from "../core/tasklists.js";
 import * as T from "../core/tasks.js";
+import { liveTaskTerminal, taskOwner } from "../core/task-owner.js";
 import { isHelper, subagentsOf } from "../core/chat-view.js";
 // The core is plain JavaScript; its defaults read as narrow types to TypeScript.
 const { place, refOf, taskKey, autoPrefix, reportOf, secondLine, leftOf, queueReason, machineOf, usageOf, USAGE_FILE } = T as any;
@@ -218,10 +219,9 @@ export class Model {
 
   /** A task's agents now: live terminals labelled with its key, on the folder's machine, not shells. */
   private agentsOf(list: List, task: any) {
-    const key = `${list.slug}#${task.id}`;
     const out: { address: string; status: string | null; role: string; turn: number; since: number; created?: number }[] = [];
     for (const k of this.hub.terminals.values()) {
-      if (k.state !== "live" || k.labels?.["herdr.task"] !== key || machineOf(k.address) !== (list.machine ?? null)) continue;
+      if (!liveTaskTerminal(k, { machine: list.machine ?? null, slug: list.slug, id: task.id }, task)) continue;
       const st = typeof k.status === "object" ? k.status?.state ?? null : null;
       // a plain shell in front: its agent is gone, whatever status hc kept (#1022: one that died mid-turn keeps
       // "working" for good); a shell that runs a command (fish -ic "claude ...", #780) still holds its agent
@@ -272,7 +272,7 @@ export class Model {
         machine: list.machine, folder: list.folder, slug: list.slug, id: task.id, list: list.name,
         // the space whose Assistant started it (herdr-task keeps it): the window counts and lists it there
         feature: task.feature ?? null,
-        space: task.space ? (list.machine ? `${list.machine}/${task.space}` : task.space) : null,
+        space: task.space ? (list.machine && !task.space.includes("/") ? `${list.machine}/${task.space}` : task.space) : null,
         worker, archived: !!task.archived, pinned: pins.has(taskKey(list, task)),
         scheduled_for: task.state === "scheduled" ? task.scheduled_for ?? null : null,
         started: task.started ?? null, ready_at: task.ready_at ?? null, done_at: task.done_at ?? null,
@@ -301,8 +301,8 @@ export class Model {
     // and the machines in the order the person dragged them into (SHEP-153)
     const spaces = byMachineOrder(inOrder([...fromDocs, ...own.filter((x: any) => !fromDocs.some((y: any) => y.id === x.id))], this.value("spaces-chat")?.order), machineOrderOf(this.value("spaces-chat"))).map((s: any, at: number) => {
       const k = assistantOf(s, terminals as any[]);
-      // a task belongs to the space that started it, else to the space in its folder (as the window's counts)
-      const here = rows.filter((r) => !r.archived && (r.space ? r.space === s.id : (r.machine ?? null) === (s.machine ?? null) && r.folder === s.folder));
+      // Count tasks only in their recorded owning space.
+      const here = rows.filter((r) => !r.archived && taskOwner([s], r.machine, r.space) != null);
       return {
         ...s, at, icon: bar.icons[s.id] ?? null, pinned: bar.pinned.includes(s.id),
         // when something in its tabs last changed state (Herdr's tab changed_at: its terminals' status times), for

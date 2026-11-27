@@ -18,7 +18,8 @@ MAX_PROCESSES = 32768
 SCAN_SECONDS = 2
 MAX_ROOTS = 512
 PUBLIC = ".task-usage.json"
-BASELINE = ".task-usage-baseline"    # not returned as part of READ_LISTS
+CACHE_DIR = ".task-usage"           # not a watched task-list file
+BASELINE = CACHE_DIR + "/baseline"  # private sampler state survives separate tick processes
 
 
 @dataclass(frozen=True)
@@ -356,8 +357,10 @@ def read(path):
         return {}
 
 
-def write(path, data):
-    tmp = f"{path}.{os.getpid()}.tmp"
+def write(path, data, staging):
+    # Stage in the private cache folder: the task-list watchers see only the final
+    # public rename, not writes to the numeric per-process baseline or temp files.
+    tmp = os.path.join(staging, f"{os.path.basename(path)}.{os.getpid()}.tmp")
     try:
         with os.fdopen(os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "w") as f:
             json.dump(data, f, separators=(",", ":"))
@@ -394,5 +397,7 @@ def sample_pass(store, inputs):
         return
     rows = processes() if sum(map(len, inputs.values())) <= MAX_ROOTS else None
     result, baseline = aggregate(inputs, rows or {}, previous, at, mono)
-    write(state_path, dict(baseline, boot=boot))
-    write(public_path, result)
+    staging = os.path.join(store, CACHE_DIR)
+    os.makedirs(staging, mode=0o700, exist_ok=True)
+    write(state_path, dict(baseline, boot=boot), staging)
+    write(public_path, result, staging)

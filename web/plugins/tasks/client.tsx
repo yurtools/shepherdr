@@ -189,7 +189,7 @@ function Line({ flip, sel = false, kb = false, glyph, ref_, title, sub, usage, u
           type="button"
           aria-current={sel || undefined}
           aria-label={`${ref_ ? `${ref_} ` : ''}${title}${said ? `, ${said}` : ''}${left ? (leftQuiet ? `, in ${left}` : `, ${left} left`) : ''}${meta ? `, ${meta}` : ''}${usage ? `, ${usage}` : ''}${tip ? `, ${tip}` : ''}`}
-          title={usageTip}
+          aria-description={usageTip}
           onClick={onOpen}
           className="absolute inset-0 cursor-pointer rounded-[inherit] outline-none keys:focus-visible:shadow-[inset_0_0_0_1.5px_var(--focus)]"
         />

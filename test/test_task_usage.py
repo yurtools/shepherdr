@@ -111,6 +111,8 @@ class Accounting(unittest.TestCase):
                 pub = U.read(os.path.join(folder, U.PUBLIC))
                 self.assertEqual(pub["repo#1"]["rss_bytes"], 10)
                 self.assertNotIn("members", pub["repo#1"])
+                self.assertEqual(set(os.listdir(folder)), {U.PUBLIC, U.CACHE_DIR})
+                self.assertEqual(os.listdir(os.path.join(folder, U.CACHE_DIR)), ["baseline"])
                 U.sample_pass(folder, {})
                 U.sample_pass(folder, {})
                 self.assertEqual(scan.call_count, 1)

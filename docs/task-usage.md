@@ -31,7 +31,8 @@ and its processes currently have a combined 1.2 GiB of resident memory.
   the tree, attribute work sent to a shared service, or count CPU of tree-only
   processes that both start and exit between samples. Linux uses process start
   ticks; macOS uses libproc's precise birth time, own CPU and RSS. Unsupported or
-  unreadable process metadata produces unavailable data rather than a guess.
+  unreadable terminal-root metadata produces unavailable data rather than a guess;
+  inaccessible descendants cannot contribute to an RSS sum.
 - **Refresh:** the existing task news pass (scheduler and tick) collects the
   terminal records it already reads, once per host, at most every 12 seconds
   (normally a 15-second tick). It walks the process table only when a Working
@@ -48,7 +49,8 @@ and its processes currently have a combined 1.2 GiB of resident memory.
 
 The public cache is per machine and contains task keys, terminal identities,
 aggregate counters and timestamps, not process command lines or environments.
-The separate short-lived numeric baseline is discarded when there are no
+A private subdirectory holds the short-lived numeric baseline and staging files
+so list watchers only see the aggregate change. The baseline is discarded when there are no
 Working task terminals. A remote host must be running the updated task helper
 and have a reachable cache; an older or unreachable host does not produce local
 estimates for its tasks.

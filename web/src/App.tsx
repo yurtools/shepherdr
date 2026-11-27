@@ -494,7 +494,7 @@ function TaskPage({ task, middle, pane }: { task: Task; middle?: boolean; pane?:
   // them), else where it merges
   const ref = task.id.slice(task.id.lastIndexOf(':') + 1)
   const usage = usageText(task, useUsageExpiry([task]))
-  const usageEl = usage ? <span data-task-usage title={usageHelp(task)} className="block min-w-0 truncate text-fg3 tabular-nums">{usage}</span> : null
+  const usageEl = usage ? <span data-task-usage aria-description={usageHelp(task)} className="block min-w-0 truncate text-fg3 tabular-nums">{usage}</span> : null
   const doing = task.report ? <ReportLine w={task.report} head /> : task.status === 'work' && task.sub ? <span className="truncate">{task.sub}</span> : null
   // its helper agent at work or asking (SHEP-54: its reviewer), named after what it does; its row is over the box
   const helper = [...(task.subagents ?? [])].reverse().find((s) => s.status !== 'done')

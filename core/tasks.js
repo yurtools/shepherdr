@@ -8,11 +8,8 @@ import { REASONS } from "./needs.js";
 
 // An agent's own status, most urgent first.
 export const RANK = { blocked: 4, done: 3, working: 2, idle: 1 };
-export const STATUS = { needs: "Needs you", working: "Working", merging: "Merging", ready: "Ready · active", deferred: "Deferred", queued: "Queued", scheduled: "Scheduled", todo: "To do", done: "Done" };
+export { STATUS, ORDER } from "./task-filters.js";
 export const RANK_OF = Object.fromEntries(["needs", "ready", "deferred", "merging", "working", "queued", "scheduled", "todo", "done"].map((id, i) => [id, i]));
-// The list's order: its groups, and the filter row's chips.
-// Scheduled (SHEP-38, herdr-task --at/--in): a task that starts by itself at a time, after Queued (it waits longer).
-export const ORDER = ["needs", "ready", "deferred", "merging", "working", "queued", "scheduled", "todo", "done", "automations"];
 // How the list can be grouped (the ⋯ menu's Group by; Shepherdr's GROUP_WORDS). "folder" was Space's old key.
 export const GROUP_BY = ["you", "space", "status"];
 // A grouping's key: "folder" was Space's; Machine and Machine › Space are gone (SHEP-98): For you.

@@ -3240,10 +3240,11 @@ export default class Chat extends View {
       backToTasks();
       run("layout.show", { id: "panel" });
       // the filter row's chip and the search field, as the Tasks list's own keys set them (mods/tasks)
-      const FILTER = { need: "needs", work: "working", ready: "ready", merging: "merging", queued: "queued", scheduled: "scheduled", todo: "todo", done: "done", automations: "automations" };
+      const FILTER = { need: "needs", work: "working", ready: "ready", deferred: "deferred", merging: "merging", queued: "queued", scheduled: "scheduled", todo: "todo", done: "done", automations: "automations" };
       const at = Date.now();
-      setShared("tasks.filterreq", { key: nav.kind === "needs" ? "needs" : FILTER[nav.filter] ?? "all", at });
-      if (nav.kind === "tasks" && nav.search) setShared("tasks.searchreq", { q: String(nav.search), at });
+      const filter = nav.kind === "needs" ? "needs" : FILTER[nav.filter] ?? "all";
+      if (nav.kind === "tasks" && nav.search) setShared("tasks.searchreq", { q: String(nav.search), filter, at });
+      else setShared("tasks.filterreq", { key: filter, at });
       return { ok: true };
     }
     if (nav.kind === "artifact") { openViewer({ id: nav.artifact, title: nav.title, version: nav.v, machine: nav.machine ?? null }); return { ok: true }; }

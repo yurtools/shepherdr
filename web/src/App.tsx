@@ -40,6 +40,7 @@ import { ChatColumn, Frame, PanelColumn, PlacesColumn, PlacesToggle } from './Fr
 import { PanelSheet, TabBody, TaskPanel, TaskTabs } from './Panel.tsx'
 import { openAccept, useAccepting, ReviewReady } from './screens/Accept.tsx'
 import * as TK from '@core/tasks.js'
+import { usageText, usageHelp, useUsageExpiry } from './task-usage.ts'
 
 /** a line's first letter a capital, as the window writes every reason (core/tasks.js) */
 const capital = TK.capital as (s: string) => string
@@ -498,16 +499,21 @@ function TaskPage({ task, middle, pane }: { task: Task; middle?: boolean; pane?:
   // its agent is doing (working with no % yet, or a provider retry's line: its row's words, as the window's header says
   // them), else where it merges
   const ref = task.ref ?? task.id.slice(task.id.lastIndexOf(':') + 1)
+  const usage = usageText(task, useUsageExpiry([task]))
+  const usageEl = usage ? <span data-task-usage aria-description={usageHelp(task)} className="block min-w-0 truncate text-fg3 tabular-nums">{usage}</span> : null
   const doing = task.report ? <ReportLine w={task.report} head /> : task.status === 'work' && task.sub ? <span className="truncate">{task.sub}</span> : null
   // its helper agent at work or asking (SHEP-54: its reviewer), named after what it does; its row is over the box
   const helper = [...(task.subagents ?? [])].reverse().find((s) => s.status !== 'done')
   const sub = (
-    <span className="flex min-w-0 items-center gap-1.5">
-      {/* its status leads its quiet line, so Back alone hangs in the gutter and the title starts where the Assistant's does */}
-      {phone ? null : <Dot s={task.status} p={task.report?.progress} className="size-3" />}
-      <span className="shrink-0 text-fg3">{ref}</span>
-      {doing ? <span className="flex min-w-0 items-center gap-1.5"><span aria-hidden className="text-fg3">·</span>{doing}</span> : task.base ? <span className="min-w-0 truncate"><span aria-hidden className="text-fg3">· </span>→ {task.base}</span> : null}
-      {helper ? <span data-task-subagent className="flex min-w-0 shrink-[4] items-center gap-1.5 whitespace-nowrap"><span aria-hidden className="text-fg3">·</span><span className="truncate">{`${helper.title} ${helper.status === 'needs' ? 'needs it' : 'at work'}`}</span></span> : null}
+    <span className="block min-w-0">
+      <span className="flex min-w-0 items-center gap-1.5">
+        {/* its status leads its quiet line, so Back alone hangs in the gutter and the title starts where the Assistant's does */}
+        {phone ? null : <Dot s={task.status} p={task.report?.progress} className="size-3" />}
+        <span className="shrink-0 text-fg3">{ref}</span>
+        {doing ? <span className="flex min-w-0 items-center gap-1.5"><span aria-hidden className="text-fg3">·</span>{doing}</span> : task.base ? <span className="min-w-0 truncate"><span aria-hidden className="text-fg3">· </span>→ {task.base}</span> : null}
+        {helper ? <span data-task-subagent className="flex min-w-0 shrink-[4] items-center gap-1.5 whitespace-nowrap"><span aria-hidden className="text-fg3">·</span><span className="truncate">{`${helper.title} ${helper.status === 'needs' ? 'needs it' : 'at work'}`}</span></span> : null}
+      </span>
+      {usageEl}
     </span>
   )
   // in focus it sits at the window's edge: no line there
@@ -538,7 +544,7 @@ function TaskPage({ task, middle, pane }: { task: Task; middle?: boolean; pane?:
     return (
       <section className="flex min-h-0 min-w-0 flex-1 flex-col">
         <Head conversation lead={<><SpacesButtons pane={pane} /><Dot s={task.status} p={task.report?.progress} halo /></>}>
-          <Who name={task.name} kind={task.report ? <span className="flex min-w-0 gap-1">{ref} ·<ReportLine w={task.report} head /></span> : `${ref} · ${coordinator}`} />
+          <Who name={task.name} kind={usage ? sub : task.report ? <span className="flex min-w-0 gap-1">{ref} ·<ReportLine w={task.report} head /></span> : `${ref} · ${coordinator}`} />
           <div className="flex shrink-0 items-center gap-1">
             {tools}
             <PaneButtons i={pane} />

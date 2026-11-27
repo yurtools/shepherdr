@@ -12,7 +12,7 @@ import * as T from "../core/tasks.js";
 import { liveTaskTerminal, taskOwner } from "../core/task-owner.js";
 import { isHelper, subagentsOf } from "../core/chat-view.js";
 // The core is plain JavaScript; its defaults read as narrow types to TypeScript.
-const { place, refOf, taskKey, autoPrefix, reportOf, secondLine, leftOf, queueReason, machineOf } = T as any;
+const { place, refOf, taskKey, autoPrefix, reportOf, secondLine, leftOf, queueReason, machineOf, usageOf, USAGE_FILE } = T as any;
 import * as S from "../core/spaces.js";
 const { spacesFromDoc, sidebarOf, assistantOf, isUnread, inOrder, byMachineOrder, machineOrderOf } = S as any;
 import * as N from "../core/notify.js";
@@ -212,13 +212,14 @@ export class Model {
       const r = await sh(this.hub, READ_LISTS, [], m);
       if (r.code !== 0) return;
       if (m) this.pilots.set(m, fileIn(r.stdout, ".autopilot.json") ?? {});
-      this.lists.set(m, taskLists(r.stdout).map((d: any) => ({ ...d, machine: m, prefix: d.prefix || autoPrefix(d.folder), tasks: Array.isArray(d.tasks) ? d.tasks : [] })));
+      const usage = fileIn(r.stdout, USAGE_FILE);
+      this.lists.set(m, taskLists(r.stdout).map((d: any) => ({ ...d, usage, machine: m, prefix: d.prefix || autoPrefix(d.folder), tasks: Array.isArray(d.tasks) ? d.tasks : [] })));
     } catch {}
   }
 
   /** A task's agents now: live terminals labelled with its key, on the folder's machine, not shells. */
   private agentsOf(list: List, task: any) {
-    const out: { address: string; status: string | null; role: string; turn: number; since: number }[] = [];
+    const out: { address: string; status: string | null; role: string; turn: number; since: number; created?: number }[] = [];
     for (const k of this.hub.terminals.values()) {
       if (!liveTaskTerminal(k, { machine: list.machine ?? null, slug: list.slug, id: task.id }, task)) continue;
       const st = typeof k.status === "object" ? k.status?.state ?? null : null;
@@ -230,7 +231,7 @@ export class Model {
       if (isHelper(k)) continue;
       // turn: its finished turns, for a Ready task back at work (core busyAgain()); since: when its status last
       // changed (hc's status_ms), for the grace before a quiet agent needs the person (core GRACE_MS, SHEP-133)
-      out.push({ address: k.address, status: st, role: k.labels?.["herdr.role"] ?? "worker", turn: Number((k as any).turn) || 0, since: Number((k as any).status_ms) || 0 });
+      out.push({ address: k.address, status: st, role: k.labels?.["herdr.role"] ?? "worker", turn: Number((k as any).turn) || 0, created: (k as any).created_ms, since: Number((k as any).status_ms) || 0 });
     }
     return out;
   }
@@ -264,6 +265,7 @@ export class Model {
       return {
         key: taskKey(list, task), ref: refOf(list, task), title: task.title, section: p.section, needs: p.needs,
         sub: secondLine(p, w, p.section === "queued" ? queueReason(list, task, running) : null), left: leftOf(p, w), pct: w?.done ?? null,
+        usage: usageOf(list.usage?.[`${list.slug}#${task.id}`], p.section, live),
         // what its agent last said (core reportOf), as the window's task header shows it: working, and frozen while it
         // needs the person
         said: w?.text ? { text: w.text, done: w.done ?? null, left: w.left ?? null, paused: !!w.paused } : null,

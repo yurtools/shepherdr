@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
-import { place, queueReason, reportOf, estimated, order, ago, autoPrefix, refOf, taskKey, matches, busyAgain, secondLine, leftOf, ORDER, STATUS, WORKING_AGAIN, GRACE_MS, fromLine, autoWhere, inSpace, holdingItems } from "./tasks.js";
+import { place, queueReason, reportOf, estimated, order, ago, autoPrefix, refOf, taskKey, matches, busyAgain, secondLine, leftOf, ORDER, STATUS, WORKING_AGAIN, GRACE_MS, fromLine, autoWhere, inSpace, holdingItems, usageOf, usageLabel } from "./tasks.js";
 import { REASONS, fit } from "./needs.js";
 
 const NOW = 1_800_000_000_000;
@@ -249,4 +249,26 @@ test('a postponed Ready decision leaves active attention but remains reviewable'
   expect(place({}, { ...task, progress: { text: 'Unrelated update' } }).section).toBe('deferred');
   expect(place({}, { ...task, ready_at: 124 }).section).toBe('ready');
   expect(task.state).toBe('ready');
+});
+
+describe("task usage cache display", () => {
+  const sample = { at: NOW, cpu_pct: 237.7, rss_bytes: 1.5 * 2 ** 30, coverage: "scope+tree", workers: { t1: 123, t2: 456 } };
+  const live = [{ address: "t1", created: 123 }, { address: "t2", created: 456 }];
+  test("multicore CPU, RSS, unknown baseline, and actual zero", () => {
+    expect(usageLabel(usageOf(sample, "working", live, NOW), NOW)).toBe("CPU 238% · RSS 1.5 GiB");
+    expect(usageLabel(usageOf({ ...sample, cpu_pct: null, rss_bytes: 0 }, "working", live, NOW), NOW)).toBe("CPU — · RSS 0 MiB");
+    expect(usageLabel(usageOf({ ...sample, cpu_pct: 0, rss_bytes: 2 ** 20 }, "working", live, NOW), NOW)).toBe("CPU 0% · RSS 1 MiB");
+  });
+  test("stale, missing, stopped, replaced, concurrent worker changes", () => {
+    expect(usageLabel(usageOf(sample, "working", live, NOW + 46_000), NOW + 46_000)).toBe("Usage stale");
+    expect(usageLabel(usageOf(sample, "working", live, NOW), NOW + 46_000)).toBe("Usage stale");
+    for (const l of [[], live.slice(0, 1), [{ ...live[0], created: 999 }, live[1]], [...live, { address: "t3" }]]) {
+      expect(usageLabel(usageOf(sample, "working", l, NOW), NOW)).toBe("Usage unavailable");
+    }
+    expect(usageLabel(usageOf(null, "working", live, NOW), NOW)).toBe("Usage unavailable");
+    for (const section of ["needs", "todo", "queued", "scheduled", "ready", "merging", "done"]) expect(usageOf(sample, section, live, NOW)).toBeNull();
+  });
+  test("remote addresses match only the already host-selected cache", () => {
+    expect(usageOf(sample, "working", live.map((a) => ({ ...a, address: `other/${a.address}` })), NOW).cpu_pct).toBe(237.7);
+  });
 });

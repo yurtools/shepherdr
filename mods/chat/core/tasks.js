@@ -317,3 +317,32 @@ export function untilShort(ms, now = Date.now()) {
 }
 // A scheduled row's second line: "Starts Today 18:00"; "Starts now" once due.
 export const startsLine = (ms, now = Date.now()) => (typeof ms !== "number" ? "Scheduled" : ms <= now ? "Starts now" : `Starts ${startsAt(ms, now)}`);
+
+// Task usage is sampled by herdr-task's existing host tick, not by either UI. A cached
+// sample belongs to this task's exact live terminal(s), on the list's own machine.
+export const USAGE_FILE = ".task-usage.json";
+export const USAGE_MAX_AGE = 45_000;
+export const USAGE_HELP = "CPU: 100% = one logical core, averaged since the preceding sample. RSS: sum of resident process memory (shared pages may count in each process). Includes owned descendants and dedicated scopes where available; tree-only sampling can miss detached or short-lived processes.";
+export function usageOf(sample, section, live, now = Date.now()) {
+  if (section !== "working") return null;
+  const missing = (state) => ({ state, at: null, cpu_pct: null, rss_bytes: null });
+  if (!sample || !Number.isFinite(sample.at) || !live?.length || !sample.workers || Object.keys(sample.workers).length !== live.length ||
+      live.some((a) => !Object.hasOwn(sample.workers, String(a.address).split("/").pop()) ||
+        (a.created != null && sample.workers[String(a.address).split("/").pop()] !== a.created))) return missing("unavailable");
+  if (now - sample.at > USAGE_MAX_AGE || sample.at - now > 5000) return missing("stale");
+  const number = (n) => Number.isFinite(n) && n >= 0 ? n : null;
+  return { state: "current", at: sample.at, cpu_pct: number(sample.cpu_pct), rss_bytes: number(sample.rss_bytes),
+    coverage: sample.coverage === "scope+tree" ? "scope+tree" : "tree" };
+}
+
+// Use the same compact wording on both surfaces. No figure for an unknown CPU baseline,
+// an unreachable machine, or a task that no longer works; real zero remains a number.
+export function usageLabel(usage, now = Date.now()) {
+  if (!usage) return null;
+  if (usage.state === "stale" || (usage.state === "current" && (now - usage.at > USAGE_MAX_AGE || usage.at - now > 5000))) return "Usage stale";
+  if (usage.state !== "current") return "Usage unavailable";
+  const cpu = usage.cpu_pct == null ? "—" : `${Math.round(usage.cpu_pct)}%`;
+  const b = usage.rss_bytes;
+  const rss = b == null ? "—" : b >= 2 ** 30 ? `${(b / 2 ** 30).toFixed(1)} GiB` : `${Math.round(b / 2 ** 20)} MiB`;
+  return `CPU ${cpu} · RSS ${rss}`;
+}

@@ -32,9 +32,9 @@ import { taskMenu } from "./core/menus.js";
 import { machinesInOrder, machineOrderOf, chatPane } from "./core/spaces.js";
 // The rules for a task's status, order and words: shared with the web app (core/tasks.js).
 import { RANK, STATUS, RANK_OF, ORDER, GROUP_BY, groupBy, groupNow, machineOf, machineName, refOf, taskKey, autoPrefix, place,
-  queueReason, reportOf as report, secondLine, leftOf, order, matches, day, ago, capital, short, autoWhere, fromLine, inSpace, holdingItems } from "./core/tasks.js";
+  queueReason, reportOf as report, secondLine, leftOf, order, matches, day, ago, capital, short, autoWhere, fromLine, inSpace, holdingItems, USAGE_FILE, usageOf, usageLabel } from "./core/tasks.js";
 import { loadFilters, saveFilters, normalizeFilters, toggleFilter, filterLabel, filterChoices, splitFilterChoices } from "./core/task-filters.js";
-import { READ_LISTS, taskLists } from "./core/tasklists.js";
+import { READ_LISTS, taskLists, fileIn } from "./core/tasklists.js";
 import { SH } from "./core/paths.js";
 import { settle } from "./core/pending.js";
 import { dirs } from "./dirs.js";
@@ -201,7 +201,8 @@ export default class Tasks extends View {
     try { text = (await exec("sh", ["-c", READ_LISTS], { on: machine ?? undefined })).stdout; }
     catch (e) {
       // Another machine out of reach keeps its last lists, quietly.
-      if (!machine) { this.error = `Couldn't read the task lists: ${e?.message ?? e}`; this.ready = true; cx.notify(); }
+      if (!machine) { this.error = `Couldn't read the task lists: ${e?.message ?? e}`; this.ready = true; }
+      cx.notify(); // retained remote numbers can now become stale
       return;
     } finally {
       const again = this.reads.get(k);
@@ -211,8 +212,9 @@ export default class Tasks extends View {
     if (!machine) { this.ready = true; this.error = null; }
     if (this.raw.get(k) === text) { cx.notify(); return; }
     this.raw.set(k, text);
+    const usage = fileIn(text, USAGE_FILE);
     this.byMachine.set(k, taskLists(text)
-      .map((d) => ({ ...d, machine, prefix: d.prefix || autoPrefix(d.folder), tasks: Array.isArray(d.tasks) ? d.tasks : [] })));
+      .map((d) => ({ ...d, usage, machine, prefix: d.prefix || autoPrefix(d.folder), tasks: Array.isArray(d.tasks) ? d.tasks : [] })));
     this.merge();
     cx.notify();
   }
@@ -225,7 +227,6 @@ export default class Tasks extends View {
 
   // A task's agents now: live terminals labelled with its key, on the folder's machine.
   live(list, task) {
-    const key = `${list.slug}#${task.id}`;
     const m = list.machine ?? null;
     const f = this.frame ?? {};
     const shown = f.agents ??= new Map(agents().map((a) => [a.address, a]));
@@ -239,7 +240,7 @@ export default class Tasks extends View {
         // Where it shows: its own pane, else the chat pane it's parked behind (mods/chat).
         const pane = (f.panes ??= panes()).find((p) => p.terminal === k.address)?.pane ?? chatPane(k);
         return { address: k.address, status: st, program: a?.program ?? k.program, tab: tab && m ? `${m}/${tab}` : tab, pane,
-          role: k.labels?.["herdr.role"] ?? "worker", turn: k.turn,
+          role: k.labels?.["herdr.role"] ?? "worker", turn: k.turn, created: k.created_ms,
           // when its status last changed: a quiet agent needs the person only after core/tasks.js GRACE_MS
           ...(typeof k.status_ms === "number" ? { since: k.status_ms } : {}) };
       });
@@ -906,10 +907,11 @@ export default class Tasks extends View {
     const sub = this.statusLine(p, w);
     // Scheduled (SHEP-38): its time until it starts under its calendar ("6h"), where a working row's time left goes, in grey.
     const left = leftOf(p, w);
+    const usage = usageLabel(usageOf(list.usage?.[`${list.slug}#${task.id}`], section, live));
     // Pin / Unpin in its right-click menu (not an archived task's: archived ones drop out of Pinned).
     const key = taskKey(list, task);
     return this.line(`task-${key}`, {
-      go: this.target(p), glyph: this.glyph(p, w), ref: refOf(list, task), title: task.title, sub, left, leftColor: section === "scheduled" ? t.dim : null,
+      go: this.target(p), glyph: this.glyph(p, w), ref: refOf(list, task), title: task.title, sub, usage, left, leftColor: section === "scheduled" ? t.dim : null,
       dim: section === "done", selected: focused, where: bare ? null : this.whereOf(list.machine, placeName(list, task)),
       action: ["ready", "deferred"].includes(section) ? this.acceptButton(p, t) : null,
       pin: this.shelved(p) ? null : { key, on: this.pins().has(key), status: section, machine: list.machine ?? null, folder: list.folder,
@@ -987,7 +989,7 @@ export default class Tasks extends View {
   //   run (`meta`).
   // A row with nothing under its title is one line. Nothing shows on hover: no tooltips (SHEP-25).
   // `pin`: { key, on }: Pin / Unpin in the row's right-click menu.
-  line(id, { go, glyph, ref, title, sub, left, leftColor, dim, selected, meta, metaColor, where, action, pin }, t) {
+  line(id, { go, glyph, ref, title, sub, usage, left, leftColor, dim, selected, meta, metaColor, where, action, pin }, t) {
     // Every second line is at most 40 characters (herdr-task cuts an agent's own; this catches the
     // derived ones: a long queue, a check's message).
     const said = sub ? capital(sub) : null;
@@ -1012,7 +1014,8 @@ export default class Tasks extends View {
       .child(v_flex().w(14).flex_none().self_start().gap(2).child(mark)
         .when(Boolean(left), (el) => el.child(h_flex().w(14).h(16).items_center().justify_center().whitespace_nowrap()
           .font_family(ID_FONT).text_size(ID_SIZE).font_semibold().text_color(leftColor ?? amber()).child(left))))
-      .child(v_flex().flex_1().min_w(0).gap(2).child(h_flex().h(20).min_w(0).items_center().child(head.flex_1())).child(second))
+      .child(v_flex().flex_1().min_w(0).gap(2).child(h_flex().h(20).min_w(0).items_center().child(head.flex_1())).child(second)
+        .when(Boolean(usage), (el) => el.child(div().id(`${id}-usage`).h(16).min_w(0).truncate().text_size(TEXT.label).text_color(t.dim).child(usage))))
       .when(Boolean(end), (el) => el.child(end));
   }
 

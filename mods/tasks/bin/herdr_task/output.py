@@ -12,7 +12,7 @@ from .queues import waiting_ext, waiting_for
 
 # ---- output ---------------------------------------------------------------------------------
 
-def view(s, task, live=None):
+def view(s, task, live=None, helper_records=None):
     known, live = live is not None, live if live is not None else []
     running = [k for k in live if agent_running(k)]
     v = dict(task)
@@ -39,7 +39,7 @@ def view(s, task, live=None):
     v["live"] = [{"address": k["address"], "status": (k.get("status") or {}).get("state") if isinstance(k.get("status"), dict) else k.get("status"),
                   "tab": (k.get("labels") or {}).get("herdr.tab"), "role": (k.get("labels") or {}).get("herdr.role") or "worker"} for k in running]
     # Its worker's own helper agents (SHEP-54: a reviewer it started as an hc child), for the Tasks panel.
-    v["subagents"] = subagents(s.key(task)) if known and running and task["state"] in ("running", "ready") else []
+    v["subagents"] = subagents(s.key(task), helper_records) if known and (running or (helper_records is not None and v["status"] == "working")) and task["state"] in ("running", "ready") else []
     v["ref"], v["prefix"] = s.ref(task), s.prefix
     v["waiting_for"] = waiting_for(s, task)
     v["waiting_ext"] = waiting_ext(task)
@@ -57,8 +57,11 @@ def subagent(k):
             "at": k.get("created_ms")}
 
 
-def subagents(key):
-    return [subagent(detail(k)) for k in live_helpers(key)]
+def subagents(key, records=None):
+    full = [detail(k) for k in live_helpers(key)]
+    if records is not None:
+        records.extend(full)
+    return [subagent(k) for k in full]
 
 
 def progress_clock(s, task, status):

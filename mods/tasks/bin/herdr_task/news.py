@@ -20,6 +20,7 @@ from .launch import coordinator_in, parent_for
 from .store import locate, read_list, Store, store_files
 from .output import line, minutes, view
 from .takeover import backup_news
+from .task_usage import owned_records, sample_pass
 
 
 # ---- news -----------------------------------------------------------------------------------
@@ -83,10 +84,10 @@ def news_line(s, t, v, event, words=None):
     return f'<herdr-news task="{attr(ref)}" event="{event}">{text.replace("<", "‹").replace(">", "›")}</herdr-news>'
 
 
-def news_state(s, t, live):
+def news_state(s, t, live, helper_records=None):
     """What news would say of this task now: {status, why, event, stall}, with live = its running agents."""
     if t["state"] in ("running", "ready"):
-        v = view(s, t, live)
+        v = view(s, t, live) if helper_records is None else view(s, t, live, helper_records=helper_records)
     else:
         v = {"status": t["state"] if t["state"] in STATUSES else "todo", "needs": None, "why": None}
     event = {"ready": "ready", "done": "done", "needs": "needs-you"}.get(v["status"])
@@ -106,6 +107,7 @@ def news_pass(report, folder=None):
         state = {}
     seen, outbox, quiet = state.setdefault("seen", {}), state.setdefault("outbox", []), state.setdefault("quiet", {})
     current = {}  # key -> (status, stall mark), to check queued lines against
+    usage = {}    # reuse this pass's existing task/terminal status lookups
     for path in store_files(folder):
         d = read_list(path)
         if not d or not os.path.isdir(d.get("folder") or ""):
@@ -119,7 +121,12 @@ def news_pass(report, folder=None):
             for t in s.data["tasks"]:
                 key = f"{s.slug}#{t['id']}"
                 live = [k for k in map(detail, live_agents(s.key(t))) if agent_running(k)] if t["state"] in ("running", "ready") else []
-                v, event, stall = news_state(s, t, live)
+                helpers = []
+                v, event, stall = news_state(s, t, live, helpers if folder is None else None)
+                if folder is None and v["status"] == "working" and not t.get("archived"):
+                    records = owned_records(key, t, live, helpers)
+                    if records:
+                        usage[key] = records
                 # The Tasks panel reads the store, not the log: why its agent waits (its own status
                 # line, its question, its last words), as `list` says it, it shows from here.
                 waits = v["why"] if v.get("needs") in ("reply", "asks") else None
@@ -188,6 +195,14 @@ def news_pass(report, folder=None):
             ids = {str(t["id"]) for t in s.data["tasks"]}
             for k in [k for k in mine if k not in ids and k != "_init"]:
                 mine.pop(k)
+    # Both the scheduler and ordinary ticks already hold the tick lock. Folder-only
+    # passes must not replace the entire machine's sample or baseline.
+    if folder is None:
+        try:
+            sample_pass(STORE, usage)
+        except Exception:
+            # Failure is visible as unavailable/stale, never as a queue or news failure.
+            report["task_usage_unavailable"] = True
     report.setdefault("news", [])
     # Still true? A line whose task moved on since (or was removed) goes unsaid.
     def holds(x):

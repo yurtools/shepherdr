@@ -25,7 +25,7 @@ import { h_flex, v_flex } from "gpui-base";
 import { shared, setShared, run, theme, exec, appHome, home, readTextFile, writeTextFile, notify, layout, openOverlay } from "herdr";
 import { terminals, agents } from "./live.js";
 import { taskDot, ownProgress, estimated } from "./dot.js";
-import { busyAgain, onIt, readyWait } from "./core/tasks.js";
+import { busyAgain, onIt, readyWait, place, machineOf, usageOf, usageLabel, USAGE_FILE } from "./core/tasks.js";
 import { button, segmented, TEXT, RADIUS, toast, plainError } from "./ui.js";
 import { on as addonOn } from "./addons.js";
 import { artifactCli } from "./artview.js";
@@ -132,14 +132,27 @@ export class PanelHost {
     const k = (addr && this.taskOf(addr)) || cur?.key || null;
     let rec = null;
     if (k) {
-      const text = k.machine
-        ? (await exec("sh", ["-c", SH + 'cat "$SHEP_TASKS/$1.json"', "sh", k.slug], { on: k.machine }).catch(() => null))?.stdout
-        : await readTextFile(`${dirs().tasks}/${k.slug}.json`).catch(() => null);
+      let text, sample;
+      if (k.machine) {
+        // Same existing remote read, with the host's small aggregate cache appended.
+        const script = SH + 'cat "$SHEP_TASKS/$1.json"' + (this.head ? `; printf '\n@@usage@@\n'; cat "$SHEP_TASKS/${USAGE_FILE}" 2>/dev/null || true` : "");
+        const result = await exec("sh", ["-c", script, "sh", k.slug], { on: k.machine }).catch(() => null);
+        if (!result || result.code !== 0) { if (this.cur === cur) cx.notify(); return; }
+        [text, sample] = (result?.stdout ?? "").split("\n@@usage@@\n", 2);
+      } else {
+        [text, sample] = await Promise.all([
+          readTextFile(`${dirs().tasks}/${k.slug}.json`).catch(() => null),
+          this.head ? readTextFile(`${dirs().tasks}/${USAGE_FILE}`).catch(() => null) : null,
+        ]);
+      }
       try {
         const d = JSON.parse(text || "null");
         const t = d?.tasks?.find((x) => x.id === k.id);
-        rec = t ? { ...t, folder: d.folder, machine: k.machine, ref: d.prefix ? `${d.prefix}-${t.id}` : String(t.id) } : null;
+        rec = t ? { ...t, slug: k.slug, folder: d.folder, machine: k.machine, ref: d.prefix ? `${d.prefix}-${t.id}` : String(t.id) } : null;
       } catch {}
+      if (rec && this.head) {
+        try { rec.usage = JSON.parse(sample || "null")?.[`${k.slug}#${k.id}`] ?? null; } catch { rec.usage = null; }
+      }
     }
     if (this.cur !== cur) return;
     // Where the task's side views look (taskwhere.js): its worktree, else its list's folder.
@@ -344,7 +357,7 @@ export class PanelHost {
         const remote = addr ? addr.includes("/") : Boolean(key?.machine);
         if ((addr || key) && (!remote || ++this.ticks % 4 === 0)) cx.spawn(async (cx) => this.loadTask(addr, cx));
         // Its minutes left count down: a redraw every 30 s while it reports some.
-        if (this.rec?.progress && (this.redraws = (this.redraws ?? 0) + 1) % 10 === 0) cx.notify();
+        if ((this.rec?.progress || this.rec?.usage) && (this.redraws = (this.redraws ?? 0) + 1) % 10 === 0) cx.notify();
       });
     }
     const t = theme();
@@ -399,6 +412,7 @@ export class PanelHost {
   // reaching past it), and on the right the task's base and Accept
   // (no Pin: the task's row menu pins it, SHEP-62).
   barRow(t, st, addr) {
+    const usage = this.taskUsage();
     return h_flex().id("thread-bar").h(24).flex_none().pl(EDGE - 6).pr(EDGE).gap(4).items_center()
       .child(h_flex().id("thread-back").h(24).pl(2).pr(8).gap(2).flex_none().items_center().rounded(RADIUS.control).cursor_pointer()
         .text_size(TEXT.label).text_color(t.muted).hover((s) => s.bg(t.hover).text_color(t.foreground))
@@ -406,12 +420,29 @@ export class PanelHost {
         .child(svg("mods/workspace-chrome/chevron-left.svg").size(14).flex_none())
         .child("Tasks"))
       .child(div().flex_1())
+      .when(Boolean(usage), (el) => el.child(div().id("thread-usage").flex_shrink_1().min_w(0).truncate().text_size(TEXT.label).text_color(t.dim).child(usage)))
       // A task's own base (herdr-task add --base), where it merges into; the folder's default isn't shown.
-      .when(Boolean(this.rec?.base_set && this.rec?.base), (el) => el.child(div().id("thread-base").flex_none().max_w(160).truncate().pr(4)
+      .when(Boolean(this.rec?.base_set && this.rec?.base), (el) => el.child(div().id("thread-base").flex_shrink(1000).min_w(0).max_w(160).truncate().pr(4)
         .text_size(TEXT.label).text_color(t.muted).child(`→ ${this.rec.base}`)))
       // Review: the header's one primary button, opens the Accept card (its Accept merges first when there's something to merge).
       .when(this.acceptable(st, addr), (el) => el.child(button("thread-accept", this.accepting ? "Accepting…" : "Review",
         { kind: "primary", disabled: this.accepting, onClick: (_e, cx) => this.accept(cx) })));
+  }
+
+  taskUsage() {
+    const r = this.rec;
+    // Use the list's status rules, not the selected worker alone (another worker/helper may be busy).
+    const ts = r ? terminals().filter((k) => k.state === "live" && machineOf(k.address) === (r.machine ?? null)
+      && k.labels?.["herdr.task"] === `${r.slug}#${r.id}` && k.program?.key !== "shell" && !k.program?.shell) : [];
+    const shown = new Map(agents().map((a) => [a.address, a]));
+    const liveInfo = (k) => ({ address: k.address, status: shown.get(k.address)?.status ?? (typeof k.status === "string" ? k.status : null),
+      role: k.labels?.["herdr.role"] ?? "worker", turn: k.turn, since: k.status_ms, created: k.created_ms });
+    const isHelper = (k) => ["reviewer", "helper"].includes(k.labels?.["herdr.role"]) && !!k.parent;
+    const live = ts.filter((k) => !isHelper(k)).map(liveInfo);
+    const mine = new Set(live.map((a) => a.address.split("/").pop()));
+    const helpers = ts.filter((k) => isHelper(k) && mine.has(String(k.parent).split("/").pop())).map(liveInfo);
+    const section = r ? place({ machine: r.machine }, r, { live, helpers }).section : null;
+    return usageLabel(usageOf(r?.usage, section, live));
   }
 
   // The task: its status dot (as its Tasks row, Needs you with its halo) beside the title line,

@@ -74,6 +74,7 @@ State: ✓ matches, ◇ web-only form (why), ✗ still differs (why).
 | Title hover | T:822 the title when cut, an error | W Line `title` (the second line too when cut) | ✓ |
 | Second line words | T:841-842 capital first, at most 40 characters cut at a word, whole on hover | W Line (`capital`, `fit`) | ✓ fixed ("after SHEP-7" → "After SHEP-7") |
 | Working | core secondLine: why, else its agent's words; pie of % done | compat `sub`, TaskDot pie | ✓ |
+| Working resource usage | T row + P taskBlock (host cache, [units and scope](../task-usage.md)) | W Line + A TaskPage, same cached sample and formatter | ✓ |
 | Time left | T line() short under the glyph, level with line 2, amber mono: "6m", "<1m", "2h" (as before SHEP-34) | W Line `left` from compat `left` (core leftOf) | ✓ (SHEP-39) |
 | Needs you | why (core place) | compat `sub` | ✓ |
 | Queued | "After HERD-3", "Waits: …", "Starts soon" | compat `sub` (core queueReason) | ✓ |

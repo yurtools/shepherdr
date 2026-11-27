@@ -104,6 +104,14 @@ folder. Native Feature creation currently supports local spaces. Existing remote
 Assistant and task behavior is retained. Ordinary Sessions history still indexes
 Codex logs; named feature records also retain Claude sessions captured by a live view.
 
+## Watch task resource usage
+
+Working tasks show CPU and combined resident memory (RSS) beneath their task
+row and in their task header, also on the web. CPU can exceed 100% when a task
+uses multiple cores. The totals include owned child processes and helpers, not
+other tasks or the machine's overall usage. See [task usage](task-usage.md) for
+scope coverage, sampling, memory units and unavailable states.
+
 ## Review completed work
 
 **Review** opens a task’s evidence without approving it. The final button says

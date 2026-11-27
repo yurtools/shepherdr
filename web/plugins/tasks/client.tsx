@@ -86,6 +86,7 @@ import * as TK from '@core/tasks.js'
 import { filterChoices, filterKey, splitFilterChoices } from '@core/task-filters.js'
 import { selectedTaskRows } from '@client/groups.ts'
 import * as ND from '@core/needs.js'
+import { usageText, usageHelp, useUsageExpiry } from '@client/task-usage.ts'
 
 // the window's words for a row (core/tasks.js, core/needs.js): every second line starts with a capital and is at most
 // 40 characters, cut at a word (the whole of it in the row's label); an automation's next run as "9:00", "Tue 9:00", "Nov 12 9:00"
@@ -113,7 +114,7 @@ function RepeatIcon({ className }: { className?: string }) {
  * A task, with one line under its title (taskLine). Working, its pie fills with the % done its agent reported and the time
  * left sits short under it ("2h"); Ready, Review sits at the row's end.
  */
-function TaskRow({ t, ix, where }: { t: Task; ix: number; where?: string[] }) {
+function TaskRow({ t, ix, where, now }: { t: Task; ix: number; where?: string[]; now?: number }) {
   // the open task, or the focused pane's in split view
   const sel = useUI((u) => u.task === t.id || (panesHere(u)[u.split.pane]?.kind === 'task' && panesHere(u)[u.split.pane].id === t.id))
   const kb = useUI((u) => u.kb && !u.task && u.cur === ix)
@@ -140,6 +141,8 @@ function TaskRow({ t, ix, where }: { t: Task; ix: number; where?: string[] }) {
       ref_={refOf(t.id)}
       title={t.name}
       sub={t.sub}
+      usage={usageText(t, now) ?? undefined}
+      usageTip={t.status === 'work' ? usageHelp(t) : undefined}
       // Scheduled (SHEP-38): its time until it starts ("6h") in the same place, counted live, in grey
       left={t.archived ? undefined : t.status === 'work' ? t.left : t.status === 'scheduled' && t.startsAt ? (TK.untilShort as (ms: number) => string)(t.startsAt) : undefined}
       leftQuiet={t.status === 'scheduled'}
@@ -166,15 +169,15 @@ function TaskRow({ t, ix, where }: { t: Task; ix: number; where?: string[] }) {
  *   Review or an automation's next run (`meta`).
  * A row with nothing under its title is one line. `tip`: more for its button's label only (an automation's error).
  */
-function Line({ flip, sel = false, kb = false, glyph, ref_, title, sub, left, leftQuiet, dim, meta, where, action, tip, onOpen, menu, children }: {
-  flip?: string; sel?: boolean; kb?: boolean; glyph: ReactNode; ref_?: string; title: string; sub?: string; left?: string; leftQuiet?: boolean; dim?: boolean; meta?: string
+function Line({ flip, sel = false, kb = false, glyph, ref_, title, sub, usage, usageTip, left, leftQuiet, dim, meta, where, action, tip, onOpen, menu, children }: {
+  flip?: string; sel?: boolean; kb?: boolean; glyph: ReactNode; ref_?: string; title: string; sub?: string; usage?: string; usageTip?: string; left?: string; leftQuiet?: boolean; dim?: boolean; meta?: string
   where?: string; action?: ReactNode; tip?: string; onOpen?: (e: MouseEvent) => void; menu?: RowMenuState; children?: ReactNode
 }) {
   const said = sub ? capital(sub) : undefined
   const shown = said ? fit(said) : undefined
   // the rows under the title: REF · where (always, the same on every status), then the status line on its own line
   const second = !!(ref_ || where)
-  const rows = 1 + (second ? 1 : 0) + (shown ? 1 : 0)
+  const rows = 1 + (second ? 1 : 0) + (shown ? 1 : 0) + (usage ? 1 : 0)
   const two = rows > 1
   const statusRow = second ? 'row-start-3' : 'row-start-2'
   const end = action ?? (meta ? <span className="shrink-0 text-[0.75rem] whitespace-nowrap text-fg3 tabular-nums phone:text-[0.8125rem]">{meta}</span> : null)
@@ -185,7 +188,8 @@ function Line({ flip, sel = false, kb = false, glyph, ref_, title, sub, left, le
         <button
           type="button"
           aria-current={sel || undefined}
-          aria-label={`${ref_ ? `${ref_} ` : ''}${title}${said ? `, ${said}` : ''}${left ? (leftQuiet ? `, in ${left}` : `, ${left} left`) : ''}${meta ? `, ${meta}` : ''}${tip ? `, ${tip}` : ''}`}
+          aria-label={`${ref_ ? `${ref_} ` : ''}${title}${said ? `, ${said}` : ''}${left ? (leftQuiet ? `, in ${left}` : `, ${left} left`) : ''}${meta ? `, ${meta}` : ''}${usage ? `, ${usage}` : ''}${tip ? `, ${tip}` : ''}`}
+          title={usageTip}
           onClick={onOpen}
           className="absolute inset-0 cursor-pointer rounded-[inherit] outline-none keys:focus-visible:shadow-[inset_0_0_0_1.5px_var(--focus)]"
         />
@@ -213,6 +217,7 @@ function Line({ flip, sel = false, kb = false, glyph, ref_, title, sub, left, le
             <span className="min-w-0 truncate text-fg2">{shown}</span>
           </span>
         ) : null}
+        {usage ? <span aria-hidden={!!onOpen} data-task-usage className="col-start-2 col-end-4 min-w-0 truncate text-[0.75rem]/4 tabular-nums text-fg3 phone:text-[0.8125rem]/5" style={{ gridRowStart: rows }}>{usage}</span> : null}
         {end ? <span className={clsx('col-start-3 row-start-1 flex items-center', two && (rows === 3 ? 'row-span-3' : 'row-span-2'), two && '@max-[24rem]:row-span-1 @max-[24rem]:row-start-2')}>{end}</span> : null}
       </div>
       {children}
@@ -451,6 +456,7 @@ function StatusFilterRow({ selected, count }: { selected: string[]; count: (key:
 
 function TaskList(_: { placeId: string }) {
   const snap = useSnap()!
+  const usageNow = useUsageExpiry(snap.tasks)
   const view = useStore((s) => listView(s.ui, snap))
   const key = view.key
   const by = useUI((u) => u.groups)
@@ -537,7 +543,7 @@ function TaskList(_: { placeId: string }) {
         {groups.filter((g) => g !== archivedGroup).map((g) => {
           const fold: Fold | undefined = q ? undefined : { shut: g.shut, toggle: (all) => toggleShut(key, g.key, all ? groups.filter((x) => x !== g).map((x) => x.key) : []) }
           const extra = g.key === 'need' ? asks : []
-          const row = (t: Task) => <TaskRow key={t.id} t={t} ix={order.indexOf(t)} where={whereOf(snap, t, g.names)} />
+          const row = (t: Task) => <TaskRow key={t.id} t={t} now={usageNow} ix={order.indexOf(t)} where={whereOf(snap, t, g.names)} />
           const rows = <List>{g.tasks.map(row)}{extra.map((n) => <AgentNeedRow key={n.id} n={n} listKey={key} spaceOnly />)}</List>
           // by place: a space's work under its name, under its machine's name where more show; both fold
           if (g.on !== undefined) {

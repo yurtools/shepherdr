@@ -37,8 +37,8 @@ export function measureOrder(rows, keys, heights, measuredAt, near, now) {
 
 // External agents can send large context messages, bypassing the composer's
 // paste-to-file limit. Bound each native Markdown layout without losing text.
-export function messageChunks(value,limit=4000) {
-  const text=String(value??''),out=[];
+export function messageChunks(value,limit=4000,ranges=[]) {
+  const text=String(value??''),out=[];let hit=0;
   for(let at=0;at<text.length;){
     let end=Math.min(text.length,at+limit);
     if(end<text.length){
@@ -46,6 +46,9 @@ export function messageChunks(value,limit=4000) {
       if(newline>at+limit/2)end=newline+1;
       if(end>at&&/[\uD800-\uDBFF]/.test(text[end-1]))end--;
     }
+    // Find's literal occurrence must not be split in half by a virtual row.
+    while(hit<ranges.length&&ranges[hit].end<=end)hit++;
+    if(hit<ranges.length&&ranges[hit].start<end&&ranges[hit].end>end)end=ranges[hit].end;
     out.push(text.slice(at,end));at=end;
   }
   return out.length?out:[''];

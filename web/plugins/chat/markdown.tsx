@@ -3,6 +3,9 @@
 import DOMPurify from 'dompurify'
 import { marked } from 'marked'
 import { useMemo, type MouseEvent } from 'react'
+import { useFindQuery } from './find-scope.ts'
+import { containsFind, FIND_LIMITS } from '@core/chat-find.js'
+import { markdownProjection, markdownRanges } from '@core/chat-find-markdown.js'
 import { copyText } from '@client/copy.ts'
 import { goPlace, openTask, useSnap } from '@client/kernel.ts'
 import * as MNs from '@core/mentions.js'
@@ -125,8 +128,13 @@ export function Markdown({ text, chat }: { text: string; chat?: string }) {
 }
 
 function MarkdownText({ text, chat }: { text: string; chat?: string }) {
-  if (chat && hasMention(text)) return <WithMentions text={text} chat={chat} />
-  return <Plain text={text} />
+  const q = useFindQuery()
+  const source = useMemo(() => !!q && containsFind(text, q) && !markdownRanges(markdownProjection(text), q, 1).hits.length, [text, q])
+  const rendered = chat && hasMention(text) ? <WithMentions text={text} chat={chat} /> : <Plain text={text} />
+  return <>{rendered}{source ? <div className="mt-2 rounded-md border border-line2 p-2 text-xs">
+    <div data-find-ignore className="mb-1 text-fg2">Source match</div>
+    <pre data-find-field data-find-limited={text.length > FIND_LIMITS.chars ? '' : undefined} className="max-h-64 overflow-auto whitespace-pre-wrap break-all font-mono">{text.slice(0, FIND_LIMITS.chars)}</pre>
+  </div> : null}</>
 }
 
 function Plain({ text }: { text: string }) {

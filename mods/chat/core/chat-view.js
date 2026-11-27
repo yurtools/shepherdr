@@ -129,9 +129,16 @@ export function clock(at, now = new Date()) {
 
 // The actions under a message, in order: reply and copy; then the CLI's rewind on your own (not a /command, not one
 // another agent sent), or its fork on the agent's (when the CLI is known).
-export function bandActs(side, text, { from = null, fork = true } = {}) {
-  if (side === "user") return ["reply", "copy", ...(/^\//.test(String(text ?? "")) || from ? [] : ["rewind"])];
+export function bandActs(side, text, { from = null, fork = true, discard = false } = {}) {
+  if (side === "user") return ["reply", "copy", ...(/^\//.test(String(text ?? "")) || from ? [] : [discard ? "discard" : "rewind"])];
   return ["reply", "copy", ...(fork ? ["fork"] : [])];
+}
+
+export const DISCARD_TITLE = "Discard mistaken turn?";
+export function discardDetail(words) {
+  const text = String(words ?? "").replace(/\s+/g, " ").trim();
+  const preview = text.length > 160 ? text.slice(0, 159) + "…" : text;
+  return `“${preview}”\n\nIn Codex, rewinding this turn removes the prompt, its reply and tool context, keeping earlier turns. File, Git and other actions already taken stay as they are. There is no guaranteed undo.\n\nOpen Terminal. With an empty prompt, press Esc twice, check this prompt is selected, then press Enter to rewind. Clear the restored prompt without sending it.`;
 }
 
 // The whole band, in order from left to right (DECISIONS, Chat > Message actions): the reaction pills flush under the

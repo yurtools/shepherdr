@@ -1,0 +1,68 @@
+// Actual browser regression against test/fixtures/document-find-web.ts.
+// Connect to an already-open task browser; never start a second browser.
+// bun test/browser/document-find.ts <task CDP URL> http://127.0.0.1:19458 <optional shots folder>
+import {chromium} from 'playwright-core'
+import assert from 'node:assert/strict'
+import {join} from 'node:path'
+const [endpoint, base, shots] = process.argv.slice(2)
+assert(endpoint && /^http:\/\/127\.0\.0\.1:\d+$/.test(base), 'Use a synthetic loopback fixture and the task browser')
+const browser = await chromium.connectOverCDP(endpoint)
+const page = browser.contexts().flatMap(c=>c.pages()).find(p=>p.url().startsWith(base))
+assert(page, 'Open the isolated fixture in the task browser')
+const search = page.getByRole('searchbox', {name:'Find in document'})
+const status = page.locator('[role=search] [role=status]')
+const current = page.locator('.document-match-current')
+const marks = page.locator('.document-match')
+const shot = async(name:string) => { if(shots) await page.screenshot({path:join(shots,name+'.png')}) }
+const expectStatus = async(value:string) => page.waitForFunction(w=>document.querySelector('[role=search] [role=status]')?.textContent===w,value)
+const openFile = async(name:string) => { await page.getByRole('treeitem',{name,exact:true}).click(); await page.getByRole('button',{name:'Find in document (Ctrl/Cmd+F)'}).waitFor() }
+const back = async()=>page.getByRole('button',{name:'All files'}).click()
+try {
+  await page.setViewportSize({width:1280,height:800})
+  await page.goto(base)
+  // The app remembers the previous file/panel; route via visible controls.
+  const files=page.getByRole('button',{name:'Files',exact:true})
+  await files.waitFor()
+  if(!await page.getByRole('region',{name:'Files'}).isVisible()) await files.click()
+  if(await page.getByRole('button',{name:'All files'}).isVisible())await back()
+  await openFile('sample.ts')
+  await page.keyboard.press('Control+f')
+  await search.fill('needle'); await expectStatus('1 of 3')
+  assert.equal(await marks.count(),3)
+  assert.equal(await current.textContent(),'needle')
+  assert.equal(await marks.nth(1).textContent(),'NEEDLE')
+  // Syntax spans are still present alongside the marks.
+  await page.waitForFunction(()=>!!document.querySelector('.code-view .hljs-keyword'))
+  await search.fill('const needle'); await expectStatus('1 of 1')
+  assert.equal(await current.allTextContents().then(parts=>parts.join('')),'const needle')
+  await search.fill('needle'); await expectStatus('1 of 3')
+  await shot('web-first')
+  await page.keyboard.press('Enter'); await expectStatus('2 of 3')
+  assert.equal(await current.textContent(),'NEEDLE')
+  await page.keyboard.press('Shift+Enter'); await expectStatus('1 of 3')
+  await page.keyboard.press('Shift+Enter'); await expectStatus('3 of 3')
+  assert.equal(await current.locator('xpath=ancestor::tr/td[1]').textContent(),'148')
+  assert(await current.evaluate(el=>{const r=el.getBoundingClientRect(),b=el.closest('.code-view')!.getBoundingClientRect();return r.top>=b.top&&r.bottom<=b.bottom}))
+  await shot('web-last')
+  await page.getByRole('button',{name:'Next match (Enter)'}).click(); await expectStatus('1 of 3')
+  await page.getByRole('button',{name:'Previous match (Shift+Enter)'}).click(); await expectStatus('3 of 3')
+  await search.focus(); await page.keyboard.press('Escape')
+  assert.equal(await marks.count(),0)
+  assert.equal(await page.evaluate(()=>document.activeElement?.getAttribute('aria-label')),'File preview: sample.ts')
+  assert(await page.locator('.code-view').evaluate(el=>el.scrollTop>1000),'Closing Find retains the scrolled position')
+  await back(); await openFile('other.txt'); await page.keyboard.press('Meta+f')
+  await search.fill('needle'); await expectStatus('No matches'); assert.equal(await marks.count(),0)
+  await back(); await openFile('large.txt'); await page.keyboard.press('Control+f')
+  await search.fill('needle'); await expectStatus('1 of 1+')
+  assert.equal(await current.textContent(),'needle')
+  assert(await page.getByText('Only the first 400,000 file bytes are searchable in web Files.').isVisible())
+  await shot('web-partial')
+  await search.fill('not in prefix'); await expectStatus('No matches here'); assert.equal(await marks.count(),0)
+  await back(); await openFile('scan.pdf'); await page.keyboard.press('Control+f')
+  await search.fill('needle'); await expectStatus('Unavailable'); assert.equal(await marks.count(),0)
+  assert(await page.getByText('Search needs a readable text preview.').isVisible())
+  await back(); await openFile('ascii.pdf'); await page.keyboard.press('Control+f')
+  await search.fill('needle'); await expectStatus('Unavailable'); assert.equal(await marks.count(),0)
+  console.log('PASS: web Files Ctrl/Cmd+F; all three matches; syntax preserved; Enter/Shift+Enter/buttons wrap; late match in view; Escape removes marks and restores focus/scroll; file identity; partial and binary preview limits.')
+  process.exit(0)
+} catch(e) {console.error(e);process.exit(1)}

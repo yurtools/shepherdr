@@ -32,6 +32,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import unicodedata
 import urllib.parse
 import zlib
 
@@ -521,7 +522,7 @@ def helper(art, mod, agent, machine=None, custom=False):
 import {{ hc }} from "herdr";
 
 export const id = {json.dumps(art["id"])};
-export const title = {json.dumps(art["title"])};
+export const title = {json.dumps(art.get("title") if isinstance(art.get("title"), str) and art["title"].strip() else artifact_tab_name(art))};
 export const version = {art["version"]};
 /** The newest version when this one was installed (an older version shows only when picked). */
 export const latest = {art.get("latest") or art["version"]};
@@ -1241,7 +1242,7 @@ def current(mod, version):
     return got == [str(version), h] if h else got[:1] == [str(version)]
 
 
-def remote_viewer_owner(mod, machine):
+def remote_viewer_owner(mod, machine, aid=None):
     """Old mod names sanitize machine punctuation. Refuse a collision rather than reuse another owner's viewer."""
     folder = os.path.join(APP, "mods", mod)
     if not os.path.isdir(folder):
@@ -1250,16 +1251,27 @@ def remote_viewer_owner(mod, machine):
         with open(os.path.join(folder, "artifact.js")) as f:
             text = f.read()
         match = re.search(r"^export const machine = (.+);$", text, re.M)
-        owner = json.loads(match.group(1)) if match else None
+        if not match:
+            raise ValueError()
+        owner = json.loads(match.group(1))
     except (OSError, ValueError):
-        owner = None
+        raise Fail("This artifact's cached viewer has no recorded owner; it can't be opened safely here.") from None
     if owner != machine:
         raise Fail("This artifact's cached viewer belongs to another machine or has no recorded owner; it can't be opened safely here.")
+    if aid is not None:
+        match = re.search(r"^export const id = (.+);$", text, re.M)
+        try:
+            identity = json.loads(match.group(1)) if match else None
+        except ValueError:
+            identity = None
+        if identity != aid:
+            raise Fail("This artifact's cached viewer belongs to another artifact or has no recorded ID; it can't be opened safely here.")
 
 
-def pull(aid, machine, version=None):
+def pull(aid, machine, version=None, with_record=False):
     """Copies another machine's artifact into this window's app as art-<machine>-<id> (an older
-    version as art-<machine>-<id>--v<n>), unless it's already there. Returns the mod name."""
+    version as art-<machine>-<id>--v<n>), unless it's already there. Returns the mod name,
+    optionally with the fetched record."""
     base = f"art-{re.sub(r'[^A-Za-z0-9_-]+', '-', machine)}-{aid}"
     if version:
         # pack --version needs this herdr-artifact there: --on installs it when it differs.
@@ -1275,28 +1287,89 @@ def pull(aid, machine, version=None):
             raise Fail(f"Couldn't unpack {aid} from {machine}.")
         with open(os.path.join(d, ".record.json")) as f:
             art = json.load(f)
+        if not isinstance(art, dict) or art.get("id") != aid:
+            raise Fail("The fetched artifact does not match the requested ID.")
         latest = art.get("latest") or art["version"]
         mod = base if art["version"] == latest else version_mod(base, art["version"])
-        remote_viewer_owner(mod, machine)
-        if current(mod, art["version"]):
-            return mod
-        _, files = gather(d)
-        agent = f"{machine}/{art['publisher']}" if art.get("publisher") else None
-        write_mod(d, files, art, mod, agent, machine)
-    return mod
+        remote_viewer_owner(mod, machine, aid)
+        if not current(mod, art["version"]):
+            _, files = gather(d)
+            agent = f"{machine}/{art['publisher']}" if art.get("publisher") else None
+            write_mod(d, files, art, mod, agent, machine)
+    return (mod, art) if with_record else mod
 
 
-def local_mod(aid, version=None):
+def local_mod(aid, version=None, with_record=False):
     """This machine's artifact as this app's mod art-<id> (an older version as art-<id>--v<n>),
-    written if it isn't there yet (or was installed before this app's Mark up)."""
+    written if it isn't there yet (or was installed before this app's Mark up).
+    With with_record, also returns the selected version's public record."""
     loc = find_anywhere(aid)
     with Store(loc, write=False) as s:
         a = as_version(s.find(aid), version)
     mod = f"art-{aid}" if a["version"] == a["latest"] else version_mod(f"art-{aid}", a["version"])
+    # A local ID can spell the same mod name as a remote machine + ID.
+    remote_viewer_owner(mod, None, aid)
     if not current(mod, a["version"]):
         d = os.path.join(FILES, a["id"], f"v{a['version']}")
         write_mod(d, a.get("files") or gather(d)[1], a, mod, a.get("publisher"))
-    return mod
+    return (mod, public(a)) if with_record else mod
+
+
+def artifact_tab_name(a):
+    """A compact, single-line tab label, not an identifier or a version title."""
+    title = a.get("title")
+    if isinstance(title, str):
+        # Keep Unicode letters, accents and emoji; do not pass controls or bidi overrides to the tab.
+        title = "".join(" " if unicodedata.category(c) in ("Cc", "Cs") or
+                        (unicodedata.category(c) == "Cf" and c not in ("\u200c", "\u200d")) else c for c in title)
+        title = " ".join(title.split())
+    if not isinstance(title, str) or not title:
+        title = f"Artifact · {a['id']}"
+    elif title.isdecimal():
+        title = f"Artifact · {title}"
+    if len(title) > 64:
+        title = title[:63].rstrip() + "…"
+    return title
+
+
+def installed_tab_record(mod):
+    """Read the metadata written by this helper, never execute an artifact's code.
+
+    It describes the installed version (including on an offline machine), rather than a
+    possibly stale title in a sidebar list. Require an exact mod/ID/machine/version match.
+    """
+    if not re.fullmatch(r"art-[A-Za-z0-9_.-]+", mod):
+        raise Fail("Not an artifact viewer.")
+    try:
+        with open(os.path.join(APP, "mods", mod, "artifact.js"), encoding="utf-8") as f:
+            source = f.read(MAX_FILE + 1)
+        if len(source) > MAX_FILE or not source.startswith("// Written by herdr-artifact each time this artifact is installed."):
+            raise ValueError()
+        record = {}
+        for key, value in re.findall(r"^export const (id|title|machine|version|latest) = (.*);$", source, re.M):
+            if key in record:
+                raise ValueError()
+            record[key] = json.loads(value)
+        aid, machine = record["id"], record["machine"]
+        version, latest = record["version"], record.get("latest", record["version"])
+        if not isinstance(aid, str) or not re.fullmatch(r"[A-Za-z0-9_.-]+", aid):
+            raise ValueError()
+        if machine is not None and (not isinstance(machine, str) or not machine):
+            raise ValueError()
+        if type(version) is not int or type(latest) is not int or not 0 < version <= latest:
+            raise ValueError()
+        base = f"art-{re.sub(r'[^A-Za-z0-9_-]+', '-', machine)}-{aid}" if machine else f"art-{aid}"
+        if mod != (base if version == latest else version_mod(base, version)):
+            raise ValueError()
+        return record
+    except (OSError, ValueError, KeyError):
+        raise Fail("The installed viewer has no verified artifact metadata.") from None
+
+
+def cmd_tab_name(o):
+    a = installed_tab_record(o.mod)
+    print(json.dumps(dict(mod=o.mod, id=a["id"], machine=a["machine"], name=artifact_tab_name(a))))
+    return 0
 
 
 # ---- notes from the person (the viewer's Mark up) ------------------------------------------------
@@ -2012,11 +2085,19 @@ def open_window(o):
     else:
         with Store(find_anywhere(o.id), write=False) as s:
             a = public(s.find(o.id))
+    if not isinstance(a, dict) or a.get("id") != o.id:
+        raise Fail("Couldn't verify the requested artifact.")
+    if not isinstance(a.get("space"), str) or not a["space"]:
+        raise Fail("This artifact has no recorded owning space.")
+    # Use the record that was actually pulled/installed. A publish may have changed
+    # its title or owner since the initial show; never use a stale card or list name.
+    mod, a = pull(o.id, o.machine, with_record=True) if o.machine else local_mod(o.id, with_record=True)
+    if not isinstance(a, dict) or a.get("id") != o.id:
+        raise Fail("Couldn't verify the requested artifact.")
     space = a.get("space")
-    if not space:
+    if not isinstance(space, str) or not space:
         raise Fail("This artifact has no recorded owning space.")
     owner = f"{o.machine}/{space}" if o.machine and not space.startswith(o.machine + "/") else space
-    mod = pull(o.id, o.machine) if o.machine else local_mod(o.id)
     # Resolve the owner's panes after retrieval, never the focused pane in another space.
     try:
         listing = json.loads(run(["herdr-app", "ls"]).stdout)
@@ -2035,7 +2116,8 @@ def open_window(o):
     chosen = next((t for t in sp.get("tabs", []) if t.get("active")), None)
     pane = o.beside or next((x.get("pane") for x in (chosen or {}).get("terminals", []) if x.get("pane")), None)
     if o.tab or not pane:
-        args = ["herdr-app", "do", "tab.new", "--space", owner, "--mod", mod]
+        # JSON arguments keep any title (even one starting with "--") as a literal name.
+        args = ["herdr-app", "do", "tab.new", json.dumps(dict(space=owner, mod=mod, name=artifact_tab_name(a)))]
     else:
         args = ["herdr-app", "do", "pane.split", "--direction", o.direction, "--mod", mod, "--pane", pane]
     r = run(args)
@@ -2533,6 +2615,8 @@ def main():
     c.add_argument("id")
     c.add_argument("--from", dest="machine", help="the machine it's on (default: this one)")
     c.add_argument("--version", type=int, help="an older version (default: the latest)")
+    c = cmd("tab-name", cmd_tab_name, argparse.SUPPRESS)
+    c.add_argument("mod")
     c = cmd("pack", cmd_pack, argparse.SUPPRESS)
     c.add_argument("id")
     c.add_argument("--version", type=int)

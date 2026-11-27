@@ -45,6 +45,12 @@ class Ownership(unittest.TestCase):
     def opts(self, **kw):
         return types.SimpleNamespace(**{**dict(id=self.a['id'], machine=None, tab=False, direction='right', beside=None), **kw})
 
+    def local_viewer(self, aid, **kw):
+        with A.Store(A.find_anywhere(aid), write=False) as s:
+            record = A.public(s.find(aid))
+        mod = f'art-{aid}'
+        return (mod, record) if kw.get('with_record') else mod
+
     def command_json(self, *args):
         out = io.StringIO()
         with mock.patch('sys.argv', ['herdr-artifact', *args, '--json']), contextlib.redirect_stdout(out):
@@ -143,12 +149,95 @@ class Ownership(unittest.TestCase):
             if args == ['herdr-app', 'ls']:
                 return types.SimpleNamespace(returncode=0, stdout=json.dumps({'spaces': [{'id': 'A', 'tabs': [{'id': 'tab-a', 'active': True, 'terminals': [{'pane': 'pane-a'}]}]}]}), stderr='')
             return types.SimpleNamespace(returncode=0, stdout='{}', stderr='')
-        with mock.patch.object(A, 'local_mod', return_value='art-proof-1234'), mock.patch.object(A, 'run', side_effect=run):
+        with mock.patch.object(A, 'local_mod', side_effect=self.local_viewer), mock.patch.object(A, 'run', side_effect=run):
             self.assertEqual(A.open_window(self.opts()), 'art-proof-1234')
         select = ['herdr-app', 'do', 'space.select', '--id', 'A']
         self.assertIn(select, calls)
         self.assertLess(calls.index(select), next(i for i, c in enumerate(calls) if 'pane.split' in c))
+        self.assertIn(['herdr-app', 'do', 'pane.split', '--direction', 'right', '--mod', 'art-proof-1234', '--pane', 'pane-a'], calls)
+        self.assertFalse(any('tab.new' in c or 'tab.rename' in c for c in calls))
         self.assertFalse(any('kill' in c or 'terminal.close' in c for c in calls))
+
+    def test_dedicated_tab_uses_the_artifact_title_instead_of_a_number(self):
+        calls = []
+        def run(args):
+            calls.append(args)
+            listing = {'spaces': [{'id': 'A', 'tabs': []}, {'id': 'B', 'tabs': []}]}
+            return types.SimpleNamespace(returncode=0, stdout=json.dumps(listing), stderr='')
+        with mock.patch.object(A, 'local_mod', side_effect=self.local_viewer), mock.patch.object(A, 'run', side_effect=run):
+            A.open_window(self.opts())
+        create = next(c for c in calls if c[:3] == ['herdr-app', 'do', 'tab.new'])
+        # Herdr accepts either a JSON argument object or flag/value pairs.
+        args = json.loads(create[3]) if create[3].startswith('{') else dict(zip(
+            (x[2:] for x in create[3::2]), create[4::2]))
+        self.assertEqual(args, dict(space='A', mod='art-proof-1234', name='Same title'))
+
+    def test_open_cli_installs_and_names_a_titleless_recipe_without_a_live_window(self):
+        # Exercise the parser, real registry, installed recipe, and cached reopen;
+        # only the external window and show-to-screen calls are inert.
+        app = Path(self.root, 'app')
+        (app / 'mods').mkdir(parents=True)
+        record = dict(self.a, files=['recipe.json'])
+        record.pop('title')
+        Path(self.store, 'a.json').write_text(json.dumps(dict(folder='/a', artifacts=[record])))
+        source = Path(self.store, 'files', record['id'], 'v2')
+        source.mkdir(parents=True)
+        (source / 'recipe.json').write_text('{"recipe":1,"blocks":[{"type":"text","md":"Fixture report"}]}')
+        listing = {'spaces': [{'id': 'A', 'tabs': []}]}
+        response = types.SimpleNamespace(returncode=0, stdout=json.dumps(listing), stderr='')
+        with mock.patch.object(A, 'APP', str(app)), mock.patch.object(A, 'run', return_value=response) as run, \
+                mock.patch.object(A, 'web_link', return_value=None), mock.patch.object(A, 'ask_screen', return_value=False):
+            for _ in range(2):
+                result = self.command_json('open', record['id'], '--tab')
+                self.assertEqual(result['window'], 'art-proof-1234')
+                self.assertNotIn('error', result)
+            got = self.command_json('tab-name', 'art-proof-1234')
+            self.assertEqual(got['name'], 'Artifact · proof-1234')
+        self.assertEqual([json.loads(c.args[0][3]) for c in run.call_args_list if 'tab.new' in c.args[0]],
+                         [dict(space='A', mod='art-proof-1234', name='Artifact · proof-1234')] * 2)
+
+    def test_forced_tab_and_fallback_use_the_record_not_a_tab_or_title_lookup(self):
+        # Same title, different artifact ID, and a currently active terminal tab:
+        # neither the name nor focus is an artifact identity.
+        path = Path(self.store, 'a.json')
+        other = dict(self.a, id='other-5678')
+        path.write_text(json.dumps(dict(folder='/a', artifacts=[self.a, other])))
+        listing = {'spaces': [
+            {'id': 'B', 'active': True, 'tabs': [{'name': 'Same title', 'terminals': [{'pane': 'pane-b'}]}]},
+            {'id': 'A', 'tabs': [{'id': 'tab-a', 'name': 'My terminal', 'active': True, 'terminals': [{'pane': 'pane-a'}]}]},
+        ]}
+        with mock.patch.object(A, 'local_mod', side_effect=self.local_viewer), \
+                mock.patch.object(A, 'run', return_value=types.SimpleNamespace(returncode=0, stdout=json.dumps(listing), stderr='')) as run:
+            A.open_window(self.opts(tab=True, id=other['id']))
+            A.open_window(self.opts(tab=True))
+        creates = [json.loads(c.args[0][3]) for c in run.call_args_list if 'tab.new' in c.args[0]]
+        self.assertEqual(creates, [
+            dict(space='A', mod='art-other-5678', name='Same title'),
+            dict(space='A', mod='art-proof-1234', name='Same title')])
+        self.assertFalse(any('tab.rename' in c.args[0] or 'pane.split' in c.args[0] for c in run.call_args_list))
+
+    def test_title_comes_from_the_fetched_record_and_accepts_unicode_literals(self):
+        fresh = dict(self.a, space='A', title='-- 精度レポート 🧪\n  Résumé')
+        def run(args):
+            if 'show' in args:
+                data = dict(self.a, space='A', title='Stale list title')
+            elif args == ['herdr-app', 'ls']:
+                data = {'spaces': [{'id': 'vm/A', 'machine': 'vm', 'tabs': []}]}
+            else:
+                data = {}
+            return types.SimpleNamespace(returncode=0, stdout=json.dumps(data), stderr='')
+        with mock.patch.object(A, 'run', side_effect=run) as calls, mock.patch.object(A, 'pull', return_value=('art-vm-proof-1234', fresh)):
+            A.open_window(self.opts(machine='vm', tab=True))
+        create = next(c.args[0] for c in calls.call_args_list if 'tab.new' in c.args[0])
+        self.assertEqual(json.loads(create[3]), dict(space='vm/A', mod='art-vm-proof-1234', name='-- 精度レポート 🧪 Résumé'))
+
+    def test_a_pull_that_loses_its_owner_must_not_use_the_old_one(self):
+        def run(args):
+            return types.SimpleNamespace(returncode=0, stdout=json.dumps(dict(self.a, space='A')), stderr='')
+        with mock.patch.object(A, 'run', side_effect=run) as calls, mock.patch.object(A, 'pull', return_value=('art-vm-proof-1234', dict(self.a, space=None))):
+            with self.assertRaisesRegex(A.Fail, 'owning space'):
+                A.open_window(self.opts(machine='vm', tab=True))
+        self.assertFalse(any('space.select' in c.args[0] or 'tab.new' in c.args[0] for c in calls.call_args_list))
 
     def test_old_proof_in_a_worktree_recovers_owner_by_proof_identity(self):
         self.write_task('a', '/a', 'A', {'id': self.a['id']})
@@ -167,7 +256,7 @@ class Ownership(unittest.TestCase):
         self.assertIsNone(A.public(self.a)['space'])
 
     def test_unavailable_window_owner_never_falls_through_to_split(self):
-        with mock.patch.object(A, 'local_mod', return_value='art-proof-1234'), mock.patch.object(A, 'run', return_value=types.SimpleNamespace(returncode=1, stdout='', stderr='gone')) as run:
+        with mock.patch.object(A, 'local_mod', side_effect=self.local_viewer), mock.patch.object(A, 'run', return_value=types.SimpleNamespace(returncode=1, stdout='', stderr='gone')) as run:
             with self.assertRaisesRegex(A.Fail, 'unavailable'):
                 A.open_window(self.opts())
         self.assertFalse(any('pane.split' in c.args[0] for c in run.call_args_list))
@@ -189,14 +278,15 @@ class Ownership(unittest.TestCase):
             else:
                 data = {}
             return types.SimpleNamespace(returncode=0, stdout=json.dumps(data), stderr='')
-        with mock.patch.object(A, 'run', side_effect=run) as calls, mock.patch.object(A, 'pull', return_value='art-vm-proof-1234'):
+        with mock.patch.object(A, 'run', side_effect=run) as calls, mock.patch.object(A, 'pull', side_effect=lambda *args, **kw: ('art-vm-proof-1234', dict(self.a, space='A')) if kw.get('with_record') else 'art-vm-proof-1234'):
             A.open_window(self.opts(machine='vm', tab=True))
         self.assertIn(mock.call(['herdr-app', 'do', 'space.select', '--id', 'vm/A']), calls.call_args_list)
-        self.assertIn(mock.call(['herdr-app', 'do', 'tab.new', '--space', 'vm/A', '--mod', 'art-vm-proof-1234']), calls.call_args_list)
+        create = next(c.args[0] for c in calls.call_args_list if c.args[0][:3] == ['herdr-app', 'do', 'tab.new'])
+        self.assertEqual(json.loads(create[3]), dict(space='vm/A', mod='art-vm-proof-1234', name='Same title'))
 
     def test_explicit_pane_from_another_space_is_refused(self):
         listing = {'spaces': [{'id': 'A', 'tabs': [{'terminals': [{'pane': 'pane-a'}]}]}]}
-        with mock.patch.object(A, 'local_mod', return_value='art-proof-1234'), mock.patch.object(A, 'run', return_value=types.SimpleNamespace(returncode=0, stdout=json.dumps(listing))) as run:
+        with mock.patch.object(A, 'local_mod', side_effect=self.local_viewer), mock.patch.object(A, 'run', return_value=types.SimpleNamespace(returncode=0, stdout=json.dumps(listing))) as run:
             with self.assertRaisesRegex(A.Fail, 'not in.*owning space'):
                 A.open_window(self.opts(beside='pane-b'))
         self.assertFalse(any('space.select' in c.args[0] or 'pane.split' in c.args[0] for c in run.call_args_list))
@@ -222,3 +312,56 @@ class Ownership(unittest.TestCase):
             with mock.patch.object(A.subprocess, 'run', side_effect=transfer), mock.patch.object(A, 'current', return_value=True):
                 with self.assertRaisesRegex(A.Fail, 'another machine'):
                     A.pull(self.a['id'], 'vm-a')
+
+    def test_local_cached_viewer_cannot_reuse_a_remote_viewers_mod(self):
+        app = Path(self.root, 'app')
+        remote = dict(self.a, id='1234')
+        p = app / 'mods' / 'art-proof-1234'
+        p.mkdir(parents=True)
+        (p / 'artifact.js').write_text(A.helper(remote, p.name, None, machine='proof'))
+        with mock.patch.object(A, 'APP', str(app)), mock.patch.object(A, 'current', return_value=True):
+            with self.assertRaisesRegex(A.Fail, 'another machine'):
+                A.local_mod(self.a['id'])
+
+    def test_remote_pack_must_match_the_exact_requested_artifact(self):
+        def transfer(argv, **kwargs):
+            if argv[0] == 'tar':
+                Path(argv[2], '.record.json').write_text(json.dumps(dict(self.a, id='different-5678')))
+            return types.SimpleNamespace(returncode=0, stdout=b'pack', stderr=b'')
+        with mock.patch.object(A.subprocess, 'run', side_effect=transfer), mock.patch.object(A, 'write_mod') as install:
+            with self.assertRaisesRegex(A.Fail, 'requested ID'):
+                A.pull(self.a['id'], 'vm')
+        install.assert_not_called()
+
+    def test_tab_names_are_bounded_and_have_a_readable_missing_title(self):
+        for raw, expected in [(None, 'Artifact · proof-1234'), (' \n\t ', 'Artifact · proof-1234'),
+                              ('4', 'Artifact · 4'),
+                              (42, 'Artifact · proof-1234'), ('  R\x00esumé\n\t 🧪  ', 'R esumé 🧪'),
+                              ('報告' * 100, '報告' * 31 + '報…')]:
+            with self.subTest(raw=raw):
+                self.assertEqual(A.artifact_tab_name(dict(self.a, title=raw)), expected)
+
+    def test_legacy_tab_metadata_is_read_by_exact_mod_id_machine_and_version(self):
+        app = Path(self.root, 'app')
+        def installed(mod, record, machine=None):
+            p = app / 'mods' / mod
+            p.mkdir(parents=True, exist_ok=True)
+            (p / 'artifact.js').write_text(A.helper(record, mod, None, machine=machine))
+        with mock.patch.object(A, 'APP', str(app)):
+            installed('art-proof-1234', self.a)
+            installed('art-vm-proof-1234--v1', dict(self.a, version=1, latest=2, title='Remote · Proof'), 'vm')
+            local = self.command_json('tab-name', 'art-proof-1234')
+            remote = self.command_json('tab-name', 'art-vm-proof-1234--v1')
+            self.assertEqual(local, dict(mod='art-proof-1234', id=self.a['id'], machine=None, name='Same title'))
+            self.assertEqual(remote, dict(mod='art-vm-proof-1234--v1', id=self.a['id'], machine='vm', name='Remote · Proof'))
+            installed('art-missing-4321', dict(self.a, id='missing-4321', title=None))
+            self.assertEqual(self.command_json('tab-name', 'art-missing-4321')['name'], 'Artifact · missing-4321')
+            for mod in ('art-wrong-id', 'art-vm-proof-1234--v2', 'art-local-collision'):
+                installed(mod, self.a, 'vm')
+                with self.assertRaisesRegex(A.Fail, 'verified artifact metadata'):
+                    A.installed_tab_record(mod)
+            with self.assertRaisesRegex(A.Fail, 'Not an artifact'):
+                A.installed_tab_record('../art-proof-1234')
+            (app / 'mods' / 'art-proof-1234' / 'artifact.js').write_text('export const title = "Unrelated";')
+            with self.assertRaisesRegex(A.Fail, 'verified artifact metadata'):
+                A.installed_tab_record('art-proof-1234')

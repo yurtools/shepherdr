@@ -43,13 +43,13 @@ export function fromLine(events, where) {
 // group sits under no machine or space heading); its machine only when more than one machine has tasks.
 export const autoWhere = (machine, space, multi) => [multi ? machine : null, space].filter(Boolean).join(" · ") || null;
 // This space (SHEP-72, the filter row's toggle): a task, automation or Needs-you item is a space's when it is on the
-// space's machine and either its list's folder is the space's folder, or it was started for that space (the space id
+// space's machine and its recorded space matches, or (only for older unowned entries) its folder matches (the space id
 // herdr-task keeps on it: "sp3", or "vm/sp3" once read from another machine). space: { id, machine, folder };
 // thing: { machine, folder, space }.
 const bareId = (id) => (id == null ? null : String(id).slice(String(id).lastIndexOf("/") + 1));
 export function inSpace(space, thing) {
   if (!space || !thing || (thing.machine ?? null) !== (space.machine ?? null)) return false;
-  return (Boolean(thing.folder) && thing.folder === space.folder) || (thing.space != null && bareId(thing.space) === bareId(space.id));
+  return thing.space != null ? bareId(thing.space) === bareId(space.id) : Boolean(thing.folder) && thing.folder === space.folder;
 }
 // A list's task id: HAT-4.
 export const refOf = (list, task) => `${list.prefix}-${task.id}`;
@@ -58,13 +58,7 @@ export const taskKey = (list, task) => `${list.machine ?? ""}:${list.folder}#${t
 
 // herdr-task's auto_prefix: the initials of the folder name's words (herdr-app-ttt -> HAT, up to
 // 5), or a single word's first 4 letters (shepherdr -> SHEP); at least 2 letters.
-export function autoPrefix(folder) {
-  const name = String(folder ?? "").split("/").filter(Boolean).pop() ?? "";
-  const ws = name.replace(/([a-z])([A-Z])/g, "$1 $2").split(/[^A-Za-z]+/).filter(Boolean);
-  let p = ws.length > 1 ? ws.map((w) => w[0]).join("").slice(0, 5) : (ws[0] ?? "").slice(0, 4);
-  if (p.length < 2) p = ws.join("").length >= 2 ? ws.join("").slice(0, 2) : "TASK";
-  return p.toUpperCase();
-}
+export { autoPrefix } from './task-owner.js';
 
 // An agent was started for the task under STARTING_MS ago and hasn't ended (as herdr-task's).
 export const STARTING_MS = 90000;

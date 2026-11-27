@@ -1,4 +1,5 @@
-import { openWorkerView } from './task-view.js';
+import { openWorkerView, resolveTaskView } from './task-view.js';
+import { taskOwner, liveTaskTerminal } from './core/task-owner.js';
 // Jump (Ctrl+K, as Shepherdr's ⌘K): one box that finds a space, a task, an artifact or a machine and
 // goes there. Opened with mod.open:jump (again closes it), a popup at the top of the window.
 // Type to filter: every word typed must be in the item somewhere, any case (Shepherdr's
@@ -93,19 +94,6 @@ const find = (node, id) => {
   return null;
 };
 
-// A task's worker chat inside the Tasks panel (mods/chat/panel.js openTaskThread).
-function openTaskThread(terminal, task, title) {
-  openWorkerView({ terminal, task: task ?? null, title: title ?? null });
-}
-
-// The Tasks list, searched for one task (mods/tasks/main.js reads shared "tasks.searchreq").
-function showInTaskList(q) {
-  setShared("tasks.searchreq", { q, at: Date.now() });
-  run("layout.select", { stack: "panel-body", child: "tasks" });
-  run("layout.select", { stack: "tasks", child: "tasks-list" });
-  run("layout.show", { id: "panel" });
-}
-
 export default class Jump extends View {
   init(_props, cx) {
     note("feature", { type: "jump" });
@@ -171,8 +159,7 @@ export default class Jump extends View {
   live(list, task) {
     const key = `${list.slug}#${task.id}`, m = list.machine ?? null;
     const shown = new Map(agents().map((a) => [a.address, a]));
-    return terminals().filter((k) => k.state === "live" && k.labels?.["herdr.task"] === key && machineOf(k.address) === m)
-      .filter((k) => k.program?.key !== "shell" && !k.program?.shell)
+    return terminals().filter(k => liveTaskTerminal(k, { machine: m, slug: list.slug, id: task.id }, task))
       .map((k) => ({ address: k.address, status: shown.get(k.address)?.status ?? k.status, turn: k.turn, role: k.labels?.["herdr.role"] ?? "worker" }));
   }
 
@@ -207,14 +194,14 @@ export default class Jump extends View {
     for (const [, lists] of this.lists) for (const list of lists) for (const task of list.tasks) {
       if (task.archived && !q) continue;
       const ref = `${list.prefix}-${task.id}`;
-      const space = this.spaceAt(list.machine, list.folder);
+      const space = taskOwner(spaces(), list.machine, task.space);
       const place = [space ? this.nameOf(space) : list.name, remote ? machineName(list.machine) : null].filter(Boolean).join(" · ");
       const live = task.state === "running" || task.state === "ready" ? this.live(list, task) : [];
       const status = this.status(task, live);
       const line = status === "working" ? task.progress?.text : status === "needs" ? task.waits ?? task.attention : task.summary;
       if (q && !matches(q, ref, task.title, task.progress?.text, task.summary, task.waits, task.attention, space ? this.nameOf(space) : null, list.name, machineName(list.machine))) continue;
       const at = Math.max(0, ...[task.archived, task.done_at, task.ready_at, task.progress?.at, task.started, task.created].filter((x) => typeof x === "number"));
-      out.push({ kind: "task", key: `t:${list.machine ?? ""}:${list.slug}#${task.id}`, ref, label: task.title, live, status, pct: task.progress?.done,
+      out.push({ kind: "task", key: `t:${list.machine ?? ""}:${list.slug}#${task.id}`, ref, label: task.title, live, taskKey: { machine: list.machine ?? null, folder: list.folder, slug: list.slug, id: task.id }, space: task.space, feature: task.feature, status, pct: task.progress?.done,
         sub: [task.archived ? "Archived" : STATUS[status], line && capital(String(line).split("\n")[0]), place].filter(Boolean).join(" · "), at });
     }
     for (const [, arts] of this.arts) for (const a of arts) {
@@ -257,24 +244,30 @@ export default class Jump extends View {
       cx?.notify();
       return;
     }
+    if (r.kind === "task") {
+      const overlay = props().overlay;
+      // Keep the originating view alive until the exact owner was resolved.
+      return this.openTask(r).then(result => { if (result?.ok) closeOverlay(overlay); });
+    }
     closeOverlay(props().overlay);
     if (r.kind === "space") run("space.select", { id: r.id });
     else if (r.kind === "machine") {
       const s = spaces().find((x) => (x.machine ?? null) === (r.name ?? null));
       if (s) run("space.select", { id: s.id });
       else run("app.settings", { section: "machines" });
-    } else if (r.kind === "task") this.openTask(r);
-    else if (r.kind === "artifact") this.openArtifact(r.art);
+    } else if (r.kind === "artifact") this.openArtifact(r.art);
   }
 
   // Its worker's chat in the Tasks panel (a worker asking first); else the Tasks list, searched
   // for it. Where the shown layout has no Tasks panel, ours that has one shows first.
-  openTask(r) {
-    if (!find(layout(), "tasks-list") && layouts().includes(TASKS_LAYOUT)) run("layout.switch", { name: TASKS_LAYOUT });
+  async openTask(r) {
     const workers = r.live.filter((a) => a.role !== "reviewer");
     const w = workers.find((a) => a.status === "blocked") ?? workers[0] ?? r.live[0];
-    if (w) return openTaskThread(w.address, r.ref, r.label);
-    showInTaskList(`${r.ref} ${r.label}`);
+    const want = { terminal: w?.address, task: r.ref, title: r.label, key: r.taskKey, space: r.space, feature: r.feature };
+    if (!find(layout(), "tasks-thread") && layouts().includes(TASKS_LAYOUT)) {
+      try { await resolveTaskView(want); run("layout.switch", { name: TASKS_LAYOUT }); } catch {}
+    }
+    return openWorkerView(want, { mode: "chat" });
   }
 
   // Over the chat the keyboard was in, as its card opens it; else in the Artifacts sidebar.

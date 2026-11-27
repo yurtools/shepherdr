@@ -185,7 +185,7 @@ async function doNav(nav: Nav): Promise<NavAck> {
     if (!snap.tasks.some((t) => t.id === id)) return no('this app doesn\'t list that task')
     setUI(LAYERS_OFF)
     if (tab === 'review') { openAccept(id); return { ok: true, where: whereNow() } }
-    openTask(id)
+    if (!openTask(id)) return no(getState().ui.taskError ?? "the task did not open")
     const item = ITEM[tab]
     if (item) {
       if (getState().ui.device === 'desktop') setUI((u) => ({ sidebars: { ...u.sidebars, panelOpen: true, item } }))

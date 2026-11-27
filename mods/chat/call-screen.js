@@ -1,3 +1,4 @@
+import { activeTaskThread } from "./task-thread-state.js";
 // A voice call's screen in the Herdr window (SHEP-51, core/screen.js): the voice agent's fallback for what its
 // Shepherdr tools can't do, as the web page's (web/plugins/voice/screen.ts) but with what a mod can reach. A mod can't
 // read another mod's drawing, so the window's screen is its frame, read from Herdr: the spaces, the shown space's tabs,
@@ -70,7 +71,7 @@ export class CallScreen {
       add("thread:back", { role: "button", name: "Back to the task list", depth: 1 }, () => backToTasks());
       const shownTab = find(tree, BODY)?.active;
       for (const [id, name] of THREAD_TABS) if (find(tree, id)) add(`thread:${id}`, { role: "tab", name: `Task's ${name}`, selected: shownTab === id, depth: 1 }, () => {
-        const term = shared("tasks.thread")?.terminal;
+        const term = activeTaskThread()?.terminal;
         if (id === TERM && term) requestWorkerTerminal(term);
         run("layout.select", { stack: BODY, child: id });
       });

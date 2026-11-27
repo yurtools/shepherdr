@@ -241,7 +241,7 @@ const unattr = (v) => String(v ?? "").replace(/&quot;/g, '"').replace(/&lt;/g, "
 function newsOf(t) {
   const s = String(t), code = codeRanges(s);
   return [...s.matchAll(/<herdr-news\b([^>]*)>([\s\S]*?)<\/herdr-news\s*>/g)].filter((m) => !inCode(code, m.index)).map(([, a, text]) => ({
-    ref: unattr(/\btask="([^"]*)"/.exec(a)?.[1]), event: unattr(/\bevent="([^"]*)"/.exec(a)?.[1]), text: text.trim() })).filter((n) => n.ref && n.event);
+    ref: unattr(/\btask="([^"]*)"/.exec(a)?.[1]), event: unattr(/\bevent="([^"]*)"/.exec(a)?.[1]), ...( /\bfolder="([^"]*)"/.test(a) ? { folder: unattr(/\bfolder="([^"]*)"/.exec(a)?.[1]) } : {}), text: text.trim() })).filter((n) => n.ref && n.event);
 }
 
 // An Autopilot wake (herdr-task's <herdr-autopilot reason=…>): { reason }, else null. Its words never show; the chat

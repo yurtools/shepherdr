@@ -1,5 +1,6 @@
 import { BoundedWait, TIMEOUT, DISPOSED } from "./bounded-wait.js";
 import { openWorkerView } from './task-view.js';
+import { taskOwner, liveTaskTerminal } from "./core/task-owner.js";
 // Tasks: named pieces of work with a prompt, one list per folder (the repo root in git, worktrees
 // included). Each folder's list is ~/.herdr/tasks/<slug>.json on the machine the folder is on,
 // changed only through the herdr-task CLI (bin/herdr-task), which coordinators and agents use.
@@ -66,7 +67,18 @@ function spaceOf(list) {
   if (!spaceAt) { spaceAt = new Map(); const rank = machineRank(), n = spaces().length + 1; for (const [j, s] of spaces().entries()) { const i = rank(s.machine) * n + j; const k = `${s.machine ?? ""}:${s.folder}`; if (!spaceAt.has(k)) spaceAt.set(k, { id: s.id, name: s.name, at: i, active: Boolean(s.active) }); } }
   return spaceAt.get(`${list.machine ?? ""}:${list.folder}`) ?? { name: list.name, at: Infinity };
 }
-const placeName = (list) => spaceOf(list).name;
+const placeName = (list, task = null) => task ? taskOwner(spaces(), list.machine, task.space)?.name ?? list.name : spaceOf(list).name;
+
+function ownerGroups(placed) {
+  const groups = new Map();
+  for (const p of placed) {
+    const owner = taskOwner(spaces(), p.list.machine, p.task.space);
+    const key = JSON.stringify([p.list.machine, p.list.folder, owner?.id ?? null]);
+    if (!groups.has(key)) groups.set(key, { list: p.list, owner, items: [] });
+    groups.get(key).items.push(p);
+  }
+  return [...groups.values()];
+}
 
 // herdr-task, here or (through its --on) on the machine that holds the folder. Resolves with its
 // JSON output; rejects with its error.
@@ -216,8 +228,7 @@ export default class Tasks extends View {
     const m = list.machine ?? null;
     const f = this.frame ?? {};
     const shown = f.agents ??= new Map(agents().map((a) => [a.address, a]));
-    return (f.terminals ??= terminals()).filter((k) => k.state === "live" && k.labels?.["herdr.task"] === key && machineOf(k.address) === m)
-      .filter((k) => k.program?.key !== "shell" && !k.program?.shell && !helper(k))
+    return (f.terminals ??= terminals()).filter((k) => liveTaskTerminal(k, { machine: m, slug: list.slug, id: task.id }, task) && !helper(k))
       .map((k) => {
         // agents() knows when someone looked at a finished agent (done -> idle), as Herdr shows it.
         const a = shown.get(k.address);
@@ -377,10 +388,11 @@ export default class Tasks extends View {
         // Each space's other work, in status order, under its name: the machine only when two machines have a space
         // of that name.
         const work = rest.filter((p) => p.section !== "ready" && p.section !== "deferred" && p.section !== "done");
-        const shownLists = lists.filter((l) => work.some((p) => p.list === l));
-        for (const l of shownLists) {
-          const twin = shownLists.some((o) => o !== l && placeName(o) === placeName(l) && (o.machine ?? null) !== (l.machine ?? null));
-          body.push(this.spaceGroup(l, sorted(work.filter((p) => p.list === l)).map((p) => this.row(p, t, true)), t, twin ? machineName(l.machine) : null));
+        for (const group of ownerGroups(work)) {
+          const { list, owner, items } = group;
+          const label = owner?.name ?? list.name;
+          const twin = work.some(p => (p.list.machine ?? null) !== (list.machine ?? null) && placeName(p.list, p.task) === label);
+          body.push(this.spaceGroup({ ...list, owner }, sorted(items).map(p => this.row(p, t, true)), t, twin ? machineName(list.machine) : null));
         }
         if (tasksOf.deferred.length) body.push(this.group("deferred", "Deferred · still Ready", tasksOf.deferred.map(p => this.row(p, t)), t, { open }));
         // Done: only its count, a quiet line, until opened (then a group that folds it away again).
@@ -401,11 +413,10 @@ export default class Tasks extends View {
         } else {
           // A space's group: its tasks in status order, the machine quiet after its name when two machines have a
           // space of that name.
-          const withTasks = lists.filter((l) => rest.some((p) => p.list === l));
-          for (const l of withTasks) {
-            const ps = sorted(rest.filter((p) => p.list === l));
-            const twin = withTasks.some((o) => o !== l && placeName(o) === placeName(l) && (o.machine ?? null) !== (l.machine ?? null));
-            body.push(this.group(`folder:${l.machine ?? ""}:${l.folder}`, placeName(l), ps.map((p) => this.row(p, t)), t, { open, note: twin ? machineName(l.machine) : null, done: ps.filter((p) => p.section === "done").length }));
+          for (const { list, owner, items } of ownerGroups(rest)) {
+            const ps = sorted(items), name = owner?.name ?? list.name;
+            const twin = rest.some(p => (p.list.machine ?? null) !== (list.machine ?? null) && placeName(p.list, p.task) === name);
+            body.push(this.group(`folder:${list.machine ?? ""}:${list.folder}:${owner?.id ?? ""}`, name, ps.map(p => this.row(p, t)), t, { open, note: twin ? machineName(list.machine) : null, done: ps.filter(p => p.section === "done").length }));
           }
         }
       }
@@ -550,7 +561,7 @@ export default class Tasks extends View {
   // number), or where it is: its space, folder and machine.
   found(p, q) {
     return matches(q, refOf(p.list, p.task), p.task.title, this.statusLine(p), p.task.summary, p.task.pr?.number ? `#${p.task.pr.number}` : null,
-      placeName(p.list), p.list.name, machineName(p.list.machine));
+      placeName(p.list, p.task), p.list.name, machineName(p.list.machine));
   }
 
   // A Needs-you item the search finds: its task's id and title (or the agent's name) and why, or
@@ -676,9 +687,9 @@ export default class Tasks extends View {
   // the rows' dots are, its name, its machine quieter (note), its count. A click opens the space
   // (its chat); a list no space works in is just its name.
   spaceGroup(list, rows, t, note) {
-    const sp = spaceOf(list);
+    const sp = list.owner !== undefined ? list.owner ?? { name: list.name } : spaceOf(list);
     const icon = shared("spaces-chat")?.icons?.[sp.id] ?? null;
-    const key = `space-${list.machine ?? ""}:${list.folder}`;
+    const key = `space-${list.machine ?? ""}:${list.folder}:${sp.id ?? ""}`;
     return v_flex().flex_none().gap(1).pt(6)
       .child(h_flex().id(`head-${key}`).h(28).px(8).gap(12).items_center().rounded(RADIUS.card).text_size(TEXT.label)
         .when(Boolean(sp.id), (el) => el.cursor_pointer().hover((s) => s.bg(t.hover))
@@ -686,7 +697,7 @@ export default class Tasks extends View {
         .child(h_flex().w(14).h(14).flex_none().items_center().justify_center()
           .child(div().text_size(icon ? 12 : TEXT.label).text_color(t.dim).child(icon ?? "#")))
         .child(h_flex().flex_1().min_w(0).gap(6).items_center()
-          .child(div().min_w(0).truncate().font_medium().text_color(t.muted).child(placeName(list)))
+          .child(div().min_w(0).truncate().font_medium().text_color(t.muted).child(sp.name))
           .when(Boolean(note), (el) => el.child(div().flex_none().text_color(t.dim).child(`· ${note}`)))
           .child(div().flex_none().text_color(t.dim).child(String(rows.length)))))
       .children(rows);
@@ -777,7 +788,7 @@ export default class Tasks extends View {
       const list = this.listOf(slug, m);
       const task = list?.tasks.find((y) => String(y.id) === id);
       return openThread({ terminal: address, task: x?.ref ?? this.taskRef(address), title: x?.title ?? task?.title ?? "",
-        key: list ? { machine: m, folder: list.folder, slug, id: Number(id) } : null });
+        key: list ? { machine: m, folder: list.folder, slug, id: Number(id) } : null, space: task?.space, feature: task?.feature });
     }
     toAgent(address);
   }
@@ -858,7 +869,7 @@ export default class Tasks extends View {
     const { list, task } = p;
     const m = list.machine ?? null;
     const key = { machine: m, folder: list.folder, slug: list.slug, id: task.id };
-    const open = (terminal, more = {}) => () => openThread({ terminal, task: refOf(list, task), title: task.title, key, ...more });
+    const open = (terminal, more = {}) => () => openThread({ terminal, task: refOf(list, task), title: task.title, key, space: task.space, feature: task.feature, ...more });
     const worker = p.live.find((x) => x.role !== "reviewer" && x.status === "blocked") ?? p.live.find((x) => x.role !== "reviewer") ?? p.live[0];
     if (worker) return open(worker.address);
     const last = task.agents?.[task.agents.length - 1];
@@ -882,7 +893,7 @@ export default class Tasks extends View {
     const key = taskKey(list, task);
     return this.line(`task-${key}`, {
       go: this.target(p), glyph: this.glyph(p, w), ref: refOf(list, task), title: task.title, sub, left, leftColor: section === "scheduled" ? t.dim : null,
-      dim: section === "done", selected: focused, where: bare ? null : this.whereOf(list.machine, placeName(list)),
+      dim: section === "done", selected: focused, where: bare ? null : this.whereOf(list.machine, placeName(list, task)),
       action: ["ready", "deferred"].includes(section) ? this.acceptButton(p, t) : null,
       pin: this.shelved(p) ? null : { key, on: this.pins().has(key), status: section, machine: list.machine ?? null, folder: list.folder,
         ref: refOf(list, task), sub: section === "scheduled" ? sub : null },
@@ -941,8 +952,10 @@ export default class Tasks extends View {
   // Accept shows what you approve first: the Accept card (mods/accept-card) runs herdr-task
   // accept from its own Accept; the list reads the change as it reads any.
   accept(p, _cx) {
-    openOverlay({ mod: "accept-card", kind: "dialog", modal: true, width: 640, height: 640,
-      props: { ref: refOf(p.list, p.task), folder: p.list.folder, machine: p.list.machine ?? null, title: p.task.title } });
+    const { list, task } = p;
+    return openWorkerView({ key: { machine: list.machine ?? null, folder: list.folder, slug: list.slug, id: task.id }, task: refOf(list, task), space: task.space, feature: task.feature },
+      { review: view => openOverlay({ mod: "accept-card", kind: "dialog", modal: true, width: 640, height: 640,
+        props: { ref: view.task, folder: view.key.folder, machine: view.key.machine, title: view.title } }) });
   }
 
   // One row (as Shepherdr's web Tasks list), three parts with one job each:
@@ -1012,8 +1025,8 @@ function agentName(address) {
 // ({ path, kind }: an ended agent's own log), note (why one never started waits), at }.
 const hasNode = (n, id) => Boolean(n && typeof n === "object") && (n.id === id || (n.children ?? []).some((c) => hasNode(c, id)));
 const threads = () => hasNode(layout(), "tasks-thread");
-function openThread({ terminal = null, task = null, title = null, key = null, log = null, note = null }) {
-  openWorkerView({ terminal, task, title, key, log, note }, { panel: false });
+function openThread(want) {
+  return openWorkerView(want);
 }
 
 // The Accept card's accept under way (shared "tasks.accepting" = { "<machine>:<folder>:<ref>": at },

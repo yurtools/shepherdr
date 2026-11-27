@@ -1,3 +1,4 @@
+import { taskRoute } from "./task-route.ts";
 import { artifactKey, findArtifact } from "@core/artifact-owner.js"
 import { attentionCounts } from './attention.ts'
 // The layout: places | coordinator chat | tasks or artifacts on a desktop (sidebars resize, places hides), and an open
@@ -84,6 +85,7 @@ export default function App() {
   const snap = useSnap()
   const device = useUI((u) => u.device)
   const search = useUI((u) => u.search)
+  const taskError = useUI(u => u.taskError)
   const keyboard = useUI((u) => u.keyboard)
   useKeyboard()
   if (!snap) return <Loading />
@@ -101,6 +103,9 @@ export default function App() {
       {registry.topBars.map((Bar, i) => (
         <Bar key={i} />
       ))}
+      {taskError ? <div role="alert" className="flex shrink-0 items-center justify-between gap-3 border-b border-line bg-bubble px-4 py-2 text-need-fg">
+        <span>{taskError}</span><button className="rounded px-2 py-1 text-fg2 hover:bg-hover" onClick={() => setUI({ taskError: null })}>Dismiss</button>
+      </div> : null}
       <div className="relative flex min-h-0 flex-1 flex-col">
         {device === 'phone' ? <PhoneLayout snap={snap} /> : <WideLayout snap={snap} />}
         <PanelSheet />
@@ -384,13 +389,14 @@ function unreachable(p: Place, snap: Snapshot) {
 
 // as 3.0's message box: "Message SHEP-7" (an ended agent's box says so itself)
 function agentPlaceholder(t: Task, _finished: boolean | undefined) {
-  return `Message ${t.id}`
+  return `Message ${t.ref ?? t.id.split(":").pop()}`
 }
 
 /** The right-hand column: a place's tasks or its artifacts, and the open task's agent chat pushed over them (pinned,
  *  the task opens in the middle instead and the list stays) */
 function TaskColumn({ snap }: { snap: Snapshot }) {
-  const open = taskOf(snap, useUI((u) => u.task))
+  const selected = useUI(u => u.task)
+  const open = selected && taskRoute(snap, selected).place ? taskOf(snap, selected) : null
   const middle = useStore((s) => taskInMiddle(s.ui, s.snap))
   const task = middle ? null : open
   return (
@@ -488,7 +494,7 @@ function TaskPage({ task, middle, pane }: { task: Task; middle?: boolean; pane?:
   // its title alone on the first line, so it keeps the room; under it, quieter, its id in the list's monospace, then what
   // its agent is doing (working with no % yet, or a provider retry's line: its row's words, as the window's header says
   // them), else where it merges
-  const ref = task.id.slice(task.id.lastIndexOf(':') + 1)
+  const ref = task.ref ?? task.id.slice(task.id.lastIndexOf(':') + 1)
   const doing = task.report ? <ReportLine w={task.report} head /> : task.status === 'work' && task.sub ? <span className="truncate">{task.sub}</span> : null
   // its helper agent at work or asking (SHEP-54: its reviewer), named after what it does; its row is over the box
   const helper = [...(task.subagents ?? [])].reverse().find((s) => s.status !== 'done')
@@ -529,7 +535,7 @@ function TaskPage({ task, middle, pane }: { task: Task; middle?: boolean; pane?:
     return (
       <section className="flex min-h-0 min-w-0 flex-1 flex-col">
         <Head conversation lead={<><SpacesButtons pane={pane} /><Dot s={task.status} p={task.report?.progress} halo /></>}>
-          <Who name={task.name} kind={task.report ? <span className="flex min-w-0 gap-1">{task.id} ·<ReportLine w={task.report} head /></span> : `${task.id} · ${coordinator}`} />
+          <Who name={task.name} kind={task.report ? <span className="flex min-w-0 gap-1">{ref} ·<ReportLine w={task.report} head /></span> : `${ref} · ${coordinator}`} />
           <div className="flex shrink-0 items-center gap-1">
             {tools}
             <PaneButtons i={pane} />
@@ -646,7 +652,8 @@ function PaneView({ snap, p, i }: { snap: Snapshot; p: Pane; i: number }) {
   if (p.kind === 'tasks') return <TasksPane place={placeOf(snap, p.id)} i={i} />
   if (p.kind === 'artifact') return <ArtifactPane id={p.id} i={i} />
   const task = taskOf(snap, p.id)
-  return task ? <TaskPage key={task.id} task={task} pane={i} /> : <GonePane i={i} what={`${p.id} is gone.`} />
+  const route = taskRoute(snap, p.id)
+  return task && route.place ? <TaskPage key={task.id} task={task} pane={i} /> : <GonePane i={i} what={route.error ?? `${p.id} is gone.`} />
 }
 
 /** A pane's own buttons, at the end of its header: the only one, and close */
@@ -846,7 +853,8 @@ function WideLayout({ snap }: { snap: Snapshot }) {
 /* ---------- phone: one column, Chat | Tasks ---------- */
 
 function PhoneLayout({ snap }: { snap: Snapshot }) {
-  const task = taskOf(snap, useUI((u) => u.task))
+  const selected = useUI(u => u.task)
+  const task = selected && taskRoute(snap, selected).place ? taskOf(snap, selected) : null
   const settings = useUI((u) => !!u.settings)
   const Settings = registry.views.settings
   // a task's chat, or settings, push over the place

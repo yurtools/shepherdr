@@ -396,6 +396,9 @@ export function showInbox() {
 
 // To an agent: its chat if one shows it, else its pane, else Herdr finds it.
 export function toAgent(address) {
+  if (terminals().find(k => k.address === address)?.labels?.['herdr.task'] && hasNode(layout(), "tasks-thread")) {
+    return openWorkerView({ terminal: address }, { mode: 'chat' });
+  }
   const chat = chatOf(address);
   if (chat) { selectTabOf(chat); run("pane.focus", { pane: chat }); return; }
   // A task worker's thread, open beside its coordinator's chat (mods/chat).
@@ -412,7 +415,7 @@ export function toAgent(address) {
 // then requestWorkerTerminal()). A layout without that view gets Herdr's own peek.
 const hasNode = (n, id) => Boolean(n && typeof n === "object") && (n.id === id || (n.children ?? []).some((c) => hasNode(c, id)));
 export function peekTerminal(terminal, task = null, title = null) {
-  if (!hasNode(layout(), "tasks-thread")) { run("terminal.peek", { terminal }); return; }
+  if (!hasNode(layout(), "tasks-thread") || !terminals().find(k => k.address === terminal)?.labels?.["herdr.task"]) { run("terminal.peek", { terminal }); return; }
   openWorkerView({ terminal, task, title: title ?? agentInfo(terminal)?.title ?? null }, { mode: 'terminal' });
 }
 

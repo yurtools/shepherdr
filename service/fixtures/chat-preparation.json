@@ -26,6 +26,7 @@
     {
       "kind": "tasknews",
       "id": "tn:PROJECT-1:started:1772945999000",
+      "at": 1772945999000,
       "ref": "PROJECT-1",
       "task": {
         "ref": "PROJECT-1",
@@ -334,6 +335,7 @@
     {
       "kind": "tasknews",
       "id": "news",
+      "at": 1772946003000,
       "ref": "PROJECT-1",
       "task": {
         "ref": "PROJECT-1",
@@ -507,7 +509,7 @@
     "g:top|r0|gap||0|000000|0||||16",
     "day:1772928000000|r0|day||9|000000|0|||Day 20520|TB",
     "g:day:1772928000000|r0|gap||0|000000|0||||11",
-    "tn:PROJECT-1:started:1772945999000|r0|tasknews||6|000000|0|||||TB",
+    "tn:PROJECT-1:started:1772945999000|r0|tasknews||6|000000|0|||:1772945999000||TB",
     "g:tn:PROJECT-1:started:1772945999000|r0|gap||0|000000|0||||5",
     "rr:user|r0|replyref||0|000000|0||||T",
     "user|r0|user||15|000000|1||||",
@@ -526,7 +528,7 @@
     "fold:long|r0|fold||0|000000|0||b||B",
     "ab:long|r0|band||0|000000|0||b||26",
     "g:ab:long|r0|gap||0|000000|0||||11",
-    "news|r0|tasknews||0|000000|0|||a||T",
+    "news|r0|tasknews||0|000000|0|||a:1772946003000||T",
     "sent|r0|brief||10|000000|0||||B",
     "g:sent|r0|gap||0|000000|0||||10",
     "art|r0|artifact||7|000000|0|||a1k0.9||TB",
@@ -550,7 +552,7 @@
     16,
     18,
     11,
-    20,
+    34,
     5,
     22,
     70,
@@ -569,7 +571,7 @@
     26,
     26,
     11,
-    26,
+    34,
     20,
     10,
     88,

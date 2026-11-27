@@ -11,6 +11,13 @@ test("a task accepted or done changes it", () => {
   expect(newsKey([row(), row({ ref: "SHEP-29", section: "working", ready_at: null })])).not.toBe(newsKey([row()]));
 });
 
+test("a restored start time or Feature owner invalidates open chat news", () => {
+  expect(newsKey([row({ started: 50 })])).not.toBe(newsKey([row()]));
+  expect(newsKey([row({ ready_at: 150 })])).not.toBe(newsKey([row()]));
+  expect(newsKey([row({ feature: "fixture-feature" })])).not.toBe(newsKey([row()]));
+  expect(newsKey([row({ folder: "/fixture" })])).not.toBe(newsKey([row()]));
+});
+
 test("what news lines don't show leaves it, so chats aren't told again for nothing", () => {
   expect(newsKey([row({ pct: 90, sub: "Checks" })])).toBe(newsKey([row()]));
   // a task no space started gives no news line

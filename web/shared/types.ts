@@ -608,7 +608,8 @@ export interface Message {
    *  to: whom, on a message this chat's own agent sent another (from is then itself: "Assistant" → "SHEP-4") */
   brief?: { label: string; bare?: boolean; from?: string; to?: string }
   /** 3.0's task news line in an Assistant's chat (core/chat-view.js newsWords): its mark, what happened, the rest;
-   *  live: still needs you (red); accept: the newest ready line of a task still Ready */
+   *  live: still needs you (red); accept: the newest ready line of a task still Ready.
+   *  Message.at is this event's recorded timestamp, absent when it wasn't recorded. */
   news?: { task: string; ref: string; mark: 'started' | 'needs' | 'ready' | 'done' | 'other'; what: string; text: string; live?: boolean; accept?: boolean }
   /** the agent's own question as the log has it (3.0's "Asked you" box): open, answered, or closed without one */
   asked?: 'open' | 'answered' | 'dismissed'

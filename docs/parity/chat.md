@@ -13,7 +13,8 @@ Window: `mods/chat/main.js` (W), `mods/chat/cards.js`, `mods/chat-models/main.js
 
 Shared: `core/chat-view.js` holds the chat's fixed words (`WORDS`), a message's time (`clock`), the band's actions
 (`bandActs`), who sent a message (`senderName`), a brief's label (`briefLabel`), a task's news line (`newsWords`,
-`newsTimeline`), which artifact a publish made (`resolveArtifacts`), image sizes (`fitThumbs`) and day lines
+`newsEventsPlan`, `newsTimeline`, `newsDateTime`), which artifact a publish made (`resolveArtifacts`), image sizes
+(`fitThumbs`) and day lines
 (`dayLabel`). The window's chat reads them (W imports `./core/chat-view.js`, `mods/chat/days.js` re-exports), the web
 reads them (R, A, F, fold.tsx, days.ts) and the service builds the chat's rows with them (D). `core/chat-view.test.js`
 checks the rules and that no word of `WORDS` is typed out again in W or `web/plugins/chat/*`. A tools row's summary is
@@ -51,7 +52,7 @@ State: ✓ matches, ◇ web-only form (why), ✗ still differs (why).
 | Started from a slot with your words | W:2428 the template part a "New session" row, your words a bubble | D `firstTask()` reads the same data/chat-first/<slot>.txt: "New session" row, then your words | ✓ |
 | Tools row | W:2793 "› Read a file, ran a command" (core summary), opens to each step's line and the first lines it printed | A:316 TurnLine + A:332 ToolSteps (D `activity.summary`, `api/activity` → `results()`) | ✓ (showed raw "Description: command" rows) |
 | Quiet lines sit tight | W spaced(): tools, briefs, news, artifact lines one block, 16px between blocks | C:1084 quiet runs grouped, `gap-4` between blocks | ✓ |
-| Task news line | W:2764 mark (green tick ready, grey tick done, amber started, red needs while live), REF, what, "·", words; Review (opens the Accept card) at the right while Ready | R:138 NewsRow (D `news`, core `newsWords`/`newsTimeline` incl. start/ready/done from the task's record) | ✓ (was a bordered 2.1 card with raw text) |
+| Task news line | W mark (green tick ready, grey tick done, amber started, red needs while live), REF, what, "·", words; full local date/time and UTC offset below; Review at the right while Ready | R NewsRow (D `news`, core `newsEventsPlan`/`newsWords`/`newsDateTime`); space and owning Feature chats | ✓; logged news uses its log time, record-only start/ready/done use the recorded transition, and missing dates are labelled rather than guessed |
 | Accept on a Ready line | W:2838 opens the Accept card | R:138 → `openAccept` | ✓ |
 | Artifact card / line | W:2748 latest: card "Artifact · v3" + Open, then its first pictures and lines (core/recipe.js `preview`; `cover` first); earlier: "Published X v2" | plugins/artifacts ArtifactCard → PreviewCard (D emits `artifact` via core `resolveArtifacts`; the same `preview`), Show more opens it in place, Show less folds it | ◇ the window's card opens its artifact over the chat pane (no in-place expand) and previews only this machine's artifacts |
 | Artifact publishing | W:2807 "Publishing an artifact…" | R:164 PublishingRow (D `publishing`) | ✓ |

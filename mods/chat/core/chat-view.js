@@ -127,6 +127,24 @@ export function clock(at, now = new Date()) {
   return d.toDateString() === now.toDateString() ? hm : `${d.getDate()} ${MONTHS[d.getMonth()]} ${hm}`;
 }
 
+// Task news is history, not a relative clock. A missing or invalid log timestamp
+// (including the log reader's 0 sentinel) must never look like a real date.
+export function recordedNewsAt(at) {
+  return Number.isFinite(at) && at > 0 && Number.isFinite(new Date(at).getTime()) ? at : undefined;
+}
+
+// The viewer's local calendar and 24-hour clock, like clock(), but always with
+// the year and the offset at that instant (including daylight-saving changes).
+// Keep UTC in the machine-readable form for the web's <time>.
+export function newsDateTime(at) {
+  const recorded = recordedNewsAt(at);
+  if (recorded === undefined) return { label: "Date/time not recorded", iso: null };
+  const d = new Date(recorded), pad = (n) => String(n).padStart(2, "0");
+  const offset = -d.getTimezoneOffset(), abs = Math.abs(offset);
+  const zone = offset ? `UTC${offset < 0 ? "-" : "+"}${pad(Math.floor(abs / 60))}:${pad(abs % 60)}` : "UTC";
+  return { label: `${d.getDate()} ${MONTHS[d.getMonth()]} ${d.getFullYear()} · ${pad(d.getHours())}:${pad(d.getMinutes())} ${zone}`, iso: d.toISOString() };
+}
+
 // The actions under a message, in order: reply and copy; then the CLI's rewind on your own (not a /command, not one
 // another agent sent), or its fork on the agent's (when the CLI is known).
 export function bandActs(side, text, { from = null, fork = true, discard = false } = {}) {
@@ -301,9 +319,10 @@ export function newsWords(e, x) {
 // task when unique in the originating space, but cannot disambiguate collisions.
 // New events carry the canonical folder; synthesized events always carry it.
 export const newsTaskKey = (ref, folder) => folder ? JSON.stringify([ref, folder]) : ref;
-export function newsTaskIndex(tasks) {
+function* newsTaskIndexPlan(tasks) {
   const byKey = new Map(), byRef = new Map();
   for (const [ref, task] of tasks) {
+    yield;
     const key = newsTaskKey(task.ref ?? ref, task.folder);
     byKey.set(key, task);
     const visible = task.ref ?? ref;
@@ -312,24 +331,47 @@ export function newsTaskIndex(tasks) {
   }
   return { byKey, byRef, keyOf: e => e.folder ? newsTaskKey(e.ref, e.folder) : byRef.get(e.ref) ?? null };
 }
+export function newsTaskIndex(tasks) {
+  const plan = newsTaskIndexPlan(tasks);
+  let step;
+  do { step = plan.next(); } while (!step.done);
+  return step.value;
+}
 
 // A task's lines in its Assistant's chat, ordered by time. Exact source
-// identity is attached to the row so a click or review cannot pick a twin.
-export function newsTimeline(items, tasks, { start = null } = {}) {
-  const { byKey, keyOf } = newsTaskIndex(tasks);
+// identity is attached so a click or review cannot pick a twin. Yield the
+// joins and sort for the native window's bounded preparation pass. Logged
+// events take precedence over mutable task records (e.g. a second Ready).
+export function* newsEventsPlan(items, tasks, { start = null } = {}) {
+  const index = yield* newsTaskIndexPlan(tasks);
+  const { byKey, keyOf } = index;
   const all = [], said = new Set();
-  for (const it of items) if (it.kind === "news") {
+  let first = 0;
+  for (const it of items) {
+    yield;
+    if (!first && recordedNewsAt(it.at) !== undefined) first = it.at;
+    if (it.kind !== "news") continue;
     const key = keyOf(it);
     if (key) said.add(JSON.stringify([key, it.event]));
     all.push({ ...it, taskKey: key });
   }
-  const first = items.find((x) => x.at)?.at ?? 0;
   for (const [key, x] of byKey) for (const [event, at] of [["started", x.started], ["ready", x.ready_at], ["done", x.done_at]]) {
-    if (!Number.isFinite(at) || said.has(JSON.stringify([key, event])) || (at < first && start !== 0)) continue;
-    if (event === "ready" && !["ready", "done"].includes(x.status)) continue;
+    yield;
+    if (recordedNewsAt(at) === undefined || said.has(JSON.stringify([key, event])) || (at < first && start !== 0)) continue;
+    // A ready not yet said, while the task is still at work (its checks running,
+    // SHEP-175) or needs the person: not ready yet. Deferred and merging have
+    // already reached Ready, so their record-only row stays at its original time.
+    if (event === "ready" && !["ready", "deferred", "merging", "done"].includes(x.status)) continue;
     all.push({ id: `tn:${key}:${event}:${at}`, at, ref: x.ref ?? key, folder: x.folder, taskKey: key, event, text: "", made: true });
   }
-  all.sort((a, b) => a.at - b.at);
+  return { ...index, all: yield* sortPlan(all, (a, b) => a.at - b.at) };
+}
+
+export function newsTimeline(items, tasks, options) {
+  const plan = newsEventsPlan(items, tasks, options);
+  let step;
+  do { step = plan.next(); } while (!step.done);
+  const { all, byKey } = step.value;
   const last = new Map(), lastReady = new Map();
   for (const e of all) { last.set(e.taskKey, e); if (e.event === "ready") lastReady.set(e.taskKey, e); }
   return all.map((e) => {

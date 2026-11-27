@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
-import { WORDS, clock, bandActs, bandOrder, senderName, briefLabel, newsWords, newsTimeline, resolveArtifacts, fitThumbs, dayLabel, imagesLine, questionsBelow, notSent, unsigned, elapsed, reportMsg, doingWords, ownWords, outsideTerminal, fromName, sentTo, selfName, initialOf, literal, firstUser, firstKeys } from "./chat-view.js";
+import { WORDS, clock, newsDateTime, bandActs, bandOrder, senderName, briefLabel, newsWords, newsTimeline, resolveArtifacts, fitThumbs, dayLabel, imagesLine, questionsBelow, notSent, unsigned, elapsed, reportMsg, doingWords, ownWords, outsideTerminal, fromName, sentTo, selfName, initialOf, literal, firstUser, firstKeys } from "./chat-view.js";
 
 const ROOT = join(import.meta.dir, "..");
 const read = (p) => readFileSync(join(ROOT, p), "utf8");
@@ -30,6 +30,33 @@ describe("rows", () => {
     expect(clock(new Date(2026, 10, 4, 14, 5).getTime(), now)).toBe("14:05");
     expect(clock(new Date(2026, 10, 3, 9, 7).getTime(), now)).toBe("3 Nov 09:07");
     expect(clock(0)).toBe("");
+  });
+  test("task news has an absolute local date, year, time and historical UTC offset", () => {
+    const instants = ["2025-01-01T01:05:00Z", "2026-11-01T05:30:00Z", "2026-11-01T06:30:00Z"];
+    const inZone = (TZ) => {
+      const p = Bun.spawnSync([process.execPath, "-e", `
+        import { newsDateTime } from "./core/chat-view.js";
+        const times = ${JSON.stringify(instants)}.map(s => Date.parse(s));
+        Date.now = () => Date.parse("2030-01-01T00:00:00Z");
+        console.log(JSON.stringify(times.map(newsDateTime)));
+      `], { cwd: ROOT, env: { ...process.env, TZ } });
+      expect(p.exitCode).toBe(0);
+      const out = JSON.parse(p.stdout.toString());
+      expect(out.map(x => x.iso)).toEqual(instants.map(s => new Date(s).toISOString()));
+      return out.map(x => x.label);
+    };
+    expect(inZone("America/New_York")).toEqual([
+      "31 Dec 2024 · 20:05 UTC-05:00", "1 Nov 2026 · 01:30 UTC-04:00", "1 Nov 2026 · 01:30 UTC-05:00",
+    ]);
+    expect(inZone("Asia/Kolkata")).toEqual([
+      "1 Jan 2025 · 06:35 UTC+05:30", "1 Nov 2026 · 11:00 UTC+05:30", "1 Nov 2026 · 12:00 UTC+05:30",
+    ]);
+    expect(inZone("UTC")[0]).toBe("1 Jan 2025 · 01:05 UTC");
+  });
+  test("unknown or invalid news dates are explicit, not 1970 or the current time", () => {
+    for (const at of [undefined, null, 0, -1, NaN, Infinity, 9e15, "2026-11-27T12:00:00Z"]) {
+      expect(newsDateTime(at)).toEqual({ label: "Date/time not recorded", iso: null });
+    }
   });
   test("the band's actions: rewind on yours (not a /command), fork on the agent's", () => {
     expect(bandActs("user", "hi")).toEqual(["reply", "copy", "rewind"]);
@@ -94,6 +121,13 @@ describe("rows", () => {
   test("no ready line while its checks still run (SHEP-175)", () => {
     const tasks = new Map([["H-1", { title: "A", status: "working", started: 100, ready_at: 300 }]]);
     expect(newsTimeline([{ kind: "agent", at: 50 }], tasks, { start: 0 }).map((e) => e.event)).toEqual(["started"]);
+  });
+  test("a record-only Ready line keeps its date and id when deferred, merging or done", () => {
+    for (const status of ["ready", "deferred", "merging", "done"]) {
+      const tasks = new Map([["H-1", { title: "A", status, started: 100, ready_at: 300, ...(status === "done" ? { done_at: 400 } : {}) }]]);
+      const row = newsTimeline([], tasks, { start: 0 }).find(e => e.event === "ready");
+      expect(row).toMatchObject({ id: "tn:H-1:ready:300", at: 300, accept: status === "ready" });
+    }
   });
   test("which artifact a publish made", () => {
     const arts = [{ id: "a", title: "Plan", version: 2, versions: [{ v: 1, at: 1000, publisher: "t7" }, { v: 2, at: 9000, publisher: "t7" }] }];

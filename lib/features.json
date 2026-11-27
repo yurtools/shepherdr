@@ -343,6 +343,7 @@
       "title": "Tasks list",
       "core": [
         "tasks",
+        "task-filters",
         "tasklists",
         "needs"
       ],
@@ -357,7 +358,7 @@
         ]
       },
       "forms": {
-        "herdr": "Groups, filters, group by, search (F), dots and %, Review on Ready rows, Scheduled and Start later, automations, archived",
+        "herdr": "Groups, multi-select status filters, group by, search (F), dots and %, Review on Ready rows, Scheduled and Start later, automations, archived",
         "desktop": "Right column",
         "tablet": "Column beside the chat",
         "phone": "Tasks tab in the bottom bar"
@@ -540,7 +541,8 @@
       "addon": "tasks",
       "title": "Pin from a row",
       "core": [
-        "tasks"
+        "tasks",
+        "task-filters"
       ],
       "herdr": {
         "mods": [
@@ -553,7 +555,7 @@
         ]
       },
       "forms": {
-        "herdr": "Right-click a row: Pin/Unpin, group by, filters",
+        "herdr": "Right-click a row: Pin/Unpin, group by, multi-select status filters",
         "desktop": "Right-click or \u22ef",
         "tablet": "Long-press",
         "phone": "Long-press: sheet"

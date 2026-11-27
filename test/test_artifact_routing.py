@@ -172,6 +172,30 @@ class Ownership(unittest.TestCase):
             (x[2:] for x in create[3::2]), create[4::2]))
         self.assertEqual(args, dict(space='A', mod='art-proof-1234', name='Same title'))
 
+    def test_open_cli_installs_and_names_a_titleless_recipe_without_a_live_window(self):
+        # Exercise the parser, real registry, installed recipe, and cached reopen;
+        # only the external window and show-to-screen calls are inert.
+        app = Path(self.root, 'app')
+        (app / 'mods').mkdir(parents=True)
+        record = dict(self.a, files=['recipe.json'])
+        record.pop('title')
+        Path(self.store, 'a.json').write_text(json.dumps(dict(folder='/a', artifacts=[record])))
+        source = Path(self.store, 'files', record['id'], 'v2')
+        source.mkdir(parents=True)
+        (source / 'recipe.json').write_text('{"recipe":1,"blocks":[{"type":"text","md":"Fixture report"}]}')
+        listing = {'spaces': [{'id': 'A', 'tabs': []}]}
+        response = types.SimpleNamespace(returncode=0, stdout=json.dumps(listing), stderr='')
+        with mock.patch.object(A, 'APP', str(app)), mock.patch.object(A, 'run', return_value=response) as run, \
+                mock.patch.object(A, 'web_link', return_value=None), mock.patch.object(A, 'ask_screen', return_value=False):
+            for _ in range(2):
+                result = self.command_json('open', record['id'], '--tab')
+                self.assertEqual(result['window'], 'art-proof-1234')
+                self.assertNotIn('error', result)
+            got = self.command_json('tab-name', 'art-proof-1234')
+            self.assertEqual(got['name'], 'Artifact · proof-1234')
+        self.assertEqual([json.loads(c.args[0][3]) for c in run.call_args_list if 'tab.new' in c.args[0]],
+                         [dict(space='A', mod='art-proof-1234', name='Artifact · proof-1234')] * 2)
+
     def test_forced_tab_and_fallback_use_the_record_not_a_tab_or_title_lookup(self):
         # Same title, different artifact ID, and a currently active terminal tab:
         # neither the name nor focus is an artifact identity.
